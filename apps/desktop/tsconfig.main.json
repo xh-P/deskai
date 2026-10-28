@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext",
+    "strict": true, "skipLibCheck": true, "types": ["node"],
+    "rewriteRelativeImportExtensions": true,
+    "rootDir": "../..", "outDir": "../../.cache/desktop-main"
+  },
+  "include": ["src/**/*.ts", "src/**/*.cts", "../../packages/voice-core/src/**/*.ts", "../../packages/dsh-adapter/src/**/*.ts"]
+}

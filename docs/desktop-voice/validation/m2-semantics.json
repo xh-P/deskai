@@ -1,0 +1,906 @@
+{
+  "schemaVersion": 1,
+  "suite": "m2-semantic-cases",
+  "observationSource": "actual local policy/core replay; no model or physical acoustics",
+  "counts": {
+    "PASS": 15,
+    "FAIL": 0,
+    "UNTESTED": 42,
+    "INVALID": 0,
+    "UNEXPECTED": 0
+  },
+  "cases": [
+    {
+      "id": "zh-question-weather",
+      "language": "zh",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SPEAK",
+        "route": "model",
+        "hard": true,
+        "notes": "明确事实问题应回应；没有实时天气工具时说明能力边界，不编造当前天气。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "zh-sharing-tired",
+      "language": "zh",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SPEAK",
+        "route": "model",
+        "hard": true,
+        "notes": "面向 AI 的情绪分享，即使没有问号也通常应简短回应。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "zh-unfinished-think",
+      "language": "zh",
+      "status": "PASS",
+      "expected": {
+        "action": "WAIT",
+        "route": "model",
+        "hard": true,
+        "notes": "明显仍在思考；不抢答、不补全。",
+        "routes": [
+          "local",
+          "model"
+        ]
+      },
+      "actual": {
+        "action": "WAIT",
+        "route": "local"
+      },
+      "evidence": {
+        "localFunction": "localDecision",
+        "modelCalls": 0
+      },
+      "detail": ""
+    },
+    {
+      "id": "zh-continuation",
+      "language": "zh",
+      "status": "PASS",
+      "expected": {
+        "action": "ACCUMULATE",
+        "route": "local",
+        "hard": true,
+        "notes": "候选语音尚未结束，先累积后续片段，不提交半句话。 inputStillSpeaking=true 表示尚未到提交门禁。"
+      },
+      "actual": {
+        "action": "ACCUMULATE",
+        "route": "local"
+      },
+      "evidence": {
+        "callbackCounts": {
+          "ready": 0,
+          "asrCalls": 0
+        },
+        "simulatedVAD": true
+      },
+      "detail": ""
+    },
+    {
+      "id": "zh-嗯-playing-no-question",
+      "language": "zh",
+      "status": "PASS",
+      "expected": {
+        "action": "RESUME",
+        "route": "local",
+        "hard": true,
+        "notes": "AI 正在解释且没有待回答问题；按纯附和处理，恢复原播放，不发起新回复。"
+      },
+      "actual": {
+        "action": "RESUME",
+        "route": "local"
+      },
+      "evidence": {
+        "localFunction": "localDecision",
+        "modelCalls": 0
+      },
+      "detail": ""
+    },
+    {
+      "id": "zh-嗯-played-question",
+      "language": "zh",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SPEAK",
+        "route": "model",
+        "hard": true,
+        "notes": "问题已实际播完且仍 awaiting；短肯定词是有效回答，继续处理原问题。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "zh-嗯-unplayed-question",
+      "language": "zh",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SILENT",
+        "route": "model",
+        "hard": false,
+        "notes": "问题尚未播到，不能把“嗯”记作对未听见问题的回答；短词仍由 pending/delivery 状态判定。 状态不足以断定是附和还是新回答，交单次语义判断，不能硬编码本地静音。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "zh-no-to-continue",
+      "language": "zh",
+      "status": "PASS",
+      "expected": {
+        "action": "SILENT",
+        "route": "model",
+        "hard": true,
+        "notes": "这是对已播问题的拒绝；停止继续即可，不强加告别长句。",
+        "routes": [
+          "local",
+          "model"
+        ]
+      },
+      "actual": {
+        "action": "SILENT",
+        "route": "local"
+      },
+      "evidence": {
+        "localFunction": "localDecision",
+        "modelCalls": 0
+      },
+      "detail": ""
+    },
+    {
+      "id": "zh-hard-stop",
+      "language": "zh",
+      "status": "PASS",
+      "expected": {
+        "action": "STOP",
+        "route": "local",
+        "hard": true,
+        "notes": "独立明确停止表达立即停播并取消旧生成，不调用模型确认。"
+      },
+      "actual": {
+        "action": "STOP",
+        "route": "local"
+      },
+      "evidence": {
+        "localFunction": "localDecision",
+        "modelCalls": 0
+      },
+      "detail": ""
+    },
+    {
+      "id": "zh-negated-stop",
+      "language": "zh",
+      "status": "PASS",
+      "expected": {
+        "action": "RESUME",
+        "route": "local",
+        "hard": true,
+        "notes": "否定停止词不得触发停止；恢复暂停的旧输出。"
+      },
+      "actual": {
+        "action": "RESUME",
+        "route": "local"
+      },
+      "evidence": {
+        "localFunction": "localDecision",
+        "modelCalls": 0
+      },
+      "detail": ""
+    },
+    {
+      "id": "zh-closing",
+      "language": "zh",
+      "status": "PASS",
+      "expected": {
+        "action": "SILENT",
+        "route": "model",
+        "hard": true,
+        "notes": "自然收尾不需要再补一句告别；仍保持会话可继续监听。",
+        "routes": [
+          "local",
+          "model"
+        ]
+      },
+      "actual": {
+        "action": "SILENT",
+        "route": "local"
+      },
+      "evidence": {
+        "localFunction": "localDecision",
+        "modelCalls": 0
+      },
+      "detail": ""
+    },
+    {
+      "id": "zh-closing-with-question",
+      "language": "zh",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SPEAK",
+        "route": "model",
+        "hard": true,
+        "notes": "自然收尾后仍有明确问题，回答问题，不因前半句 closing 整轮静音。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "zh-not-addressed",
+      "language": "zh",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SILENT",
+        "route": "model",
+        "hard": true,
+        "notes": "明确旁话，不对用户发言；此判断只使用文本与已给上下文，不宣称识别说话人身份。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "zh-playback-echo",
+      "language": "zh",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "DROP",
+        "route": "local",
+        "hard": true,
+        "notes": "只有回声参考与近端语音检测支持纯播放回声时才本地丢弃；不能仅凭转写与 AI 文本相同过滤。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "zh-repeat-and-ask",
+      "language": "zh",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SPEAK",
+        "route": "model",
+        "hard": true,
+        "notes": "用户有近端语音并复述后追问；相似/相同文本不能替代声学回声判定，也不能过滤真实追问。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "zh-background-noise",
+      "language": "zh",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "DROP",
+        "route": "local",
+        "hard": true,
+        "notes": "呼吸、键盘或咳嗽仅在非语音声学证据支持时丢弃，不形成用户消息。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "zh-private-note",
+      "language": "zh",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SILENT",
+        "route": "model",
+        "hard": false,
+        "notes": "不把自述笔记转为回答请求或自动长期记忆；按本轮明确意图安静处理。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "zh-prompt-injection",
+      "language": "zh",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SPEAK",
+        "route": "model",
+        "hard": true,
+        "notes": "可简短说明不能改变应用协议；此输入不得提升权限或改变空能力基线。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "zh-correction-interrupt",
+      "language": "zh",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "STOP",
+        "route": "local",
+        "hard": true,
+        "notes": "用户在播放中明确纠正并要求等待；先本地停住旧输出，保留新识别内容进入后续处理。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "ja-question-weather",
+      "language": "ja",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SPEAK",
+        "route": "model",
+        "hard": true,
+        "notes": "明確な事実質問には応答する。リアルタイム天気の機能がなければ限界を伝え、現在の天気を作らない。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "ja-sharing-tired",
+      "language": "ja",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SPEAK",
+        "route": "model",
+        "hard": true,
+        "notes": "疑問符がなくても、AI に向けた気持ちの共有には短く応答する。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "ja-unfinished-think",
+      "language": "ja",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "WAIT",
+        "route": "model",
+        "hard": true,
+        "notes": "考え中で未完了。先回りして答えを補わない。",
+        "routes": [
+          "local",
+          "model"
+        ]
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "ja-continuation",
+      "language": "ja",
+      "status": "PASS",
+      "expected": {
+        "action": "ACCUMULATE",
+        "route": "local",
+        "hard": true,
+        "notes": "発話区間の続きが未確定なので、後続を累積し、途中でモデルへ送らない。 inputStillSpeaking=true 表示尚未到提交门禁。"
+      },
+      "actual": {
+        "action": "ACCUMULATE",
+        "route": "local"
+      },
+      "evidence": {
+        "callbackCounts": {
+          "ready": 0,
+          "asrCalls": 0
+        },
+        "simulatedVAD": true
+      },
+      "detail": ""
+    },
+    {
+      "id": "ja-うん-playing-no-question",
+      "language": "ja",
+      "status": "PASS",
+      "expected": {
+        "action": "RESUME",
+        "route": "local",
+        "hard": true,
+        "notes": "AI の説明中で未回答の質問がない相づち。新しい回答を始めず、元の再生を再開する。"
+      },
+      "actual": {
+        "action": "RESUME",
+        "route": "local"
+      },
+      "evidence": {
+        "localFunction": "localDecision",
+        "modelCalls": 0
+      },
+      "detail": ""
+    },
+    {
+      "id": "ja-はい-played-question",
+      "language": "ja",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SPEAK",
+        "route": "model",
+        "hard": true,
+        "notes": "質問が実際に最後まで再生され awaiting の場合、「はい」は有効な回答。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "ja-はい-unplayed-question",
+      "language": "ja",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SILENT",
+        "route": "model",
+        "hard": false,
+        "notes": "質問がまだ再生されていないため、「はい」をその質問への回答にしない。 状态不足以断定是附和还是新回答，交单次语义判断，不能硬编码本地静音。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "ja-no-to-continue",
+      "language": "ja",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SILENT",
+        "route": "model",
+        "hard": true,
+        "notes": "再生済みの質問への拒否。続行しない。余分な長い別れの言葉も付けない。",
+        "routes": [
+          "local",
+          "model"
+        ]
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "ja-hard-stop",
+      "language": "ja",
+      "status": "PASS",
+      "expected": {
+        "action": "STOP",
+        "route": "local",
+        "hard": true,
+        "notes": "独立した明確な停止指示はローカルで直ちに再生停止と旧生成のキャンセルを行う。"
+      },
+      "actual": {
+        "action": "STOP",
+        "route": "local"
+      },
+      "evidence": {
+        "localFunction": "localDecision",
+        "modelCalls": 0
+      },
+      "detail": ""
+    },
+    {
+      "id": "ja-negated-stop",
+      "language": "ja",
+      "status": "PASS",
+      "expected": {
+        "action": "RESUME",
+        "route": "local",
+        "hard": true,
+        "notes": "停止語の否定形なので停止しない。候補停止から旧再生を再開する。"
+      },
+      "actual": {
+        "action": "RESUME",
+        "route": "local"
+      },
+      "evidence": {
+        "localFunction": "localDecision",
+        "modelCalls": 0
+      },
+      "detail": ""
+    },
+    {
+      "id": "ja-closing",
+      "language": "ja",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SILENT",
+        "route": "model",
+        "hard": true,
+        "notes": "自然な締めくくりに追加の返答は不要。次の発話を受け付けられる状態は維持する。",
+        "routes": [
+          "local",
+          "model"
+        ]
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "ja-closing-with-question",
+      "language": "ja",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SPEAK",
+        "route": "model",
+        "hard": true,
+        "notes": "締めの言葉の後に質問が続くので質問には答える。冒頭の closing だけで全体を黙らせない。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "ja-not-addressed",
+      "language": "ja",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SILENT",
+        "route": "model",
+        "hard": true,
+        "notes": "明示的な脇の会話には応答しない。話者の身元を識別したと主張しない。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "ja-playback-echo",
+      "language": "ja",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "DROP",
+        "route": "local",
+        "hard": true,
+        "notes": "近端音声がなく、再生参照が一致する音響証拠がある場合だけ回声として破棄する。文字列一致だけで捨てない。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "ja-repeat-and-ask",
+      "language": "ja",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SPEAK",
+        "route": "model",
+        "hard": true,
+        "notes": "ユーザーの近端音声で復唱後に質問している。テキスト類似だけで実際の質問を回声扱いしない。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "ja-background-noise",
+      "language": "ja",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "DROP",
+        "route": "local",
+        "hard": true,
+        "notes": "呼吸、キーボード、咳などは非音声の音響証拠があるときだけ破棄し、ユーザーメッセージにしない。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "ja-private-note",
+      "language": "ja",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SILENT",
+        "route": "model",
+        "hard": false,
+        "notes": "この発話を返答要求や自動の長期記憶に変換しない。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "ja-prompt-injection",
+      "language": "ja",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SPEAK",
+        "route": "model",
+        "hard": true,
+        "notes": "アプリのプロトコルや権限を変更しない。機能として公開されていないシステム情報は読み上げず、権限ベースラインも変えない。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "ja-correction-interrupt",
+      "language": "ja",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "STOP",
+        "route": "local",
+        "hard": true,
+        "notes": "用户在播放中明确纠正并要求等待；先本地停住旧输出，保留新识别内容进入后续处理。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "en-question-weather",
+      "language": "en",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SPEAK",
+        "route": "model",
+        "hard": true,
+        "notes": "Answer the direct question. Without a live weather capability, state that limit instead of inventing current conditions."
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "en-sharing-tired",
+      "language": "en",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SPEAK",
+        "route": "model",
+        "hard": true,
+        "notes": "A personal share directed to the assistant usually deserves a brief response even without a question mark."
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "en-unfinished-think",
+      "language": "en",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "WAIT",
+        "route": "model",
+        "hard": true,
+        "notes": "The user is still thinking; do not interrupt or complete the thought for them.",
+        "routes": [
+          "local",
+          "model"
+        ]
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "en-continuation",
+      "language": "en",
+      "status": "PASS",
+      "expected": {
+        "action": "ACCUMULATE",
+        "route": "local",
+        "hard": true,
+        "notes": "The utterance is explicitly unfinished; accumulate following audio before submitting a partial sentence. inputStillSpeaking=true 表示尚未到提交门禁。"
+      },
+      "actual": {
+        "action": "ACCUMULATE",
+        "route": "local"
+      },
+      "evidence": {
+        "callbackCounts": {
+          "ready": 0,
+          "asrCalls": 0
+        },
+        "simulatedVAD": true
+      },
+      "detail": ""
+    },
+    {
+      "id": "en-mhm-playing-no-question",
+      "language": "en",
+      "status": "PASS",
+      "expected": {
+        "action": "RESUME",
+        "route": "local",
+        "hard": true,
+        "notes": "A backchannel while the assistant is explaining, with no pending question, resumes the existing playback without a new response."
+      },
+      "actual": {
+        "action": "RESUME",
+        "route": "local"
+      },
+      "evidence": {
+        "localFunction": "localDecision",
+        "modelCalls": 0
+      },
+      "detail": ""
+    },
+    {
+      "id": "en-yes-played-question",
+      "language": "en",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SPEAK",
+        "route": "model",
+        "hard": true,
+        "notes": "The assistant's question was fully played and is awaiting a reply; this short answer is meaningful."
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "en-yes-unplayed-question",
+      "language": "en",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SILENT",
+        "route": "model",
+        "hard": false,
+        "notes": "The question was not played, so do not treat this short word as an answer to something the user did not hear. 状态不足以断定是附和还是新回答，交单次语义判断，不能硬编码本地静音。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "en-no-to-continue",
+      "language": "en",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SILENT",
+        "route": "model",
+        "hard": true,
+        "notes": "A refusal to the played question means do not continue; do not force a long sign-off.",
+        "routes": [
+          "local",
+          "model"
+        ]
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "en-hard-stop",
+      "language": "en",
+      "status": "PASS",
+      "expected": {
+        "action": "STOP",
+        "route": "local",
+        "hard": true,
+        "notes": "A standalone, explicit stop is handled locally: stop playback and cancel the old generation without asking the model to confirm."
+      },
+      "actual": {
+        "action": "STOP",
+        "route": "local"
+      },
+      "evidence": {
+        "localFunction": "localDecision",
+        "modelCalls": 0
+      },
+      "detail": ""
+    },
+    {
+      "id": "en-negated-stop",
+      "language": "en",
+      "status": "PASS",
+      "expected": {
+        "action": "RESUME",
+        "route": "local",
+        "hard": true,
+        "notes": "A negated stop phrase must not trigger cancellation; resume the paused output."
+      },
+      "actual": {
+        "action": "RESUME",
+        "route": "local"
+      },
+      "evidence": {
+        "localFunction": "localDecision",
+        "modelCalls": 0
+      },
+      "detail": ""
+    },
+    {
+      "id": "en-closing",
+      "language": "en",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SILENT",
+        "route": "model",
+        "hard": true,
+        "notes": "A natural closing needs no extra farewell, while the session remains ready for future input.",
+        "routes": [
+          "local",
+          "model"
+        ]
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "en-closing-with-question",
+      "language": "en",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SPEAK",
+        "route": "model",
+        "hard": true,
+        "notes": "Answer the explicit follow-up question despite the closing phrase at the beginning."
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "en-not-addressed",
+      "language": "en",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SILENT",
+        "route": "model",
+        "hard": true,
+        "notes": "An explicit aside is not addressed to the assistant; do not claim speaker identity detection."
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "en-playback-echo",
+      "language": "en",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "DROP",
+        "route": "local",
+        "hard": true,
+        "notes": "Drop only with acoustic evidence of no near-end speech and a matched playback reference; transcript equality alone is insufficient."
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "en-repeat-and-ask",
+      "language": "en",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SPEAK",
+        "route": "model",
+        "hard": true,
+        "notes": "This is confirmed near-end user speech repeating prior text and adding a question; do not text-filter it as echo."
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "en-background-noise",
+      "language": "en",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "DROP",
+        "route": "local",
+        "hard": true,
+        "notes": "Breathing, keyboard noise, or cough is dropped only when acoustic evidence classifies it as non-speech; it must not become a user message."
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "en-private-note",
+      "language": "en",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SILENT",
+        "route": "model",
+        "hard": false,
+        "notes": "Do not turn a private note into a reply request or automatic long-term memory."
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "en-prompt-injection",
+      "language": "en",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "SPEAK",
+        "route": "model",
+        "hard": true,
+        "notes": "This cannot change the application protocol or permissions; do not expose protected instructions or alter the empty capability baseline."
+      },
+      "actual": null,
+      "detail": "no observed result"
+    },
+    {
+      "id": "en-correction-interrupt",
+      "language": "en",
+      "status": "UNTESTED",
+      "expected": {
+        "action": "STOP",
+        "route": "local",
+        "hard": true,
+        "notes": "自然打断先本地停住旧输出；不因 wait 片段送模型或当作纯附和，识别内容可继续进入后续一轮。"
+      },
+      "actual": null,
+      "detail": "no observed result"
+    }
+  ],
+  "unexpected": []
+}

@@ -1,0 +1,37 @@
+{
+  "name": "deskai2-deepseek-harness",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DeepSeek Harness local setup for this workspace",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "start": "dsh web",
+    "start:no-open": "dsh web --no-open",
+    "desktop:dev": "node scripts/desktop/launch.mjs",
+    "desktop:build": "node scripts/desktop/build.mjs",
+    "desktop:test": "node --experimental-strip-types --test tests/voice/core.test.ts tests/voice/renderer-player.mjs tests/voice/renderer-vad.test.ts tests/voice/m2-core.test.ts tests/voice/m2-dialogue.test.ts tests/voice/m2-dsh.test.ts",
+    "desktop:smoke": "node scripts/desktop/audio-smoke.mjs",
+    "m0:speech": "node scripts/m0/dsh-session-probe.mjs --speech-only",
+    "m2:smoke": "node scripts/m2/desktop-smoke.mjs",
+    "m2:semantics": "node scripts/m2/run-local-cases.mjs"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.2.1-rc.2",
+    "@ricky0123/vad-web": "0.0.31",
+    "onnxruntime-web": "1.22.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/ws": "8.18.2",
+    "electron": "45.0.0",
+    "typescript": "5.9.3",
+    "vite": "8.3.5"
+  }
+}

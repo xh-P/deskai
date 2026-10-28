@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <title>M0 音频设备验证</title>
+    <link rel="stylesheet" href="./style.css">
+    <script src="./renderer.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="header">
+        <div>
+          <p class="eyebrow">DESKAI2 · M0</p>
+          <h1>音频设备验证</h1>
+          <p class="intro">检查 Chromium 的麦克风处理设置，并确认采集与应用内 PCM 播放可以同时运行。</p>
+        </div>
+        <span class="phase-badge">接口验证工具</span>
+      </header>
+
+      <aside id="simulation-banner" class="simulation-banner" hidden>
+        <strong>模拟模式</strong>
+        <span>此运行使用 Chromium fake-media。结果只验证 AudioWorklet 链路，不代表真实设备或 AEC 已通过。</span>
+      </aside>
+
+      <section class="panel controls-panel" aria-labelledby="controls-heading">
+        <div class="panel-heading">
+          <div>
+            <h2 id="controls-heading">设备与控制</h2>
+            <p>启动应用不会请求麦克风。只有点击“开始设备验证”后才会采集。</p>
+          </div>
+          <span id="status-pill" class="status-pill" data-state="idle">尚未开始</span>
+        </div>
+
+        <div class="device-grid">
+          <label>
+            <span>输入设备</span>
+            <select id="input-device" aria-label="输入设备"></select>
+          </label>
+          <label>
+            <span>输出设备</span>
+            <select id="output-device" aria-label="输出设备"></select>
+          </label>
+        </div>
+
+        <div class="button-row">
+          <button id="start-button" class="button primary">开始设备验证</button>
+          <button id="stop-button" class="button secondary" disabled>停止</button>
+          <button id="play-button" class="button secondary" disabled>播放 1 秒 PCM 测试音</button>
+          <button id="refresh-button" class="button quiet">刷新设备</button>
+        </div>
+        <p id="device-note" class="note" role="status">尚未启动。此工具不保存原始麦克风音频。</p>
+      </section>
+
+      <section class="panel" aria-labelledby="settings-heading">
+        <div class="panel-heading">
+          <div>
+            <h2 id="settings-heading">采集协商结果</h2>
+            <p>显示所选设备和浏览器返回的实际 track.getSettings() 值。</p>
+          </div>
+        </div>
+        <div class="settings-grid">
+          <div>
+            <h3>实际设备</h3>
+            <p id="actual-device" class="actual-device">尚未采集</p>
+          </div>
+          <div>
+            <h3>请求的约束</h3>
+            <pre id="requested-settings">{
+  "echoCancellation": true,
+  "noiseSuppression": true,
+  "autoGainControl": false
+}</pre>
+          </div>
+          <div class="settings-output">
+            <h3>track.getSettings()</h3>
+            <pre id="track-settings">开始验证后显示实际值。</pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="metrics-heading">
+        <div class="panel-heading">
+          <div>
+            <h2 id="metrics-heading">实时元数据</h2>
+            <p>仅保存聚合统计；音频样本留在渲染进程内存中，不写入文件。</p>
+          </div>
+        </div>
+        <div class="metrics-grid">
+          <article class="metric-card">
+            <span>AudioContext 采样率</span>
+            <strong id="context-rate">—</strong>
+          </article>
+          <article class="metric-card">
+            <span>输入帧数</span>
+            <strong id="input-frames">0</strong>
+          </article>
+          <article class="metric-card">
+            <span>输入 RMS</span>
+            <strong id="input-rms">—</strong>
+          </article>
+          <article class="metric-card">
+            <span>PCM 输出帧数</span>
+            <strong id="output-frames">0</strong>
+          </article>
+          <article class="metric-card">
+            <span>输出 RMS</span>
+            <strong id="output-rms">—</strong>
+          </article>
+          <article class="metric-card">
+            <span>播放期间输入帧数</span>
+            <strong id="overlap-frames">0</strong>
+          </article>
+        </div>
+        <p id="report-path" class="report-path" aria-live="polite"></p>
+      </section>
+
+      <footer>
+        <p>范围：M0 Electron 音频接口验证。此窗口不是完整桌面语音对话应用，也不包含自动断句、ASR、dsh 或 TTS 模型接入。</p>
+      </footer>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,11 @@
+torch==2.10.0+cu130
+torchaudio==2.10.0
+torchvision==0.25.0+cu130
+transformers==4.51.3
+peft==0.17.1
+numpy==1.26.4
+gradio==4.44.1
+pydantic==2.10.6
+torchmetrics==1.5.0
+chardet<6
+resampy==0.4.3

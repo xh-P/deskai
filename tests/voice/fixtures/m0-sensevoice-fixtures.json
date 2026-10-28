@@ -1,0 +1,44 @@
+{
+  "createdAt": "2026-10-28",
+  "purpose": "dsh SenseVoice M0 speech Remote validation",
+  "sourceKind": "existing synthetic v2 TTS audition output",
+  "microphoneRecording": false,
+  "sourceFilesModified": false,
+  "conversion": {
+    "tool": "FFmpeg 8.0.1",
+    "codec": "pcm_s16le",
+    "sampleRate": 16000,
+    "channels": 1,
+    "bitsPerSample": 16,
+    "mapMetadata": false,
+    "bitexactOutput": true,
+    "canonicalDshWave": true
+  },
+  "fixtures": [
+    {
+      "language": "zh",
+      "file": "m0-sensevoice-zh.wav",
+      "source": "outputs/nagato_normal_v5_bilingual_candidates/20261025-154215-bilingual-candidates/zh_v2_normal.wav",
+      "durationSeconds": 6.3,
+      "bytes": 201644,
+      "sha256": "8b5c6423bd3ccee4e74c2830db7f5af3900a43baf99c8141fd36d38eb15c72e7"
+    },
+    {
+      "language": "en",
+      "file": "m0-sensevoice-en.wav",
+      "source": "outputs/nagato_normal_v5_bilingual_candidates/20261025-154215-bilingual-candidates/en_v2_normal.wav",
+      "durationSeconds": 4.54,
+      "bytes": 145324,
+      "sha256": "3c56463b0be3edf34e245904d05d0e301da5f51f21ec5186f90fc19799097bf2"
+    },
+    {
+      "language": "ja",
+      "file": "m0-sensevoice-ja.wav",
+      "source": "outputs/nagato_normal_v5_ja_candidates/20261025-154928-ja-candidates/ja_v2_normal.wav",
+      "durationSeconds": 5.86,
+      "bytes": 187564,
+      "sha256": "939a8985f30ad8e3c29aad8584cb46346f7c3854e8cc0f2d565cc7c293b6e649"
+    }
+  ],
+  "transcriptTextStored": false
+}
