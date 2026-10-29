@@ -286,10 +286,10 @@ export default function App() {
           return acquired
         },
         onError: cause => { setError(describeMediaError(cause)); void stop('采集处理失败，已释放麦克风') },
-        onFrameProcessed: (probs, frame16k) => {
+        onFrameProcessed: (probs, frame16k, sampleStart) => {
           if (currentSession.current !== opened.sessionId) return
           if (smoke.current && playbackRef.current) smoke.current.inputDuringPlayback = true
-          window.deskai.sendFrame({ sessionId: opened.sessionId, samples: new Float32Array(frame16k), probability: probs.isSpeech })
+          window.deskai.sendFrame({ sessionId: opened.sessionId, sampleStart, samples: new Float32Array(frame16k), probability: probs.isSpeech })
         },
       })
       const deviceStream = stream as MediaStream | null
@@ -514,7 +514,7 @@ export default function App() {
   const selectedVoice = voices.find(voice => voice.id === preferences?.voiceId)
   const selectedVoiceName = selectedVoice?.name ?? '常态有希 · v2'
   const ttsLabel = ({ starting: '正在启动', loading: '正在加载模型', warming: '正在预热', switching: '正在切换声音', ready: '已就绪', error: '出错，可恢复', stopped: '已停止' } as Record<string, string>)[ttsState.split(' · ')[0]] ?? ttsState
-  const inputLabel = ({ OFF: '未开启', LISTENING: '等待你说话', CAPTURING: '正在收音', TRANSCRIBING: '正在识别', ACCUMULATING: '等待续句', DECIDING: '正在提交' } as Record<string, string>)[inputState] ?? inputState
+  const inputLabel = ({ OFF: '未开启', LISTENING: '等待你说话', CAPTURING: '正在收音', SETTLING: '等待续句', TRANSCRIBING: '正在识别', ACCUMULATING: '等待续句', DECIDING: '正在提交' } as Record<string, string>)[inputState] ?? inputState
 
   return <main className="shell">
     <header><div><h1>DeskAI 语音对话</h1><p>当前声音：{selectedVoiceName}</p></div><span className="stage">桌面预览版</span></header>
@@ -580,6 +580,10 @@ export default function App() {
     <p className="hint">有效回复逐句播放；合成故障保留文字。播放进度是声卡提交估计；真实麦克风、外放回声效果仍需设备验收。</p>
     <details><summary>技术设置与诊断</summary><p>会话：{session?.sessionId ?? '无'} · 运行模式：{runtime?.fakeMedia ? '模拟设备' : '普通设备'}</p>
       {!!runtime?.assetStatus?.missing.length && <p>缺少本地资源：{runtime.assetStatus.missing.join('、')}</p>}
-      <p>浏览器实际麦克风设置（仅供诊断，不代表物理 AEC 验收）：</p><pre>{mediaSettings ? JSON.stringify(mediaSettings, null, 2) : '未获取'}</pre></details>
+      <p>浏览器实际麦克风设置（仅供诊断，不代表物理 AEC 验收）：</p><pre>{mediaSettings ? JSON.stringify(mediaSettings, null, 2) : '未获取'}</pre>
+      <p>语音识别保持自动语言。停顿后先识别候选，约 1 秒内续说会合并后重新识别；明显未完句等待约 1.2 秒。</p>
+      <button className="secondary" onClick={() => void window.deskai.getRuntime().then(setRuntime).catch(cause => setError(describeMediaError(cause)))}>刷新语音时序</button>
+      <p>仅在内存保留最近各 100 条输入与输出时序，不含录音或对话正文。monotonicMs 使用同一个主进程时钟；playback-enqueued 表示提交给播放器，不代表实际听到声音。</p>
+      <pre>{runtime?.voiceDiagnostics ? JSON.stringify(runtime.voiceDiagnostics, null, 2) : '暂无语音时序'}</pre></details>
   </main>
 }

@@ -4,8 +4,13 @@ import { buildDesktop, root } from './build.mjs';
 
 // A directory package, with Electron + supported standalone Node. Models/Conda
 // remain external so packaging never copies training assets or credentials.
+const args = process.argv.slice(2);
+if (args.length && (args.length !== 2 || args[0] !== '--name' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(args[1]))) {
+  throw new Error('Usage: npm run desktop:package -- [--name DeskAI2-MyBuild]');
+}
+const packageName = args[1] ?? 'DeskAI2';
+const destination = path.join(root, 'release', packageName);
 await buildDesktop();
-const destination = path.join(root, 'release/DeskAI2');
 await mkdir(destination, { recursive: true });
 await cp(path.join(root, 'node_modules/electron/dist'), destination, { recursive: true,
   filter: file => !file.endsWith(path.sep + 'electron.exe') });

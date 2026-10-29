@@ -6,7 +6,7 @@ import { FrameQueue } from './frame-queue'
 type Options = {
   context: AudioContext
   getStream: () => Promise<MediaStream>
-  onFrameProcessed: (probabilities: SpeechProbabilities, frame: Float32Array) => void
+  onFrameProcessed: (probabilities: SpeechProbabilities, frame: Float32Array, sampleStart: number) => void
   onError: (error: unknown) => void
 }
 
@@ -17,11 +17,15 @@ export class FrameVAD {
   private stream: MediaStream | null = null
   private queue: FrameQueue
   private closed = false
+  private cursor = 0
 
   private constructor(private model: Awaited<ReturnType<typeof Silero.new>>, private options: Options) {
     this.queue = new FrameQueue(async frame => {
       const probabilities = await this.model.process(frame)
-      if (!this.closed) this.options.onFrameProcessed(probabilities, frame)
+      if (!this.closed) {
+        this.options.onFrameProcessed(probabilities, frame, this.cursor)
+        this.cursor += frame.length
+      }
     }, error => {
       // Stop acquisition immediately; release the current ONNX call when it settles.
       this.stream?.getTracks().forEach(track => track.stop())

@@ -1,11 +1,17 @@
 export { StreamingResampler } from './resample.ts';
 export { encodePcm16Wav } from './wav.ts';
+import { InputEndpoint } from './input-endpoint.ts';
 
 export type Segment = { sessionId: string; utteranceId: number; inputRevision: number; startSample: number; endSample: number; samples: Float32Array; final: boolean };
-export type InputState = 'OFF' | 'LISTENING' | 'CAPTURING' | 'TRANSCRIBING' | 'ACCUMULATING';
+export type InputState = 'OFF' | 'LISTENING' | 'CAPTURING' | 'SETTLING' | 'TRANSCRIBING' | 'ACCUMULATING';
 export type Ready = { sessionId: string; inputRevision: number; utteranceIds: number[]; text: string; continuationOf?: number };
 export type Boundary = { type: 'ready' | 'revoked' | 'overflow' | 'discarded'; sessionId: string; inputRevision: number; utteranceIds: number[]; reason?: string };
 export type Interruption = { type: 'candidate' | 'confirmed' | 'resume'; generationId: number; reason: string };
+export type InputDiagnostic = {
+  type: 'candidate' | 'audio-slice' | 'reopened' | 'asr-started' | 'asr-finished' | 'asr-failed' | 'asr-stale' | 'commit-ready' | 'cancelled';
+  sessionId: string; inputRevision: number; utteranceIds: number[];
+  startSample: number; endSample: number; observedSample: number; speechEndSample: number; monotonicMs: number;
+};
 export type InputOptions = {
   transcribe?: (segment: Segment, signal: AbortSignal) => Promise<string>;
   onSegment?: (segment: Segment) => void;
@@ -14,15 +20,22 @@ export type InputOptions = {
   onBoundary?: (event: Boundary) => void;
   onReady?: (ready: Ready) => void;
   onError?: (error: unknown) => void;
+  /** Timing/ranges only; never raw audio, recognized text or credentials. */
+  onDiagnostic?: (event: InputDiagnostic) => void;
   sampleRate?: 16000;
   maxSegmentSeconds?: number;
   maxQueuedSegments?: number;
   vadThreshold?: number;
+  /** Acoustic continuation tolerance, measured from the last voiced sample.
+   * 600 preserves the existing latency; larger values permit replacing a
+   * candidate ASR with the full continuing audio before publishing readiness. */
+  continuationWindowMs?: number;
 };
 
 const RATE = 16000;
-const PREROLL = 4000;
-const END_SILENCE = 9600;
+// Silero can recognize a weak onset several frames after its first phoneme.
+// Keep PCM, rather than inventing missing text after recognition.
+const PREROLL = 12800;
 const CANDIDATE = 3200;
 const CONFIRM = 12800;
 const UNFINISHED_WAIT = 19200;
@@ -78,7 +91,9 @@ export class InputController {
   private silence = 0;
   private speechRun = 0;
   private lastSpeechEnd = 0;
-  private pending = new Map<number, { text?: string; failed?: boolean }>();
+  private pending = new Map<number, { inputRevision: number; startSample: number; endSample: number; text?: string; failed?: boolean }>();
+  private readonly endpoint: InputEndpoint;
+  private activeUtteranceId?: number;
   private hasGap = false;
   private queue: Segment[] = [];
   private working = false;
@@ -89,14 +104,17 @@ export class InputController {
   private readonly maxSamples: number;
   private readonly maxQueue: number;
   private readonly threshold: number;
+  private readonly releaseThreshold: number;
 
   constructor(options: InputOptions = {}) {
     this.options = options;
+    this.endpoint = new InputEndpoint(options.continuationWindowMs);
     if (options.sampleRate && options.sampleRate !== RATE) throw new RangeError('InputController requires 16 kHz mono');
     this.maxSamples = Math.floor(Math.min(20, options.maxSegmentSeconds ?? 20) * RATE);
     if (this.maxSamples < RATE) throw new RangeError('maxSegmentSeconds must be at least one second');
     this.maxQueue = Math.max(1, Math.floor(options.maxQueuedSegments ?? 8));
     this.threshold = options.vadThreshold ?? 0.5;
+    this.releaseThreshold = Math.max(0, this.threshold - 0.15);
   }
 
   start(sessionId: string): void {
@@ -115,12 +133,18 @@ export class InputController {
   }
 
   stop(): void {
+    if (this.sessionId && (this.capturing || this.pending.size)) {
+      this.diagnose('cancelled', [...this.pending.keys()],
+        this.pending.values().next().value?.startSample ?? this.activeStart, this.cursor);
+    }
     this.epoch++;
     this.abortController.abort();
     this.queue = [];
     this.active = []; this.activeLength = this.silence = this.speechRun = 0;
     this.preRoll = []; this.preRollLength = 0;
     this.capturing = false;
+    this.endpoint.seal();
+    this.activeUtteranceId = undefined;
     this.pending.clear();
     this.hasGap = false;
     this.readyRevision = -1;
@@ -143,7 +167,9 @@ export class InputController {
     const samples = frame.samples.slice();
     const start = this.cursor;
     this.cursor += samples.length;
-    const voiced = frame.probability >= this.threshold;
+    // Hysteresis protects weak phonemes inside speech without lowering the
+    // threshold that admits a new noise/onset candidate.
+    const voiced = frame.probability >= (this.capturing ? this.releaseThreshold : this.threshold);
     if (!this.capturing && voiced) this.begin(start);
     if (this.capturing) {
       this.active.push(samples);
@@ -158,7 +184,7 @@ export class InputController {
         this.speechRun = 0;
       }
       if (this.activeLength >= this.maxSamples) this.emitSegment(false);
-      else if (this.silence >= END_SILENCE) {
+      else if (this.silence >= this.endpoint.candidateSamples) {
         this.emitSegment(true);
         if (this.interrupt === 'candidate' && !this.options.transcribe) this.resumeIfFalseAlarm();
       }
@@ -167,14 +193,30 @@ export class InputController {
   }
 
   private begin(sampleStart: number): void {
+    const tail = this.endpoint.reopen(sampleStart, this.lastSpeechEnd, this.preRollLength,
+      segment => this.readyRevision < 0 && this.pending.has(segment.utteranceId));
     this.revokeReady('new onset');
     this.revision++;
     this.continuationForRevision = this.lastSubmittedUtterance && sampleStart - this.lastSpeechEnd <= UNFINISHED_WAIT
       ? this.lastSubmittedUtterance : 0;
-    this.activeStart = Math.max(this.lastSegmentEnd, sampleStart - this.preRollLength);
-    this.active = this.preRoll;
+    if (tail) {
+      // Remove only the speculative version. Its in-flight task is allowed to
+      // settle; the version check in drain rejects its text or error. Do not
+      // cancel the provider, which can destroy the shared hot ASR worker.
+      this.pending.delete(tail.utteranceId);
+      this.queue = this.queue.filter(segment => segment !== tail);
+      this.activeStart = tail.startSample;
+      this.active = [tail.samples, ...this.preRoll];
+      this.activeUtteranceId = tail.utteranceId;
+      this.lastSegmentEnd = tail.startSample;
+      this.diagnose('reopened', [tail.utteranceId], tail.startSample, tail.endSample);
+    } else {
+      this.activeStart = Math.max(this.lastSegmentEnd, sampleStart - this.preRollLength);
+      this.active = this.preRoll;
+      this.activeUtteranceId = undefined;
+    }
     this.capturing = true;
-    this.activeLength = this.preRollLength;
+    this.activeLength = this.preRollLength + (tail?.samples.length ?? 0);
     this.preRoll = []; this.preRollLength = 0;
     this.silence = this.speechRun = 0;
     this.setState('CAPTURING');
@@ -195,15 +237,17 @@ export class InputController {
     if (!this.activeLength) return;
     const all = join(this.active);
     const count = Math.min(all.length, this.maxSamples);
-    const segment: Segment = { sessionId: this.sessionId, utteranceId: this.nextUtterance++, inputRevision: this.revision,
+    const segment: Segment = { sessionId: this.sessionId, utteranceId: this.activeUtteranceId ?? this.nextUtterance++, inputRevision: this.revision,
       startSample: this.activeStart, endSample: this.activeStart + count, samples: all.slice(0, count), final };
+    this.activeUtteranceId = undefined;
     this.lastSegmentEnd = segment.endSample;
     this.options.onSegment?.(segment);
-    if (this.hasGap || this.pending.size >= this.maxQueue || this.queue.length + Number(this.working) >= this.maxQueue) {
+    this.diagnose(final ? 'candidate' : 'audio-slice', [segment.utteranceId], segment.startSample, segment.endSample);
+    if (this.hasGap || this.pending.size >= this.maxQueue) {
       if (!this.hasGap) this.options.onBoundary?.({ type: 'overflow', sessionId: this.sessionId, inputRevision: this.revision, utteranceIds: [segment.utteranceId], reason: 'ASR queue full' });
       this.hasGap = true;
     } else {
-      this.pending.set(segment.utteranceId, {});
+      this.pending.set(segment.utteranceId, { inputRevision: segment.inputRevision, startSample: segment.startSample, endSample: segment.endSample });
       this.queue.push(segment);
       this.drain();
     }
@@ -211,9 +255,10 @@ export class InputController {
     this.activeLength = all.length - count;
     this.activeStart = segment.endSample;
     if (final) {
+      if (this.pending.has(segment.utteranceId)) this.endpoint.remember(segment);
       this.active = []; this.activeLength = this.silence = this.speechRun = 0;
       this.capturing = false;
-      this.setState(this.working || this.queue.length ? 'TRANSCRIBING' : 'ACCUMULATING');
+      this.setState('SETTLING');
     }
   }
 
@@ -223,16 +268,27 @@ export class InputController {
     const epoch = this.epoch;
     this.working = true;
     const signal = this.abortController.signal;
+    this.diagnose('asr-started', [segment.utteranceId], segment.startSample, segment.endSample, segment.inputRevision);
     Promise.resolve().then(() => this.options.transcribe?.(segment, signal) ?? '').then(text => {
       if (epoch !== this.epoch || signal.aborted) return;
       const record = this.pending.get(segment.utteranceId);
-      if (record) record.text = text.trim();
+      if (record?.inputRevision !== segment.inputRevision) {
+        this.diagnose('asr-stale', [segment.utteranceId], segment.startSample, segment.endSample, segment.inputRevision);
+        return;
+      }
+      record.text = text.trim();
+      this.diagnose('asr-finished', [segment.utteranceId], segment.startSample, segment.endSample, segment.inputRevision);
       this.maybeReady();
     }, error => {
       if (epoch !== this.epoch || signal.aborted) return;
       const record = this.pending.get(segment.utteranceId);
-      if (record) record.failed = true;
+      if (record?.inputRevision !== segment.inputRevision) {
+        this.diagnose('asr-stale', [segment.utteranceId], segment.startSample, segment.endSample, segment.inputRevision);
+        return;
+      }
+      record.failed = true;
       this.hasGap = true;
+      this.diagnose('asr-failed', [segment.utteranceId], segment.startSample, segment.endSample, segment.inputRevision);
       this.options.onError?.(error);
       this.options.onBoundary?.({ type: 'discarded', sessionId: this.sessionId, inputRevision: this.revision, utteranceIds: [segment.utteranceId], reason: 'ASR failure' });
     }).finally(() => {
@@ -240,7 +296,8 @@ export class InputController {
       this.drain();
       if (epoch === this.epoch) {
         this.maybeReady();
-        if (!this.capturing) this.setState(this.queue.length || this.working ? 'TRANSCRIBING' : this.pending.size ? 'ACCUMULATING' : 'LISTENING');
+        if (!this.capturing) this.setState(this.pending.size && this.endpoint.waiting(this.cursor, this.lastSpeechEnd) ? 'SETTLING' :
+          this.queue.length || this.working ? 'TRANSCRIBING' : this.pending.size ? 'ACCUMULATING' : 'LISTENING');
       }
     });
   }
@@ -252,6 +309,7 @@ export class InputController {
       if (this.working || this.queue.length) return;
       const ids = records.map(([id]) => id);
       this.pending.clear();
+      this.endpoint.seal();
       this.hasGap = false;
       this.resumeIfFalseAlarm();
       this.options.onBoundary?.({ type: 'discarded', sessionId: this.sessionId, inputRevision: this.revision, utteranceIds: ids, reason: 'incomplete ASR accumulation' });
@@ -260,19 +318,24 @@ export class InputController {
     }
     if (!records.length || records.some(([, record]) => record.text === undefined && !record.failed)) return;
     if (records.some(([, record]) => record.failed)) return;
+    // ASR punctuation/language is not a turn boundary. Every language receives
+    // the same acoustic continuation window, including short complete replies.
+    if (this.endpoint.waiting(this.cursor, this.lastSpeechEnd)) return;
     const text = records.map(([, record]) => record.text).filter(Boolean).join(' ').trim();
     if (!text) {
       for (const [id] of records) this.pending.delete(id);
+      this.endpoint.seal();
       this.resumeIfFalseAlarm();
       this.options.onBoundary?.({ type: 'discarded', sessionId: this.sessionId, inputRevision: this.revision, utteranceIds: records.map(([id]) => id), reason: 'empty ASR' });
       this.setState('LISTENING');
       return;
     }
-    if (unfinished(text) && this.cursor - this.lastSpeechEnd < UNFINISHED_WAIT) return;
+    if (unfinished(text) && this.endpoint.waiting(this.cursor, this.lastSpeechEnd, true)) return;
     const ids = records.map(([id]) => id);
     const local = classifyLocalText(text, { playing: this.output.playing || this.interrupt === 'candidate', expectsReply: this.output.expectsReply });
     if (local === 'empty') {
       for (const [id] of records) this.pending.delete(id);
+      this.endpoint.seal();
       this.resumeIfFalseAlarm();
       this.setState('LISTENING');
       return;
@@ -280,19 +343,23 @@ export class InputController {
     if (local === 'stop') {
       this.confirmInterruption('stop control');
       for (const [id] of records) this.pending.delete(id);
+      this.endpoint.seal();
       this.options.onBoundary?.({ type: 'discarded', sessionId: this.sessionId, inputRevision: this.revision, utteranceIds: ids, reason: 'stop control' });
       this.setState('LISTENING');
       return;
     }
     if (local === 'backchannel') {
       for (const [id] of records) this.pending.delete(id);
+      this.endpoint.seal();
       this.resumeIfFalseAlarm();
       this.options.onBoundary?.({ type: 'discarded', sessionId: this.sessionId, inputRevision: this.revision, utteranceIds: ids, reason: 'backchannel' });
       this.setState('LISTENING');
       return;
     }
     if (this.interrupt === 'candidate') this.confirmInterruption('recognized speech');
+    this.endpoint.seal();
     this.readyRevision = this.revision;
+    this.diagnose('commit-ready', ids, records[0][1].startSample, records.at(-1)![1].endSample);
     this.options.onBoundary?.({ type: 'ready', sessionId: this.sessionId, inputRevision: this.revision, utteranceIds: ids });
     this.options.onReady?.({ sessionId: this.sessionId, inputRevision: this.revision, utteranceIds: ids, text,
       ...(this.continuationForRevision ? { continuationOf: this.continuationForRevision } : {}) });
@@ -327,6 +394,7 @@ export class InputController {
 
   /** Rejected/offline input is explicitly discarded locally, never called submitted. */
   discardReady(utteranceIds: number[]): void {
+    this.endpoint.discard(utteranceIds);
     for (const id of utteranceIds) this.pending.delete(id);
     this.readyRevision = -1;
     if (!this.capturing && !this.working && !this.queue.length) this.setState('LISTENING');
@@ -368,6 +436,12 @@ export class InputController {
 
   private setState(state: InputState): void {
     if (state !== this.state) { this.state = state; this.options.onInputState?.(state); }
+  }
+
+  private diagnose(type: InputDiagnostic['type'], utteranceIds: number[], startSample: number, endSample: number,
+    inputRevision = this.revision): void {
+    this.options.onDiagnostic?.({ type, sessionId: this.sessionId, inputRevision, utteranceIds,
+      startSample, endSample, observedSample: this.cursor, speechEndSample: this.lastSpeechEnd, monotonicMs: performance.now() });
   }
 }
 

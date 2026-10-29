@@ -1,13 +1,173 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createInputController, classifyLocalText, StreamingResampler, encodePcm16Wav } from '../../packages/voice-core/src/index.ts';
-import type { Segment, Ready, Boundary, Interruption } from '../../packages/voice-core/src/index.ts';
+import type { Segment, Ready, Boundary, Interruption, InputDiagnostic } from '../../packages/voice-core/src/index.ts';
 
 const frame = (probability: number, length = 160, value = 0.2) => ({ samples: new Float32Array(length).fill(value), probability });
 const feed = (controller: ReturnType<typeof createInputController>, probability: number, count: number, length = 160) => {
   for (let i = 0; i < count; i++) controller.pushFrame(frame(probability, length));
 };
 const settle = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
+
+/** Actual Silero v5 boundaries, with a unique reproducible sample sequence. */
+function realFrames(controller: ReturnType<typeof createInputController>) {
+  const source: number[] = [];
+  return {
+    source,
+    push(probability: number, count: number) {
+      for (let i = 0; i < count; i++) {
+        const sampleStart = source.length;
+        const samples = Float32Array.from({ length: 512 }, (_, j) => ((sampleStart + j) % 1009 - 504) / 1024);
+        source.push(...samples);
+        controller.pushFrame({ samples, probability, sampleStart });
+      }
+    }
+  };
+}
+
+test('512-sample candidate reopens exact audio including delayed weak onset and short pause', async () => {
+  const segments: Segment[] = [], ready: Ready[] = [], diagnostics: InputDiagnostic[] = [];
+  let calls = 0;
+  const controller = createInputController({ continuationWindowMs: 1000,
+    transcribe: async () => ++calls === 1 ? 'まて。' : '那你不就是外星人。',
+    onSegment: value => segments.push(value), onReady: value => ready.push(value), onDiagnostic: value => diagnostics.push(value) });
+  controller.start('a');
+  const audio = realFrames(controller);
+  audio.push(0.2, 19); // 608 ms of low-confidence leading phonemes.
+  audio.push(0.95, 6);
+  audio.push(0, 22); // 704 ms pause: candidate exists, ownership not published.
+  await settle();
+  assert.equal(segments.length, 1);
+  assert.equal(ready.length, 0, 'ASR full stop/language must not commit a short acoustic fragment');
+  audio.push(0.95, 6);
+  audio.push(0, 32);
+  await settle();
+  assert.equal(segments.length, 2);
+  assert.equal(segments[1].utteranceId, segments[0].utteranceId, 'one semantic interval, two ASR versions');
+  assert.ok(segments[1].inputRevision > segments[0].inputRevision);
+  assert.equal(segments[1].startSample, 0, 'weak leading audio survives delayed positive VAD');
+  assert.deepEqual(segments[1].samples, Float32Array.from(audio.source.slice(0, segments[1].endSample)), 'no dropped/duplicated samples across reopen');
+  assert.deepEqual(ready.map(value => value.text), ['那你不就是外星人。']);
+  assert.deepEqual(ready[0].utteranceIds, [1]);
+  assert.ok(diagnostics.some(value => value.type === 'reopened'));
+  const commit = diagnostics.find(value => value.type === 'commit-ready')!;
+  assert.ok(commit.observedSample - commit.speechEndSample >= 16000);
+  assert.equal(commit.startSample, 0);
+  assert.ok(diagnostics.every(value => Object.keys(value).every(key => !['samples', 'text'].includes(key))));
+});
+
+test('replaced in-flight ASR errors cannot discard the new version or cancel the hot worker', async () => {
+  const tasks: { segment: Segment; signal: AbortSignal; resolve: (text: string) => void; reject: (error: Error) => void }[] = [];
+  const errors: unknown[] = [], boundaries: Boundary[] = [], ready: Ready[] = [];
+  const controller = createInputController({ continuationWindowMs: 1000, maxQueuedSegments: 1,
+    transcribe: (segment, signal) => new Promise((resolve, reject) => tasks.push({ segment, signal, resolve, reject })),
+    onError: value => errors.push(value), onBoundary: value => boundaries.push(value), onReady: value => ready.push(value) });
+  controller.start('a'); const audio = realFrames(controller);
+  audio.push(0.9, 8); audio.push(0, 22); await settle();
+  audio.push(0.9, 8); audio.push(0, 32); await settle();
+  assert.equal(tasks.length, 1, 'recognizer remains serial');
+  assert.equal(tasks[0].signal.aborted, false, 'replacement does not destroy the shared worker');
+  tasks[0].reject(new Error('obsolete task failed')); await settle();
+  assert.equal(tasks.length, 2);
+  assert.equal(errors.length, 0);
+  assert.equal(boundaries.some(value => value.type === 'overflow' || value.type === 'discarded'), false);
+  tasks[1].resolve('感觉还可以。'); await settle();
+  assert.deepEqual(ready.map(value => value.text), ['感觉还可以。']);
+  assert.equal(tasks[1].segment.startSample, 0);
+});
+
+test('obsolete successful ASR result never contributes text to replacement audio', async () => {
+  const tasks: ((text: string) => void)[] = [], ready: Ready[] = [];
+  const controller = createInputController({ continuationWindowMs: 1000,
+    transcribe: () => new Promise(resolve => tasks.push(resolve)), onReady: value => ready.push(value) });
+  controller.start('a'); const audio = realFrames(controller);
+  audio.push(0.9, 8); audio.push(0, 22); await settle();
+  audio.push(0.9, 8); audio.push(0, 32);
+  tasks[0]('まて。'); await settle();
+  assert.equal(ready.length, 0);
+  tasks[1]('那你不就是外星人。'); await settle();
+  assert.deepEqual(ready.map(value => value.text), ['那你不就是外星人。']);
+});
+
+test('one-second policy reopens at the last 512-sample boundary before commit', async () => {
+  const segments: Segment[] = [], ready: Ready[] = [];
+  const controller = createInputController({ continuationWindowMs: 1000,
+    transcribe: async segment => segment.inputRevision === 1 ? 'no.' : 'no, wait.',
+    onSegment: value => segments.push(value), onReady: value => ready.push(value) });
+  controller.start('a'); const audio = realFrames(controller);
+  audio.push(0.9, 6); audio.push(0, 31); await settle(); // 992 ms silence.
+  assert.equal(ready.length, 0);
+  audio.push(0.9, 6); audio.push(0, 32); await settle();
+  assert.equal(segments[1].utteranceId, 1);
+  assert.deepEqual(segments[1].samples, Float32Array.from(audio.source.slice(0, segments[1].endSample)));
+  assert.deepEqual(ready.map(value => value.text), ['no, wait.']);
+});
+
+test('session cancellation releases a replaceable candidate and isolates late ASR with reused IDs', async () => {
+  let resolveOld!: (text: string) => void;
+  let calls = 0;
+  const ready: Ready[] = [], diagnostics: InputDiagnostic[] = [], segments: Segment[] = [];
+  const controller = createInputController({ continuationWindowMs: 1000,
+    transcribe: () => ++calls === 1 ? new Promise(resolve => { resolveOld = resolve; }) : Promise.resolve('new'),
+    onReady: value => ready.push(value), onSegment: value => segments.push(value), onDiagnostic: value => diagnostics.push(value) });
+  controller.start('old'); const oldAudio = realFrames(controller);
+  oldAudio.push(0.9, 8); oldAudio.push(0, 22); await settle();
+  controller.start('new'); const newAudio = realFrames(controller);
+  newAudio.push(0.9, 8); newAudio.push(0, 32); await settle();
+  assert.equal(calls, 1);
+  resolveOld('obsolete'); await settle();
+  assert.deepEqual(ready.map(value => [value.sessionId, value.text]), [['new', 'new']]);
+  assert.equal(segments[1].utteranceId, 1);
+  assert.equal(segments[1].startSample, 0);
+  assert.deepEqual(segments[1].samples, Float32Array.from(newAudio.source.slice(0, segments[1].endSample)));
+  assert.ok(diagnostics.some(value => value.type === 'cancelled' && value.sessionId === 'old'));
+});
+
+test('active VAD hysteresis retains weak phonemes and short multilingual answers', async () => {
+  for (const text of ['是。', 'はい。', 'no.']) {
+    const segments: Segment[] = [], ready: Ready[] = [];
+    const controller = createInputController({ transcribe: async () => text, onSegment: value => segments.push(value), onReady: value => ready.push(value) });
+    controller.start(text); const audio = realFrames(controller);
+    audio.push(0.9, 1); audio.push(0.4, 24);
+    assert.equal(segments.length, 0, 'weak in-speech probabilities are not treated as 768 ms of silence');
+    audio.push(0, 19); await settle();
+    assert.equal(segments.length, 1);
+    assert.equal(ready[0].text, text);
+    assert.deepEqual(segments[0].samples, Float32Array.from(audio.source));
+  }
+});
+
+test('published readiness freezes audio; accepted text and deliberate repetition remain separate', async () => {
+  const segments: Segment[] = [], ready: Ready[] = [];
+  const controller = createInputController({ continuationWindowMs: 1000, transcribe: async () => '可以。',
+    onSegment: value => segments.push(value), onReady: value => ready.push(value) });
+  controller.start('a'); const audio = realFrames(controller);
+  audio.push(0.9, 8); audio.push(0, 32); await settle();
+  const first = ready[0];
+  audio.push(0.9, 8);
+  controller.markAccepted(first.inputRevision, first.utteranceIds);
+  audio.push(0, 32); await settle();
+  assert.equal(segments[1].startSample, segments[0].endSample);
+  assert.deepEqual(ready.at(-1)?.utteranceIds, [2]);
+  assert.equal(ready.at(-1)?.text, '可以。', 'real repeated words are preserved');
+  assert.equal(ready.at(-1)?.continuationOf, undefined, 'pending receipt is separate from an accepted continuation');
+});
+
+test('512-sample hard cap preserves every sample and does not publish mid-speech', async () => {
+  const segments: Segment[] = [], ready: Ready[] = [];
+  const controller = createInputController({ continuationWindowMs: 1000, maxSegmentSeconds: 1,
+    transcribe: async () => '重复。', onSegment: value => segments.push(value), onReady: value => ready.push(value) });
+  controller.start('a'); const audio = realFrames(controller);
+  audio.push(0.9, 70); await settle();
+  assert.equal(ready.length, 0);
+  audio.push(0, 32); await settle();
+  for (let i = 0; i < segments.length; i++) {
+    assert.ok(segments[i].samples.length <= 16000);
+    assert.deepEqual(segments[i].samples, Float32Array.from(audio.source.slice(segments[i].startSample, segments[i].endSample)));
+    if (i) assert.equal(segments[i].startSample, segments[i - 1].endSample);
+  }
+  assert.equal(ready[0].text, segments.map(() => '重复。').join(' '));
+});
 
 test('receipt after a newer onset consumes only the submitted prefix without resending it', async () => {
   const ready: Ready[] = [];
@@ -269,10 +429,10 @@ test('PCM is absent from pending text records and released after submission', as
   const internal = controller as unknown as { pending: Map<number, object>; queue: Segment[]; active: Float32Array[]; preRollLength: number };
   assert.equal(internal.queue.length, 0);
   assert.equal(internal.active.length, 0);
-  assert.deepEqual([...internal.pending.values()].map(record => Object.keys(record)), [['text']]);
+  assert.deepEqual([...internal.pending.values()].map(record => Object.keys(record)), [['inputRevision', 'startSample', 'endSample', 'text']]);
   controller.markSubmitted(ready[0].utteranceIds);
   assert.equal(internal.pending.size, 0);
-  assert.ok(internal.preRollLength <= 4000);
+  assert.ok(internal.preRollLength <= 12800);
 });
 
 test('continuationOf applies only to a prompt continuation within 1200 ms', async () => {

@@ -64,8 +64,9 @@ export class SentenceStream {
       }
       if (!url && i - start >= this.maxSentence && /[，、,;；:\s]/u.test(char)) boundary = true;
       if (!url && i - start >= this.maxSentence && /[\p{Script=Han}\u3040-\u30ff]/u.test(char)) boundary = true;
-      // Wait for a following character so streamed punctuation/URL/markdown stays intact.
-      if (boundary && (i + 1 < this.raw.length || this.ended)) return this.take(start, i + 1);
+      // Markup and URLs are held above. A confirmed terminator needs no later
+      // model token; periods alone still require their whitespace lookahead.
+      if (boundary) return this.take(start, i + 1);
     }
     if (this.ended) return this.take(start, this.raw.length);
     return;

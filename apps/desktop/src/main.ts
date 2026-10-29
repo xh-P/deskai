@@ -4,12 +4,13 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { LocalDshSpeech, type SpeechStatus } from '../../../packages/dsh-adapter/src/speech.ts';
 import { LocalDshChat } from '../../../packages/dsh-adapter/src/session.ts';
-import { createInputController, encodePcm16Wav, type InputController } from '../../../packages/voice-core/src/index.ts';
+import { createInputController, encodePcm16Wav, type InputController, type InputDiagnostic } from '../../../packages/voice-core/src/index.ts';
 import { DialogueController, type DialogueEvent, type DialoguePreferences } from '../../../packages/voice-core/src/dialogue.ts';
 import { validatePersona } from '../../../packages/voice-core/src/prompts.ts';
 import { FixtureChatPort } from './fixture-chat.ts';
 import { LocalTtsService, type TtsStatus, type VoiceSelection } from '../../../packages/tts-adapter/src/index.ts';
 import { SpeechOutput, type SpeechPlaybackReport } from './speech-output.ts';
+import { OutputTimeline } from '../../../packages/voice-core/src/diagnostics.ts';
 import { defaultPreferences, loadPreferences, savePreferences, mergePreferences, inspectAssets, type DesktopPreferences } from './settings.ts';
 
 const root = path.resolve(process.env.DESKAI_PROJECT_ROOT ?? process.cwd());
@@ -66,8 +67,11 @@ const ttsMetrics = { pcmChunks: 0, playedSegments: 0, firstPCMAt: 0, voiceFailur
 const metrics = { inputFrames: 0, inputSamples: 0, inputFramesDuringPlayback: 0, segments: 0,
   asrCompleted: 0, asrSeconds: [] as number[], readyTurns: 0, fixtureTranscriptPrefixMatched: null as boolean | null, sessionStarts: 0,
   firstSegment: null as { startSample: number; endSample: number; final: boolean } | null,
+  inputTimeline: [] as InputDiagnostic[],
   interruptions: [] as { type: string; at: number }[] };
 let outputActive = false;
+const continuationWindowMs = 1000;
+const outputTimeline = new OutputTimeline();
 
 function send(event: object) { if (window && !window.isDestroyed()) window.webContents.send('deskai:event', event); }
 function updateTray() {
@@ -120,9 +124,32 @@ async function prepareTts(): Promise<void> {
 function attachOutput() {
   const activeDialogue = dialogue;
   if (!tts || !activeDialogue || ttsStatus.state !== 'ready') return;
-  voiceOutput = new SpeechOutput({ sessionId, port: tts,
+  const activeTts = tts;
+  voiceOutput = new SpeechOutput({ sessionId, port: {
+    cancel: () => activeTts.cancel(),
+    synthesize: async (request, onPCM, signal) => {
+      const started = performance.now();
+      const identity = { sessionId: request.sessionId, turnId: request.turnId, segmentId: request.segmentId, generationId: request.generationId };
+      const current = () => sessionId === request.sessionId;
+      if (current()) outputTimeline.record('tts-started', identity);
+      try {
+        const result = await activeTts.synthesize(request, pcm => {
+          if (current()) outputTimeline.record('tts-first-pcm', { ...identity, durationMs: performance.now() - started }, true);
+          onPCM(pcm);
+        }, signal);
+        if (current()) outputTimeline.record('tts-finished', { ...identity, durationMs: performance.now() - started });
+        return result;
+      } catch (error) {
+        if (current()) outputTimeline.record('tts-failed', { ...identity, durationMs: performance.now() - started });
+        throw error;
+      }
+    },
+  },
     emit: event => {
-      if (event.type === 'audio-chunk') { ttsMetrics.pcmChunks++; ttsMetrics.firstPCMAt ||= performance.now(); }
+      if (event.type === 'audio-chunk') {
+        ttsMetrics.pcmChunks++; ttsMetrics.firstPCMAt ||= performance.now();
+        if (event.sessionId === sessionId) outputTimeline.record('playback-enqueued', event, true);
+      }
       if (event.type === 'speech-state') { outputBusy = !['idle', 'error'].includes(event.state); refreshOutput(); }
       send(event);
     },
@@ -138,7 +165,15 @@ function attachOutput() {
 }
 function dialogueEvent(event: DialogueEvent) {
   if (!sessionId) return;
+  if (event.type === 'model-state' && event.state === 'generating') {
+    outputTimeline.record('model-started', { sessionId, generationId: dialogue?.generationId });
+  } else if (event.type === 'assistant-delta') {
+    outputTimeline.record('model-first-text', { ...event, sessionId }, true);
+  } else if (event.type === 'decision') {
+    outputTimeline.record('model-decision', { ...event, sessionId });
+  }
   if (event.type === 'output-clear') {
+    outputTimeline.record('output-cleared', { sessionId, generationId: event.generationId });
     outputGeneration = Math.max(outputGeneration, event.generationId);
     outputActive = outputPaused = false;
     send({ type: 'output-command', sessionId, generationId: outputGeneration, command: 'clear' });
@@ -189,6 +224,7 @@ ipcMain.handle('deskai:runtime', event => {
   trusted(event);
   return { smoke: smokeMode, fakeMedia, dialogueSmoke, ttsSmoke, preferences, personas,
     speechStatus: lastSpeechStatus, assetStatus, ttsStatus, voices: tts?.registry() ?? [],
+    voiceDiagnostics: { continuationWindowMs, input: metrics.inputTimeline, output: outputTimeline.snapshot() },
     versions: { electron: process.versions.electron ?? '', chrome: process.versions.chrome ?? '' } };
 });
 async function openConversation() {
@@ -211,6 +247,8 @@ async function openConversation() {
   if (epoch !== sessionEpoch || shutdown) throw new Error('SESSION_START_CANCELLED');
   sessionId = randomUUID();
   metrics.sessionStarts++;
+  metrics.inputTimeline = [];
+  outputTimeline.clear();
   outputGeneration = 0;
   if (ttsSmoke && !realModelSmoke) fixturePort = new FixtureChatPort();
   dialogue = new DialogueController(ttsSmoke && !realModelSmoke ? fixturePort! : new LocalDshChat(service, root), preferences, dialogueEvent);
@@ -218,8 +256,13 @@ async function openConversation() {
   // Keep this instance across sessions so a canceled ASR task settles before
   // the new session can start another task on the same recognizer.
   controller ??= createInputController({
+    continuationWindowMs,
     maxSegmentSeconds: Math.min(20, catalog.maxDurationSeconds, (catalog.maxAudioBytes - 44) / 32000),
     maxQueuedSegments: 4,
+    onDiagnostic: event => {
+      metrics.inputTimeline.push(event);
+      if (metrics.inputTimeline.length > 100) metrics.inputTimeline.shift();
+    },
     transcribe: async (segment, signal) => {
       const started = performance.now();
       const result = await speech!.transcribe(encodePcm16Wav(segment.samples), signal);
@@ -269,11 +312,13 @@ async function openConversation() {
       }
       if (voiceSubmitting) return;
       voiceSubmitting = true;
+      outputTimeline.record('input-submitted', ready);
       const current = controller;
       void dialogue?.submit({ text: ready.text, source: 'voice', continuationOf: ready.continuationOf,
         utteranceIds: ready.utteranceIds, isEligible: () => sessionId === ready.sessionId && current.isEligible(ready.inputRevision, ready.utteranceIds),
         onAccepted: () => {
           if (sessionId === ready.sessionId) {
+            outputTimeline.record('input-accepted', ready);
             try { current.markAccepted(ready.inputRevision, ready.utteranceIds); }
             catch { /* A later failed ASR accumulation may already have removed this prefix. The accepted model turn remains in DialogueController history. */ }
           }
@@ -374,17 +419,26 @@ ipcMain.handle('deskai:retry-speech', async event => {
   try { await work; } finally { if (recoveringTts === work) recoveringTts = undefined; }
 });
 ipcMain.on('deskai:frame', (event, frame: unknown) => {
+  try { trusted(event); } catch { return; }
+  if (!captureArmed || !controller || !frame || typeof frame !== 'object') return;
+  const value = frame as { sessionId: string; samples: Float32Array; probability: number; sampleStart: number };
+  if (value.sessionId !== sessionId) return;
   try {
-    trusted(event);
-    if (!captureArmed || !controller || !frame || typeof frame !== 'object') return;
-    const value = frame as { sessionId: string; samples: Float32Array; probability: number };
-    if (value.sessionId !== sessionId || !(value.samples instanceof Float32Array) || value.samples.length > 2048 ||
-        !Number.isFinite(value.probability) || value.probability < 0 || value.probability > 1) return;
+    if (!(value.samples instanceof Float32Array) || !value.samples.length || value.samples.length > 2048 ||
+        !Number.isSafeInteger(value.sampleStart) || value.sampleStart < 0 ||
+        !Number.isFinite(value.probability) || value.probability < 0 || value.probability > 1) throw new Error('INVALID_CAPTURE_FRAME');
     metrics.inputFrames++; metrics.inputSamples += value.samples.length;
     if (outputActive) metrics.inputFramesDuringPlayback++;
     refreshOutput();
     controller.pushFrame(value);
-  } catch { send({ type: 'error', code: 'INVALID_CAPTURE_FRAME', message: '采集帧格式错误，请重新开始会话。' }); }
+  } catch {
+    captureArmed = false;
+    controller.resumeIfFalseAlarm();
+    controller.stop();
+    updateTray();
+    send({ type: 'capture-command', command: 'pause' });
+    send({ type: 'error', code: 'INVALID_CAPTURE_FRAME', message: '音频采集出现缺帧或格式异常，已暂停麦克风；请重新开始语音对话。' });
+  }
 });
 ipcMain.on('deskai:playback', (event, report: unknown) => {
   trusted(event);

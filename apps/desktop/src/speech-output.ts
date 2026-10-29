@@ -127,6 +127,7 @@ export class SpeechOutput {
       const floats = new Float32Array(view.byteLength / 2);
       for (let i = 0; i < floats.length; i++) floats[i] = view.getInt16(i * 2, true) / 32768;
       for (let i = 0; i < floats.length; i += segment.rate) segment.chunks.push(floats.slice(i, i + segment.rate));
+      this.pump();
     }, controller.signal); }).then(result => {
       if (controller.signal.aborted || this.attempt !== attempt) return;
       if (result?.canceled) throw new Error('TTS_CANCELED');
@@ -137,7 +138,9 @@ export class SpeechOutput {
   }
   private pump(): void {
     if (this.closed || this.paused || this.awaiting) return;
-    const segment = this.segments.find(item => item.complete && item.sent < item.chunks.length);
+    // Start validated PCM while the worker is settling, but retain the final
+    // chunk until successful completion so no receipt can finish a failed job.
+    const segment = this.segments.find(item => item.sent < item.chunks.length - (item.complete ? 0 : 1));
     if (!segment) return;
     const samples = segment.chunks[segment.sent];
     if (this.queuedSeconds + samples.length / segment.rate > 3.01) return;
@@ -147,7 +150,7 @@ export class SpeechOutput {
     this.options.emit({ type: 'audio-chunk', sessionId: segment.sessionId, turnId: segment.turnId, attemptId: segment.attemptId,
       generationId: segment.generationId, voiceRevision: segment.voiceRevision, segmentId: segment.segmentId,
       chunkSeq, samples: new Float32Array(samples), sampleRate: segment.rate, channels: 1, format: 'pcm_f32',
-      segmentFinal: segment.sent === segment.chunks.length, final: segment.sent === segment.chunks.length });
+      segmentFinal: segment.complete && segment.sent === segment.chunks.length, final: segment.complete && segment.sent === segment.chunks.length });
   }
   private clear(generationId: number): void {
     if (generationId < this.generation) return;

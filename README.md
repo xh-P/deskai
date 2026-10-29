@@ -10,6 +10,7 @@ Windows 桌面 AI 语音对话项目：**dsh SenseVoiceSmall + dsh + GPT-SoVITS*
 
 - 双击 `启动桌面语音对话.cmd`，或执行 `npm run desktop:dev`；启动会预热本地服务，点击“开始语音对话”后才采音。关闭窗口默认隐藏到托盘，退出使用托盘菜单。
 - 可运行目录包：`npm run desktop:package` 后双击 `release/DeskAI2/DeskAI.exe`。大模型、Conda 与 runtime 使用外部资源；移动包后修改旁边 `deskai-runtime.json` 的 assetRoot。
+- 本次语音体验修订包：`release/DeskAI2-VoiceFlow-20261030/DeskAI.exe`；使用前从托盘退出旧包。统一音频边界、整段续说重识别，保留中日英自动识别并按用户选择采用约一秒确认窗口，详见[修订与验证限制](./docs/desktop-voice/voice-flow-20261030.md)。可用 `npm run desktop:package -- --name DeskAI2-VoiceFlow-20261030` 复建。
 - `npm run desktop:test`：确定性回归；`npm run desktop:smoke`：模拟麦克风、真实本地 ASR 回放；`npm run m2:smoke`：模拟模型的桌面界面回放。这些命令不验收物理设备。
 - [M3–M4 运行与验证](./docs/desktop-voice/m3-m4-validation.md) · [真实模型验证](./docs/desktop-voice/m2-live-validation-20261030.md) · [临时协助清单](./docs/desktop-voice/temporary-user-checks.md) · [M0 剩余门禁](./docs/desktop-voice/m0-validation.md)。
 

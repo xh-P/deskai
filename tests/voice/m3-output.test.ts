@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { OutputTimeline } from '../../packages/voice-core/src/diagnostics.ts';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
@@ -8,6 +9,23 @@ import { DialogueController, type DialoguePort, type DialogueEvent } from '../..
 import { SpeechOutput, type SpeechOutputEvent, type SpeechPort, type SpeechProgress } from '../../apps/desktop/src/speech-output.ts';
 import type { PCMChunk, SynthesisRequest } from '../../packages/tts-adapter/src/index.ts';
 
+test('timing diagnostics stay bounded, exclude conversation/audio fields, and return isolated snapshots', () => {
+  const trace = new OutputTimeline();
+  const identity = { sessionId: 's', turnId: 't', utteranceIds: [1], text: 'private speech', samples: new Float32Array([1]) };
+  trace.record('model-first-text', identity, true);
+  trace.record('model-first-text', identity, true);
+  assert.equal(trace.snapshot().length, 1);
+  assert.doesNotMatch(JSON.stringify(trace.snapshot()), /private speech|samples|"text"/u);
+  identity.utteranceIds[0] = 2;
+  const copy = trace.snapshot();
+  copy[0].utteranceIds![0] = 3;
+  assert.deepEqual(trace.snapshot()[0].utteranceIds, [1]);
+  for (let i = 0; i < 120; i++) trace.record('tts-started', { sessionId: 's', segmentId: String(i) });
+  assert.equal(trace.snapshot().length, 100);
+  assert.equal(trace.snapshot()[0].segmentId, '20');
+  trace.clear();
+  assert.deepEqual(trace.snapshot(), []);
+});
 const settle = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 const speechHeader = { v: 1, action: 'SPEAK', reason: 'direct_request', expectsReply: true } as const;
 function sentences(raw: string) {
@@ -30,6 +48,25 @@ test('streamed zh/ja/en punctuation preserves decimals, abbreviations, source sp
   assert.equal(cleanSpeech('Use `secret()` and **bold**.'), 'Use and bold.');
   assert.equal(cleanSpeech('*Important* detail.'), 'Important detail.');
   assert.doesNotMatch(sentences('*点头！* **可以！继续。**（うなずく！）好。').map(s => s.text).join(''), /点头|うなず/u);
+});
+
+test('confirmed sentence boundaries release without a later model token while ambiguous tokens stay buffered', () => {
+  for (const raw of ['可以。', '本当？', '好的！', 'Ready!', 'Ready?', 'First line\n', 'Ready. ']) {
+    const stream = new SentenceStream(); stream.append(raw);
+    const sentence = stream.next();
+    assert.ok(sentence, `${JSON.stringify(raw)} must not wait for another delta or EOF`);
+    assert.equal(sentence.rawStart, 0);
+    assert.equal(sentence.rawText, raw.endsWith(' ') ? raw.trimEnd() : raw);
+    assert.equal(sentence.rawEnd, sentence.rawText.length);
+  }
+  for (const raw of ['Dr.', 'Value 3.', 'Ready.', 'https://example.com/?q=ok!', '**还没完。', '`code!', '（微笑！', '[链接！']) {
+    const stream = new SentenceStream(); stream.append(raw);
+    assert.equal(stream.next(), undefined, `${JSON.stringify(raw)} remains ambiguous or nonspoken`);
+  }
+  const decimal = new SentenceStream(); decimal.append('Value 3.');
+  assert.equal(decimal.next(), undefined);
+  decimal.append('14 dollars. ');
+  assert.equal(decimal.next()?.text, 'Value 3.14 dollars.');
 });
 
 test('cleaned playback uses source spans and never inserts skipped code into heard history', () => {
@@ -69,6 +106,34 @@ class FakeTts implements SpeechPort {
   }
   async cancel() { this.cancelCalls++; }
 }
+
+/** Exposes the gap between receiving PCM and the worker's terminal result. */
+class SettlingTts extends FakeTts {
+  finish!: () => void;
+  reject!: (error: Error) => void;
+  private receivedSamples = 0;
+  private receivedChunks = 0;
+  async synthesize(request: SynthesisRequest, callback: (pcm: PCMChunk) => void) {
+    this.requests.push(request); this.callbacks.push(callback);
+    this.running++; this.maxRunning = Math.max(this.maxRunning, this.running);
+    try { await new Promise<void>((resolve, reject) => { this.finish = resolve; this.reject = reject; }); }
+    finally { this.running--; }
+    return { chunks: this.receivedChunks, samples: this.receivedSamples, canceled: false };
+  }
+  pcm(seconds: number): Float32Array {
+    const request = this.requests.at(-1)!;
+    const samples = Math.round(this.rate * seconds), pcm = Buffer.alloc(samples * 2);
+    const expected = new Float32Array(samples);
+    for (let i = 0; i < samples; i++) {
+      const value = (this.receivedSamples + i) % 20000 - 10000;
+      pcm.writeInt16LE(value, i * 2); expected[i] = value / 32768;
+    }
+    this.callbacks.at(-1)!({ ...request, requestId: 'r', chunkSeq: this.receivedChunks++, sampleRate: this.rate,
+      channels: 1, format: 'pcm_s16le', samples, pcm });
+    this.receivedSamples += samples;
+    return expected;
+  }
+}
 function outputFixture(tts = new FakeTts()) {
   const events: SpeechOutputEvent[] = [], progress: SpeechProgress[] = [], finals: string[] = [], errors: string[] = [];
   const output = new SpeechOutput({ sessionId: 's', port: tts, emit: e => events.push(e), onSegment: e => progress.push(e),
@@ -81,6 +146,71 @@ function outputFixture(tts = new FakeTts()) {
     playing: !options.completed, paused: false, chunkAccepted: true, segmentCompleted: options.completed, queuedSeconds: options.queuedSeconds ?? 0 });
   return { output, tts, events, progress, finals, errors, delta, complete, chunks, ack };
 }
+
+test('validated PCM starts before synthesis settles, retains its tail, and preserves every sample and receipt bound', async () => {
+  const tts = new SettlingTts(), f = outputFixture(tts);
+  f.delta('首句已经完整。'); await settle();
+  assert.equal(tts.requests.length, 1, 'safe punctuation starts TTS before model EOF');
+  const expected = tts.pcm(4);
+  assert.equal(tts.running, 1);
+  assert.equal(f.chunks().length, 1, 'PCM reaches playback before synthesis.completed');
+  assert.equal(f.chunks()[0].segmentFinal, false);
+  f.ack(f.chunks()[0], { queuedSeconds: 1 });
+  f.ack(f.chunks()[1], { queuedSeconds: 2 });
+  f.ack(f.chunks()[2], { queuedSeconds: 3 });
+  assert.equal(f.chunks().length, 3, 'lookahead still stops at three seconds');
+  f.output.playback({ ...f.chunks()[2], chunkAccepted: false, playing: false, paused: false, queuedSeconds: 0, segmentCompleted: true });
+  assert.equal(f.progress.filter(p => p.completed).length, 0, 'no receipt completes a settling segment');
+  assert.equal(f.chunks().length, 3, 'last PCM chunk remains private even when the renderer is empty');
+  f.complete(); tts.finish(); await settle();
+  assert.equal(f.chunks().length, 4);
+  assert.equal(f.chunks()[3].segmentFinal, true);
+  assert.equal(f.chunks()[3].final, true);
+  assert.equal(f.progress.filter(p => p.completed).length, 0);
+  f.ack(f.chunks()[3], { completed: true });
+  assert.equal(f.progress.filter(p => p.completed).length, 1);
+  assert.deepEqual(Float32Array.from(f.chunks().flatMap(chunk => Array.from(chunk.samples))), expected);
+  assert.deepEqual(f.finals, ['a-s1']);
+  await f.output.close();
+});
+
+test('partial PCM keeps a short tail through pause and completes only after worker success and actual playback', async () => {
+  const tts = new SettlingTts(), f = outputFixture(tts);
+  f.delta('完整句。'); f.complete(); await settle();
+  tts.pcm(.25);
+  assert.equal(f.chunks().length, 0, 'single PCM block cannot be mislabeled final before worker success');
+  f.output.command('pause'); tts.pcm(.75); tts.finish(); await settle();
+  assert.equal(f.chunks().length, 0, 'settlement does not bypass a candidate interruption');
+  f.output.command('resume');
+  assert.equal(f.chunks().length, 1);
+  assert.equal(f.chunks()[0].segmentFinal, false);
+  f.ack(f.chunks()[0]);
+  assert.equal(f.chunks()[1].segmentFinal, true);
+  f.ack(f.chunks()[1], { completed: true });
+  assert.equal(f.progress.filter(p => p.completed).length, 1);
+  await f.output.close();
+});
+
+test('failure or cancel after early PCM clears playback without delivering the segment or reviving late audio', async () => {
+  for (const failure of [true, false]) {
+    const tts = new SettlingTts(), f = outputFixture(tts);
+    f.delta('提前收到音频。'); f.complete(); await settle();
+    tts.pcm(2);
+    const early = f.chunks()[0];
+    assert.ok(early); assert.equal(early.segmentFinal, false);
+    if (failure) tts.reject(new Error('SETTLEMENT_FAILED'));
+    else { f.output.command('clear', 2); tts.finish(); }
+    await settle();
+    const count = f.chunks().length;
+    f.ack(early, { completed: true });
+    tts.pcm(1); await settle();
+    assert.equal(f.chunks().length, count);
+    assert.equal(f.progress.filter(p => p.completed).length, 0);
+    assert.deepEqual(f.errors, failure ? ['SETTLEMENT_FAILED'] : []);
+    assert.ok(f.events.some(event => event.type === 'output-command' && event.command === 'clear' && event.generationId === (failure ? 1 : 2)));
+    await f.output.close();
+  }
+});
 
 test('one synthesis runs, at most two sentences look ahead, pause stops work, and PCM is receipt-driven', async () => {
   const f = outputFixture();

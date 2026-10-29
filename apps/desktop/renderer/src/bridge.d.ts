@@ -1,4 +1,5 @@
 import type { DialogueEvent } from '../../../../packages/voice-core/src/dialogue.ts'
+import type { VoiceDiagnostics } from '../../../../packages/voice-core/src/diagnostics.ts'
 
 export type PersonaId = 'nagato-normal-light' | 'assistant-neutral'
 export type ReplyLanguage = 'auto' | 'zh' | 'ja' | 'en'
@@ -17,6 +18,7 @@ export interface RuntimeInfo {
   assetStatus: { ready: boolean; missing: string[] }
   voices?: { id: string; name: string; defaultReferenceId: string; references: { id: string; name: string }[] }[]
   ttsStatus?: { state: string; code?: string }
+  voiceDiagnostics?: VoiceDiagnostics
 }
 
 export interface VoiceCatalogEntry {
@@ -32,6 +34,8 @@ export interface SessionStart {
 
 export interface CaptureFrame {
   sessionId: string
+  /** Session-local sample position; a gap must fail instead of deleting audio. */
+  sampleStart: number
   /** Mono, 16 kHz, post-AEC PCM produced by Silero VAD's resampler. */
   samples: Float32Array
   probability: number

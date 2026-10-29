@@ -38,7 +38,7 @@ flowchart LR
 
 使用 Web API Gateway 的认证 WebSocket 与生成的 Remote 客户端；沿用本地版本 `0.2.1-rc.2`。不抓 UI，不默认采用缺少 speech Remote/模型原始增量的 ACP。不自行假造 REST `/chat` 接口。
 
-ASR：`speech.catalog/follow` 读能力与准备状态；`prepare` 显式准备资源；`transcribe` 输入规范 Base64 的 16 kHz 单声道 PCM16 WAV。模型已有可用缓存就复用。Provider 的离线 VAD 是识别内部分段，不能代替前端实时起音/结束检测。
+ASR：`speech.catalog/follow` 读能力与准备状态；`prepare` 显式准备资源；`transcribe` 输入规范 Base64 的 16 kHz 单声道 PCM16 WAV。模型已有可用缓存就复用。2026-10-30 修订后，前端统一管理音频边界，专用 Remote/provider 限制为 20 秒/640044 字节，provider 的静音与最大段阈值均为 21 秒，使其 VAD 在合法请求中只承担语音门，避免二次切分后的短片各自猜语种。完整 WAV 扫描后立即 flush，不产生 21 秒真实等待；保持 auto，详见[边界修订](./voice-flow-20261030.md)。
 
 Session：create 指定 chat-only preset；prompt 只是接受回执；follow 开启 `assistantStream: true`；显式 cancel 才停止生成。关闭 follow 或断开 UI 不等于取消。用本地类型定义适配真实 payload；以下内部命令名不是声称 dsh 原生接口。
 
@@ -68,7 +68,7 @@ AEC 后的 VAD 概率、持续时长、声学回声相关性（若实现）、�
 
 ## 两个并行状态机
 
-输入状态独立于输出：`OFF → LISTENING ↔ CAPTURING → TRANSCRIBING → ACCUMULATING/DECIDING`。TRANSCRIBING 时仍能采集下一段；有界队列按 utterance 序号合并，取消后不能误拼上一轮。
+输入状态独立于输出：`OFF → LISTENING ↔ CAPTURING → SETTLING/TRANSCRIBING → ACCUMULATING/DECIDING`。600 ms 产生候选 ASR，桌面采用 1000 ms 确认窗口；确认前续说按同一 utterance 的新版本恢复完整 PCM 重识别，发布 ready 后冻结区间。TRANSCRIBING 时仍能采集下一段；有界队列按 utterance 序号合并，取消后不能误拼上一轮。
 
 输出：`IDLE → GENERATING → BUFFERING/PLAYING → IDLE`，另有 `DUCKED`、`CANCELING`、`SWITCHING`、`ERROR`。用户开口时输出暂停/减音量，输入继续；不是把输出 PLAYING 当作关闭输入的条件。
 
