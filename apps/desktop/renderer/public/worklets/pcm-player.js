@@ -4,29 +4,32 @@ class PcmPlayer extends AudioWorkletProcessor {
     this.generationId = -1
     this.queue = []
     this.offset = 0
-    this.rate = 16000
-    this.queuedSamples = 0
     this.renderedSamples = 0
     this.paused = false
-    this.final = false
     this.tick = 0
+    this.sequences = new Map()
+    this.identity = {}
+    this.rate = 16000
     this.port.onmessage = ({ data }) => this.command(data)
   }
 
+  queuedSeconds() {
+    return Math.max(0, this.queue.reduce((n, chunk) => n + chunk.samples.length / chunk.sampleRate, 0) - this.offset / (this.queue[0]?.sampleRate || this.rate))
+  }
+
   command(data) {
+    if (!Number.isSafeInteger(data.generationId) || data.generationId < this.generationId) return
     if (data.type === 'clear') {
-      if (data.generationId < this.generationId) return
       this.generationId = data.generationId
       this.queue = []
       this.offset = 0
-      this.queuedSamples = 0
       this.renderedSamples = 0
-      this.final = false
       this.paused = false
-      this.port.postMessage({ type: 'state', generationId: this.generationId, playing: false, paused: false, renderedSamples: 0, queuedSamples: 0, sampleRate: this.rate })
+      this.sequences.clear()
+      this.identity = {}
+      this.report()
       return
     }
-    if (data.generationId < this.generationId) return
     if (data.type === 'pause' || data.type === 'resume') {
       if (data.generationId !== this.generationId) return
       this.paused = data.type === 'pause'
@@ -34,26 +37,36 @@ class PcmPlayer extends AudioWorkletProcessor {
       return
     }
     if (data.type !== 'enqueue') return
-    if (!(data.samples instanceof Float32Array) || !Number.isFinite(data.sampleRate) || data.sampleRate < 8000 || data.sampleRate > 192000) return
-    if (data.generationId > this.generationId) {
-      this.command({ type: 'clear', generationId: data.generationId })
+    if (!(data.samples instanceof Float32Array) || !Number.isFinite(data.sampleRate) || data.sampleRate < 8000 || data.sampleRate > 192000 || !data.samples.length) return
+    if (data.generationId > this.generationId) this.command({ type: 'clear', generationId: data.generationId })
+    const identity = {}
+    for (const key of ['sessionId', 'turnId', 'attemptId', 'voiceRevision', 'segmentId', 'chunkSeq']) if (data[key] !== undefined) identity[key] = data[key]
+    if (data.segmentId !== undefined) {
+      const key = JSON.stringify([data.sessionId, data.turnId, data.attemptId, data.voiceRevision, data.segmentId])
+      const next = this.sequences.get(key) || 0
+      if (!Number.isSafeInteger(data.chunkSeq) || data.chunkSeq < 0) return
+      if (data.chunkSeq < next) { this.report(false, identity, { chunkAccepted: true }); return }
+      if (data.chunkSeq !== next || this.sequences.size > 1024) { this.report(false, identity, { errorCode: 'PLAYBACK_SEQUENCE' }); return }
+      identity.sequenceKey = key
     }
-    if (data.generationId !== this.generationId || data.sampleRate !== this.rate && this.queuedSamples > 0) return
-    if (this.queuedSamples + data.samples.length > data.sampleRate * 6) {
-      this.port.postMessage({ type: 'overflow', generationId: this.generationId })
+    if (this.queuedSeconds() + data.samples.length / data.sampleRate > 6) {
+      this.port.postMessage({ type: 'overflow', generationId: this.generationId, ...identity, errorCode: 'PLAYBACK_OVERFLOW' })
       return
     }
+    if (identity.sequenceKey) this.sequences.set(identity.sequenceKey, data.chunkSeq + 1)
+    delete identity.sequenceKey
+    this.queue.push({ samples: data.samples, sampleRate: data.sampleRate, final: data.final, segmentFinal: data.segmentFinal, identity })
+    this.identity = identity
     this.rate = data.sampleRate
-    if (data.samples.length > 0) {
-      this.queue.push(data.samples)
-      this.queuedSamples += data.samples.length
-    }
-    if (data.final) this.final = true
-    this.report()
+    this.report(false, identity, { chunkAccepted: true })
   }
 
-  report(completed = false) {
-    this.port.postMessage({ type: 'state', generationId: this.generationId, playing: !this.paused && this.queuedSamples > 0, paused: this.paused, completed, renderedSamples: Math.floor(this.renderedSamples), queuedSamples: Math.max(0, this.queuedSamples - this.offset), sampleRate: this.rate })
+  report(completed = false, identity = this.identity, extra = {}) {
+    const queuedSeconds = this.queuedSeconds()
+    this.port.postMessage({ type: 'state', generationId: this.generationId, ...identity,
+      playing: !this.paused && queuedSeconds > 0, paused: this.paused, completed,
+      renderedSamples: Math.floor(this.renderedSamples), queuedSamples: Math.round(queuedSeconds * this.rate), queuedSeconds,
+      sampleRate: this.rate, ...extra })
   }
 
   process(_input, output) {
@@ -61,27 +74,28 @@ class PcmPlayer extends AudioWorkletProcessor {
     if (!channel) return true
     channel.fill(0)
     if (this.paused) return true
-    const step = this.rate / sampleRate
     for (let i = 0; i < channel.length && this.queue.length; i++) {
       const head = this.queue[0]
       const at = Math.floor(this.offset)
       const frac = this.offset - at
-      const first = head[at] ?? 0
-      const second = head[at + 1] ?? this.queue[1]?.[0] ?? first
+      const first = head.samples[at] ?? 0
+      const second = head.samples[at + 1] ?? this.queue[1]?.samples[0] ?? first
       channel[i] = first + (second - first) * frac
+      const step = head.sampleRate / sampleRate
       this.offset += step
       this.renderedSamples += step
-      while (this.queue.length && this.offset >= this.queue[0].length) {
-        this.offset -= this.queue[0].length
-        this.queuedSamples -= this.queue[0].length
+      this.identity = head.identity
+      this.rate = head.sampleRate
+      if (this.offset >= head.samples.length) {
+        const overshootSeconds = (this.offset - head.samples.length) / head.sampleRate
         this.queue.shift()
+        this.offset = overshootSeconds * (this.queue[0]?.sampleRate || head.sampleRate)
+        if (!this.queue.length) this.offset = 0
+        if (head.segmentFinal || head.final && !this.queue.length) this.report(!this.queue.length, head.identity, { segmentCompleted: Boolean(head.segmentFinal) })
       }
     }
     this.tick += channel.length
-    if (this.final && this.queue.length === 0) {
-      this.final = false
-      this.report(true)
-    } else if (this.tick >= sampleRate / 5) {
+    if (this.tick >= sampleRate / 5) {
       this.tick = 0
       this.report()
     }

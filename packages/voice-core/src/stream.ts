@@ -45,7 +45,14 @@ export class DecisionStream {
   finish(): ProtocolEvent[] {
     if (this.ended) return [];
     this.ended = true;
-    if (!this.header && !this.failed) return this.fail('missing complete decision header');
+    if (!this.header && !this.failed) {
+      try {
+        const header = parseDecisionHeader(this.line.endsWith('\r') ? this.line.slice(0, -1) : this.line);
+        if (header.action === 'SPEAK') return this.fail('SPEAK requires a newline and body');
+        this.header = header; this.line = '';
+        return [{ type: 'header', header }];
+      } catch { return this.fail('missing complete decision header'); }
+    }
     return [];
   }
 

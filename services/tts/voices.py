@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+CODE_ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(os.environ.get("DESKAI_ASSET_ROOT", str(CODE_ROOT))).resolve()
 MODEL_ROOT = ROOT / "assets/凉宫春日模型包.part1"
 REFERENCE_ROOT = ROOT / "assets/凉宫春日参考语音包"
 DEFAULT_VOICE = "nagato-normal-v2"
@@ -32,10 +34,29 @@ def load_registry() -> dict[str, dict]:
         voice_id = VOICE_IDS[stem]
         if voice_id in voices:
             raise ValueError("Duplicate voice ID")
-        refs = [{**ref, "path": contained_file(REFERENCE_ROOT, ref["file"])} for ref in row["refs"]]
+        refs = [{**ref, "id": f"ref-{index + 1:02d}", "path": contained_file(REFERENCE_ROOT, ref["file"])}
+                for index, ref in enumerate(row["refs"])]
+        if not refs:
+            raise ValueError("Voice has no reference audio")
         voices[voice_id] = dict(id=voice_id, name=row["name"], version="v2",
+                                defaultReferenceId=refs[0]["id"],
                                 gpt=contained_file(MODEL_ROOT, row["gpt"]),
                                 sovits=contained_file(MODEL_ROOT, row["sovits"]), references=refs)
     if len(voices) != 10 or DEFAULT_VOICE not in voices:
         raise ValueError("Expected ten supplied v2 voices including normal Nagato")
     return voices
+
+
+def public_registry(registry: dict[str, dict]) -> list[dict]:
+    """Only opaque IDs/labels cross IPC; never accept model or audio paths."""
+    return [dict(id=v["id"], name=v["name"], version="v2", defaultReferenceId=v["defaultReferenceId"],
+                 references=[dict(id=r["id"], name=r["name"]) for r in v["references"]])
+            for v in registry.values()]
+
+
+def select_reference(voice: dict, reference_id=None) -> dict:
+    reference_id = voice["defaultReferenceId"] if reference_id is None else reference_id
+    for ref in voice["references"]:
+        if ref["id"] == reference_id:
+            return ref
+    raise ValueError("Unknown reference ID")

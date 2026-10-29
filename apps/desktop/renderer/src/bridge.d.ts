@@ -2,15 +2,21 @@ import type { DialogueEvent } from '../../../../packages/voice-core/src/dialogue
 
 export type PersonaId = 'nagato-normal-light' | 'assistant-neutral'
 export type ReplyLanguage = 'auto' | 'zh' | 'ja' | 'en'
-export interface Preferences { personaId: PersonaId; replyLanguage: ReplyLanguage; voiceId: string }
+export interface Preferences { personaId: PersonaId; replyLanguage: ReplyLanguage; voiceId: string; referenceId: string;
+  inputDeviceId: string; outputDeviceId: string; volume: number; speed: number; closeToTray: boolean }
 
 export interface RuntimeInfo {
   smoke: boolean
   dialogueSmoke: boolean
+  ttsSmoke?: boolean
   fakeMedia: boolean
   versions: Record<string, string>
   preferences: Preferences
   personas: { id: PersonaId; displayName: string; revision: number }[]
+  speechStatus: { status: string; detail?: string }
+  assetStatus: { ready: boolean; missing: string[] }
+  voices?: { id: string; name: string; defaultReferenceId: string; references: { id: string; name: string }[] }[]
+  ttsStatus?: { state: string; code?: string }
 }
 
 export interface VoiceCatalogEntry {
@@ -40,6 +46,15 @@ export interface PlaybackReport {
   /** Estimated samples rendered by AudioWorklet, never a claim of audibility. */
   renderedSamples?: number
   sampleRate?: number
+  turnId?: string
+  attemptId?: string
+  voiceRevision?: number
+  segmentId?: string
+  chunkSeq?: number
+  segmentCompleted?: boolean
+  chunkAccepted?: boolean
+  queuedSeconds?: number
+  errorCode?: string
 }
 
 export type DeskaiEvent =
@@ -50,8 +65,12 @@ export type DeskaiEvent =
   | { type: 'input-state'; sessionId: string; state: string }
   | { type: 'ready-text'; sessionId: string; text: string; eligible?: boolean }
   | { type: 'error'; sessionId?: string; code: string; message: string }
+  | { type: 'capture-command'; command: 'pause' | 'resume' }
+  | { type: 'tts-status'; status: { state: string; code?: string; voiceId?: string } }
+  | { type: 'speech-state'; sessionId: string; state: string; code?: string }
   | { type: 'output-command'; sessionId: string; command: 'pause' | 'resume' | 'clear'; generationId: number }
-  | { type: 'audio-chunk'; sessionId: string; generationId: number; samples: Float32Array; sampleRate: number; final?: boolean }
+  | { type: 'audio-chunk'; sessionId: string; generationId: number; samples: Float32Array; sampleRate: number; final?: boolean;
+      turnId?: string; attemptId?: string; voiceRevision?: number; segmentId?: string; chunkSeq?: number; segmentFinal?: boolean }
 
 export interface SmokeReport {
   simulated: true
@@ -84,8 +103,10 @@ export interface DeskaiBridge {
   openConversation(): Promise<SessionStart>
   startSession(): Promise<SessionStart>
   stopSession(): Promise<void>
+  pauseCapture(): Promise<void>
+  retrySpeech(): Promise<void>
   sendText(input: { sessionId: string; text: string }): Promise<{ accepted: boolean }>
-  updatePreferences(input: { personaId: PersonaId; replyLanguage: ReplyLanguage }): Promise<Preferences>
+  updatePreferences(input: Partial<Preferences>): Promise<Preferences>
   cancelTurn(): Promise<void>
   retryTurn(): Promise<{ accepted: boolean }>
   acknowledgeDisplay(input: { sessionId: string; attemptId: string; characters: number }): void

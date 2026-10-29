@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, protocol, session } from 'electron';
+import { app, BrowserWindow, ipcMain, protocol, session, Tray, Menu, nativeImage, powerMonitor } from 'electron';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -8,14 +8,24 @@ import { createInputController, encodePcm16Wav, type InputController } from '../
 import { DialogueController, type DialogueEvent, type DialoguePreferences } from '../../../packages/voice-core/src/dialogue.ts';
 import { validatePersona } from '../../../packages/voice-core/src/prompts.ts';
 import { FixtureChatPort } from './fixture-chat.ts';
+import { LocalTtsService, type TtsStatus, type VoiceSelection } from '../../../packages/tts-adapter/src/index.ts';
+import { SpeechOutput, type SpeechPlaybackReport } from './speech-output.ts';
+import { defaultPreferences, loadPreferences, savePreferences, mergePreferences, inspectAssets, type DesktopPreferences } from './settings.ts';
 
 const root = path.resolve(process.env.DESKAI_PROJECT_ROOT ?? process.cwd());
+const assetRoot = path.resolve(process.env.DESKAI_ASSET_ROOT ?? root);
+process.env.DESKAI_ASSET_ROOT = assetRoot;
 app.setName('DeskAI2');
 const rendererRoot = path.join(root, '.cache/desktop-renderer');
 const page = 'deskai://app/index.html';
 const smokeMode = process.argv.includes('--smoke');
+const shellSmoke = process.argv.includes('--shell-smoke');
 const dialogueSmoke = smokeMode && process.argv.includes('--dialogue-smoke');
+const ttsSmoke = smokeMode && process.argv.includes('--tts-smoke');
+const realModelSmoke = ttsSmoke && process.argv.includes('--real-model');
 const fakeMedia = process.argv.includes('--use-fake-device-for-media-stream');
+const hasInstanceLock = smokeMode || app.requestSingleInstanceLock();
+if (!hasInstanceLock) app.quit();
 if (smokeMode && (!fakeMedia || !process.argv.includes('--use-fake-ui-for-media-stream'))) {
   throw new Error('Smoke mode requires explicit fake media and permission switches');
 }
@@ -39,8 +49,20 @@ let fixturePort: FixtureChatPort | undefined;
 let opening: Promise<void> | undefined;
 let outputPaused = false;
 let voiceSubmitting = false;
-let preferences: DialoguePreferences = { personaId: 'nagato-normal-light', replyLanguage: 'auto', voiceId: 'nagato-normal-v2' };
+let preferences: DesktopPreferences = { ...defaultPreferences };
 let personas: { id: string; displayName: string; revision: number }[] = [];
+let tray: Tray | undefined;
+let lastSpeechStatus: { status: string; detail?: string } = { status: '尚未准备语音识别' };
+let assetStatus: { ready: boolean; missing: string[] } = { ready: false, missing: [] };
+let preferenceWrite: Promise<unknown> = Promise.resolve();
+let tts: LocalTtsService | undefined;
+let ttsPreparing: Promise<void> | undefined;
+let recoveringTts: Promise<void> | undefined;
+let ttsStatus: TtsStatus = { state: 'stopped' };
+let voiceSelection: VoiceSelection = { voiceId: 'nagato-normal-v2', referenceId: 'ref-01', voiceRevision: 0 };
+let voiceOutput: SpeechOutput | undefined;
+let outputBusy = false;
+const ttsMetrics = { pcmChunks: 0, playedSegments: 0, firstPCMAt: 0, voiceFailures: 0 };
 const metrics = { inputFrames: 0, inputSamples: 0, inputFramesDuringPlayback: 0, segments: 0,
   asrCompleted: 0, asrSeconds: [] as number[], readyTurns: 0, fixtureTranscriptPrefixMatched: null as boolean | null, sessionStarts: 0,
   firstSegment: null as { startSample: number; endSample: number; final: boolean } | null,
@@ -48,27 +70,90 @@ const metrics = { inputFrames: 0, inputSamples: 0, inputFramesDuringPlayback: 0,
 let outputActive = false;
 
 function send(event: object) { if (window && !window.isDestroyed()) window.webContents.send('deskai:event', event); }
+function updateTray() {
+  if (!tray || tray.isDestroyed()) return;
+  tray.setToolTip(captureArmed ? 'DeskAI · 正在监听麦克风' : 'DeskAI · 麦克风关闭');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: captureArmed ? '● 正在监听' : '麦克风关闭', enabled: false },
+    { label: '打开主窗口', click: () => { window?.show(); window?.focus(); } },
+    { label: captureArmed ? '暂停麦克风' : '恢复麦克风', click: () => {
+      window?.show(); window?.focus(); send({ type: 'capture-command', command: captureArmed ? 'pause' : 'resume' });
+    } },
+    { type: 'separator' }, { label: '退出并释放服务', click: () => app.quit() },
+  ]));
+}
 function trusted(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) {
   if (event.sender !== window?.webContents || event.senderFrame?.url !== page) throw new Error('UNTRUSTED_RENDERER');
 }
 function refreshOutput() {
   controller?.setOutput({ generationId: Math.max(outputGeneration, dialogue?.generationId ?? 0),
-    playing: outputActive || outputPaused || dialogue?.isGenerating === true, expectsReply: dialogue?.expectsReply() ?? false });
+    playing: outputActive || outputPaused || outputBusy || dialogue?.isGenerating === true, expectsReply: dialogue?.expectsReply() ?? false });
+}
+function updateTtsStatus(update: TtsStatus) {
+  ttsStatus = update;
+  send({ type: 'tts-status', status: update });
+}
+async function prepareTts(): Promise<void> {
+  if (dialogueSmoke || smokeMode && !process.argv.includes('--tts-smoke')) return;
+  if (ttsPreparing) return ttsPreparing;
+  if (tts?.getStatus().state === 'ready') return;
+  const service = tts ??= new LocalTtsService(root, updateTtsStatus);
+  const work = (async () => {
+    await service.start();
+    const catalog = service.registry();
+    const selected = catalog.find(row => row.id === preferences.voiceId) ?? catalog.find(row => row.id === 'nagato-normal-v2');
+    if (!selected) throw new Error('VOICE_RESOURCE_NOT_FOUND');
+    const referenceId = selected.references.some(row => row.id === preferences.referenceId) ? preferences.referenceId : selected.defaultReferenceId;
+    voiceSelection = await service.selectVoice(selected.id, referenceId);
+    preferences = { ...preferences, voiceId: voiceSelection.voiceId, referenceId: voiceSelection.referenceId };
+    voiceOutput?.setSelection({ ...voiceSelection, language: preferences.replyLanguage, speed: preferences.speed });
+  })();
+  ttsPreparing = work;
+  try { await work; }
+  catch (error) {
+    updateTtsStatus({ state: 'error', code: error instanceof Error ? error.message : 'TTS_START_FAILED' });
+    if (tts === service) tts = undefined;
+    await service.dispose();
+    throw error;
+  } finally { if (ttsPreparing === work) ttsPreparing = undefined; }
+}
+function attachOutput() {
+  const activeDialogue = dialogue;
+  if (!tts || !activeDialogue || ttsStatus.state !== 'ready') return;
+  voiceOutput = new SpeechOutput({ sessionId, port: tts,
+    emit: event => {
+      if (event.type === 'audio-chunk') { ttsMetrics.pcmChunks++; ttsMetrics.firstPCMAt ||= performance.now(); }
+      if (event.type === 'speech-state') { outputBusy = !['idle', 'error'].includes(event.state); refreshOutput(); }
+      send(event);
+    },
+    onSegment: progress => {
+      activeDialogue.recordPlayback(progress); refreshOutput();
+      if (progress.completed) ttsMetrics.playedSegments++;
+      if (ttsSmoke) maybeFinishTtsSmoke();
+    },
+    onFinalSegment: (attemptId, segmentId) => { activeDialogue.finalSegment(attemptId, segmentId); refreshOutput(); },
+    onError: (_code, attemptId) => { ttsMetrics.voiceFailures++; if (attemptId) activeDialogue.speechFallback(attemptId); },
+  });
+  voiceOutput.setSelection({ ...voiceSelection, language: preferences.replyLanguage, speed: preferences.speed });
 }
 function dialogueEvent(event: DialogueEvent) {
   if (!sessionId) return;
   if (event.type === 'output-clear') {
-    outputGeneration = Math.max(outputGeneration + 1, event.generationId);
+    outputGeneration = Math.max(outputGeneration, event.generationId);
     outputActive = outputPaused = false;
     send({ type: 'output-command', sessionId, generationId: outputGeneration, command: 'clear' });
   }
+  voiceOutput?.handle(event);
+  if (!voiceOutput && event.type === 'assistant-delta' && event.source === 'voice') dialogue?.speechFallback(event.attemptId);
   send({ type: 'dialogue', sessionId, event });
   refreshOutput();
 }
 function status(update: SpeechStatus) {
   const labels: Record<string, string> = { starting: '正在启动 dsh', preparing: '正在准备 SenseVoice',
     ready: '本地语音识别已就绪', error: '语音服务异常', stopped: '语音服务已停止' };
-  send({ type: 'status', status: labels[update.state], detail: update.phase ?? update.code });
+  const progress = update.totalBytes ? `${Math.round((update.completedBytes ?? 0) / update.totalBytes * 100)}%` : '';
+  lastSpeechStatus = { status: labels[update.state], detail: [update.phase ?? update.code, progress].filter(Boolean).join(' · ') };
+  send({ type: 'status', ...lastSpeechStatus });
   if (update.state === 'error' && sessionId) {
     send({ type: 'session-ended', sessionId, reason: '语音服务已断开，麦克风已停止；可重新开始会话。' });
     const failed = speech;
@@ -79,8 +164,12 @@ function status(update: SpeechStatus) {
 async function stopSession() {
   sessionEpoch++;
   captureArmed = false;
+  updateTray();
   controller?.stop();
   const oldDialogue = dialogue;
+  const oldOutput = voiceOutput;
+  voiceOutput = undefined;
+  outputBusy = false;
   dialogue = undefined;
   if (sessionId) send({ type: 'output-command', sessionId, command: 'clear', generationId: ++outputGeneration });
   sessionId = '';
@@ -93,11 +182,13 @@ async function stopSession() {
     await pending.dispose();
   }
   await oldDialogue?.close().catch(() => {});
+  await oldOutput?.close().catch(() => {});
 }
 
 ipcMain.handle('deskai:runtime', event => {
   trusted(event);
-  return { smoke: smokeMode, fakeMedia, dialogueSmoke, preferences, personas,
+  return { smoke: smokeMode, fakeMedia, dialogueSmoke, ttsSmoke, preferences, personas,
+    speechStatus: lastSpeechStatus, assetStatus, ttsStatus, voices: tts?.registry() ?? [],
     versions: { electron: process.versions.electron ?? '', chrome: process.versions.chrome ?? '' } };
 });
 async function openConversation() {
@@ -121,7 +212,9 @@ async function openConversation() {
   sessionId = randomUUID();
   metrics.sessionStarts++;
   outputGeneration = 0;
-  dialogue = new DialogueController(new LocalDshChat(service, root), preferences, dialogueEvent);
+  if (ttsSmoke && !realModelSmoke) fixturePort = new FixtureChatPort();
+  dialogue = new DialogueController(ttsSmoke && !realModelSmoke ? fixturePort! : new LocalDshChat(service, root), preferences, dialogueEvent);
+  attachOutput();
   // Keep this instance across sessions so a canceled ASR task settles before
   // the new session can start another task on the same recognizer.
   controller ??= createInputController({
@@ -151,7 +244,8 @@ async function openConversation() {
       if (metrics.interruptions.length > 100) metrics.interruptions.shift();
       const command = event.type === 'candidate' ? 'pause' : event.type === 'resume' ? 'resume' : 'clear';
       if (event.type === 'confirmed') outputGeneration = Math.max(outputGeneration, event.generationId + 1);
-      send({ type: 'output-command', sessionId, generationId: event.type === 'confirmed' ? outputGeneration : event.generationId, command });
+      if (voiceOutput) voiceOutput.command(command, event.type === 'confirmed' ? outputGeneration : event.generationId);
+      else send({ type: 'output-command', sessionId, generationId: event.type === 'confirmed' ? outputGeneration : event.generationId, command });
       if (event.type === 'confirmed') { outputPaused = false; void dialogue?.cancel().catch(() => {}); }
       else outputPaused = event.type === 'candidate';
     },
@@ -167,7 +261,7 @@ async function openConversation() {
       if (smokeMode && metrics.fixtureTranscriptPrefixMatched === null) {
         metrics.fixtureTranscriptPrefixMatched = ready.text.replace(/[\s\p{P}]/gu, '').startsWith('你回来了');
       }
-      if (smokeMode && !dialogueSmoke) {
+      if (smokeMode && !dialogueSmoke && !ttsSmoke) {
         send({ type: 'transcript', sessionId, text: ready.text });
         send({ type: 'ready-text', sessionId, text: ready.text, eligible: true });
         controller.markSubmitted(ready.utteranceIds);
@@ -211,7 +305,14 @@ ipcMain.handle('deskai:open-conversation', async event => { trusted(event); awai
 ipcMain.handle('deskai:start', async event => {
   trusted(event);
   await openConversation();
+  const startingSession = sessionId;
+  // A synthesis failure keeps transcription/text available and is visible in the UI.
+  if (!smokeMode || ttsSmoke) await prepareTts().then(() => { if (!voiceOutput) attachOutput(); }).catch(() => {
+    send({ type: 'error', message: '语音合成服务准备失败，仍可识别和文字对话；点击“恢复语音服务”可重试。', code: 'TTS_UNAVAILABLE' });
+  });
+  if (!startingSession || sessionId !== startingSession || shutdown) throw new Error('SESSION_START_CANCELLED');
   captureArmed = true;
+  updateTray();
   controller?.start(sessionId);
   refreshOutput();
   return sessionDescription();
@@ -221,7 +322,7 @@ ipcMain.handle('deskai:send-text', async (event, value: unknown) => {
   trusted(event);
   const data = value as { sessionId?: string; text?: string };
   if (!data || data.sessionId !== sessionId || !dialogue || typeof data.text !== 'string' || data.text.length > 4000) throw new Error('INVALID_TEXT_INPUT');
-  return dialogue.submit({ text: data.text, source: 'text' });
+  return dialogue.submit({ text: data.text, source: captureArmed ? 'voice' : 'text' });
 });
 ipcMain.handle('deskai:cancel-turn', async event => { trusted(event); await dialogue?.cancel(); refreshOutput(); });
 ipcMain.handle('deskai:retry-turn', async event => { trusted(event); return dialogue?.retry() ?? { accepted: false }; });
@@ -234,14 +335,43 @@ ipcMain.on('deskai:displayed', (event, value: unknown) => {
 });
 ipcMain.handle('deskai:preferences', async (event, value: unknown) => {
   trusted(event);
-  const data = value as { personaId?: string; replyLanguage?: string };
-  if (!data || !['nagato-normal-light', 'assistant-neutral'].includes(data.personaId ?? '') ||
-    !['auto', 'zh', 'ja', 'en'].includes(data.replyLanguage ?? '')) throw new Error('INVALID_PREFERENCES');
-  preferences = { ...preferences, personaId: data.personaId as DialoguePreferences['personaId'], replyLanguage: data.replyLanguage as DialoguePreferences['replyLanguage'] };
-  await dialogue?.updatePreferences(preferences);
-  if (!smokeMode) await writeFile(path.join(app.getPath('userData'), 'voice-preferences.json'), JSON.stringify(preferences, null, 2));
-  refreshOutput();
-  return preferences;
+  const work = preferenceWrite.then(async () => {
+    const next = mergePreferences(preferences, value);
+    if (next.voiceId !== preferences.voiceId || next.referenceId !== preferences.referenceId) {
+      await dialogue?.cancel();
+      voiceOutput?.command('clear', dialogue?.generationId ?? ++outputGeneration);
+      await prepareTts();
+      if (!tts) throw new Error('TTS_NOT_READY');
+      const voice = tts.registry().find(row => row.id === next.voiceId);
+      if (!voice) throw new Error('INVALID_VOICE');
+      voiceSelection = await tts.selectVoice(voice.id, next.referenceId || voice.defaultReferenceId);
+      next.referenceId = voiceSelection.referenceId;
+    }
+    if (next.personaId !== preferences.personaId || next.replyLanguage !== preferences.replyLanguage) await dialogue?.updatePreferences(next);
+    preferences = next;
+    voiceOutput?.setSelection({ ...voiceSelection, language: next.replyLanguage, speed: next.speed });
+    if (!smokeMode) await savePreferences(app.getPath('userData'), preferences);
+    refreshOutput();
+    return preferences;
+  });
+  preferenceWrite = work.catch(() => {});
+  return work;
+});
+ipcMain.handle('deskai:pause-capture', event => {
+  trusted(event); captureArmed = false; controller?.stop(); updateTray();
+});
+ipcMain.handle('deskai:retry-speech', async event => {
+  trusted(event);
+  if (recoveringTts) return recoveringTts;
+  const work = (async () => {
+    await dialogue?.cancel();
+    await voiceOutput?.close(); voiceOutput = undefined;
+    const pending = ttsPreparing, old = tts; tts = undefined;
+    await old?.dispose(); await pending?.catch(() => {});
+    await prepareTts(); attachOutput();
+  })();
+  recoveringTts = work;
+  try { await work; } finally { if (recoveringTts === work) recoveringTts = undefined; }
 });
 ipcMain.on('deskai:frame', (event, frame: unknown) => {
   try {
@@ -264,12 +394,13 @@ ipcMain.on('deskai:playback', (event, report: unknown) => {
   outputGeneration = value.generationId;
   outputActive = value.playing === true;
   outputPaused = value.paused === true;
+  voiceOutput?.playback(value as SpeechPlaybackReport);
   refreshOutput();
 });
 ipcMain.handle('deskai:playback-fixture', async event => {
   trusted(event);
   if (!sessionId) throw new Error('SESSION_NOT_ACTIVE');
-  return new Uint8Array(await readFile(path.join(root, 'assets/凉宫春日参考语音包/predef_ref/正常有希/01_有希_平静.wav')));
+  return new Uint8Array(await readFile(path.join(assetRoot, 'assets/凉宫春日参考语音包/predef_ref/正常有希/01_有希_平静.wav')));
 });
 ipcMain.on('deskai:finish-smoke', (event, input: unknown) => {
   trusted(event);
@@ -322,16 +453,31 @@ ipcMain.on('deskai:finish-dialogue-smoke', (event, input: unknown) => {
   })().catch(() => app.exit(1));
 });
 
+function maybeFinishTtsSmoke() {
+  const attempts = dialogue?.ledger.snapshot();
+  if (!ttsSmoke || smokeCompleted || !dialogue || dialogue.isGenerating || ttsMetrics.playedSegments < 1 ||
+    !attempts?.length || attempts.some(row => row.unplayed.trim().length > 0)) return;
+  smokeCompleted = true;
+  const report = { timestamp: new Date().toISOString(), simulatedMicrophone: true, simulatedModel: !realModelSmoke,
+    realDshModel: realModelSmoke,
+    realSenseVoice: true, realGpuTts: true, physicalMicrophoneTested: false, physicalSpeakerTested: false, aecValidated: false,
+    metrics, tts: ttsMetrics, model: dialogue.stats, ledger: dialogue.ledger.snapshot(),
+    passed: metrics.asrCompleted > 0 && metrics.inputFramesDuringPlayback > 0 && ttsMetrics.pcmChunks > 0 &&
+      ttsMetrics.voiceFailures === 0 && dialogue.stats.modelRequests === 1 };
+  void (async () => {
+    const directory = path.join(root, 'outputs/desktop-validation/m3');
+    await mkdir(directory, { recursive: true });
+    await writeFile(path.join(directory, `desktop-smoke-${Date.now()}.json`), JSON.stringify(report, null, 2));
+    if (window && !window.isDestroyed()) await writeFile(path.join(directory, 'desktop-smoke.png'), (await window.webContents.capturePage()).toPNG());
+    await stopSession(); await speech?.dispose(); await tts?.dispose(); shutdown = true; app.exit(report.passed ? 0 : 1);
+  })().catch(() => app.exit(1));
+}
+
 app.whenReady().then(async () => {
+  if (!hasInstanceLock) return;
   await mkdir(app.getPath('userData'), { recursive: true });
-  if (!smokeMode) {
-    try {
-      const stored = JSON.parse(await readFile(path.join(app.getPath('userData'), 'voice-preferences.json'), 'utf8'));
-      if (['nagato-normal-light', 'assistant-neutral'].includes(stored.personaId) && ['auto','zh','ja','en'].includes(stored.replyLanguage)) {
-        preferences = { ...preferences, personaId: stored.personaId, replyLanguage: stored.replyLanguage };
-      }
-    } catch { /* Keep defaults when no valid saved preferences exist. */ }
-  }
+  if (!smokeMode && !shellSmoke) preferences = await loadPreferences(app.getPath('userData'));
+  assetStatus = await inspectAssets(assetRoot);
   personas = await Promise.all(['nagato-normal-light', 'assistant-neutral'].map(async id => {
     const card = validatePersona(JSON.parse(await readFile(path.join(root, 'config/personas', id + '.json'), 'utf8')));
     return { id: card.id, displayName: card.displayName, revision: card.revision };
@@ -356,27 +502,68 @@ app.whenReady().then(async () => {
   const allowMicrophone = (contents: Electron.WebContents | null, permission: string, mediaTypes?: string[]) =>
     contents === window?.webContents && contents?.getURL() === page && captureArmed && permission === 'media' &&
     (!mediaTypes || mediaTypes.length > 0 && mediaTypes.every(type => type === 'audio'));
+  const allowSpeaker = (contents: Electron.WebContents | null, permission: string) =>
+    contents === window?.webContents && contents?.getURL() === page && !shutdown && permission === 'speaker-selection';
   session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) =>
-    callback(allowMicrophone(contents, permission, 'mediaTypes' in details ? details.mediaTypes : [])));
+    callback(allowSpeaker(contents, permission) || allowMicrophone(contents, permission, 'mediaTypes' in details ? details.mediaTypes : [])));
   session.defaultSession.setPermissionCheckHandler((contents, permission, _origin, details) =>
-    allowMicrophone(contents, permission, details.mediaType === 'audio' ? ['audio'] : details.mediaType === 'video' ? ['video'] : undefined));
-  window = new BrowserWindow({ width: 960, height: 760, minWidth: 700, minHeight: 560, show: !smokeMode,
+    allowSpeaker(contents, permission) || allowMicrophone(contents, permission, details.mediaType === 'audio' ? ['audio'] : details.mediaType === 'video' ? ['video'] : undefined));
+  window = new BrowserWindow({ width: 960, height: 760, minWidth: 700, minHeight: 560, show: !smokeMode && !shellSmoke,
     autoHideMenuBar: true, webPreferences: { preload: path.join(import.meta.dirname, 'preload.cjs'),
       contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true } });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event, destination) => { if (destination !== page) event.preventDefault(); });
   window.webContents.on('render-process-gone', () => { void stopSession(); });
+  window.on('close', event => {
+    if (!shutdown && preferences.closeToTray && tray) { event.preventDefault(); window?.hide(); }
+  });
   if (smokeMode) window.webContents.on('console-message', event => {
     // Fixture-only diagnostics: avoid logging renderer content during real conversations.
     const details = event as Electron.Event & { level?: string | number; message?: string };
     if (details.level === 3 || details.level === 'error') console.error('Renderer smoke:', String(details.message ?? '').slice(0, 500));
   });
   await window.loadURL(page);
+  if (!smokeMode) {
+    const pixels = Buffer.alloc(16 * 16 * 4);
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
+      const offset = (y * 16 + x) * 4;
+      const microphone = (x >= 6 && x <= 9 && y >= 2 && y <= 9) || (y === 11 && x >= 4 && x <= 11) || (x === 8 && y >= 11 && y <= 14);
+      pixels[offset] = microphone ? 230 : 70; pixels[offset + 1] = microphone ? 245 : 110;
+      pixels[offset + 2] = microphone ? 255 : 170; pixels[offset + 3] = 255;
+    }
+    const icon = nativeImage.createFromBitmap(pixels, { width: 16, height: 16 });
+    tray = new Tray(icon); tray.on('double-click', () => { window?.show(); window?.focus(); }); updateTray();
+    if (shellSmoke) {
+      window.close();
+      const report = { timestamp: new Date().toISOString(), packaged: app.isPackaged, trayCreated: !tray.isDestroyed(),
+        closeHidesWindow: !window.isDestroyed() && !window.isVisible(), assetsReady: assetStatus.ready,
+        physicalDevicesTested: false, microphoneOpened: false, modelRequests: 0,
+        passed: !tray.isDestroyed() && !window.isDestroyed() && !window.isVisible() && assetStatus.ready };
+      const directory = path.join(assetRoot, 'outputs/desktop-validation/m4');
+      await mkdir(directory, { recursive: true });
+      await writeFile(path.join(directory, `package-smoke-${Date.now()}.json`), JSON.stringify(report, null, 2));
+      app.quit(); return;
+    }
+    powerMonitor.on('suspend', () => {
+      send({ type: 'session-ended', sessionId, reason: '系统进入睡眠，已停止采集；唤醒后请重新开始。' });
+      void stopSession().then(async () => {
+        const oldSpeech = speech, oldTts = tts; speech = undefined; tts = undefined;
+        await Promise.allSettled([oldSpeech?.dispose(), oldTts?.dispose()]);
+      });
+    });
+    powerMonitor.on('resume', () => send({ type: 'status', status: '系统已唤醒；请重新开始会话' }));
+    // Prepare local models without opening the microphone or making a model request.
+    const service = speech ??= new LocalDshSpeech(root, status);
+    void service.start().catch(async () => { if (speech === service) speech = undefined; await service.dispose(); });
+    void prepareTts().catch(() => {});
+  }
 });
+app.on('second-instance', () => { window?.show(); window?.focus(); });
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', event => {
   if (shutdown) return;
   event.preventDefault();
   shutdown = true;
-  void stopSession().then(() => speech?.dispose()).finally(() => app.quit());
+  tray?.destroy();
+  void stopSession().then(() => Promise.allSettled([speech?.dispose(), tts?.dispose()])).finally(() => app.quit());
 });

@@ -4,7 +4,7 @@ export type DeliveryMode = 'voice' | 'text';
 export type PendingQuestion = { questionId: string; turnId: string; text: string; presentedAt: number; status: 'awaiting' | 'stale' };
 export type DeliveryAttempt = {
   attemptId: string; turnId: string; action: DecisionHeader['action']; deliveryMode: DeliveryMode; generated: string;
-  displayed: string; fullyPlayedSegments: { segmentId: string; text: string }[];
+  displayed: string; fullyPlayedSegments: { segmentId: string; text: string; rawStart?: number; rawEnd?: number }[];
   partiallyPlayedSegment?: { segmentId: string; text: string };
   unplayed: string; interrupted: boolean; protocolViolations: string[];
 };
@@ -69,10 +69,36 @@ export class DeliveryLedger {
     this.recomputeUnplayed(item);
   }
 
+  /** Source offsets, rather than cleaned character counts, reconcile the generated reply. */
+  recordMappedPlayback(attemptId: string, segment: { segmentId: string; text: string; rawText: string; rawStart: number; rawEnd: number }, completed: boolean, at = Date.now()): void {
+    const item = this.get(attemptId);
+    if (item.mode !== 'voice' || item.action !== 'SPEAK' || item.interrupted) return;
+    if (item.fullyPlayedSegments.some(s => s.segmentId === segment.segmentId)) return;
+    const previous = item.fullyPlayedSegments.at(-1);
+    const consumed = previous?.rawEnd ?? item.fullyPlayedSegments.reduce((n, s) => n + s.text.length, 0);
+    if (segment.rawStart < consumed || segment.rawEnd <= segment.rawStart || segment.rawEnd > item.generated.length
+      || item.generated.slice(segment.rawStart, segment.rawEnd) !== segment.rawText) throw new Error('invalid speech source span');
+    if (completed) {
+      item.fullyPlayedSegments.push({ segmentId: segment.segmentId, text: segment.text, rawStart: segment.rawStart, rawEnd: segment.rawEnd });
+      item.partiallyPlayedSegment = undefined;
+      this.maybePresent(item, at);
+    } else item.partiallyPlayedSegment = { segmentId: segment.segmentId, text: '' };
+    this.recomputeUnplayed(item);
+  }
+
+  setFinalSegment(attemptId: string, segmentId: string): void {
+    const item = this.get(attemptId);
+    if (item.candidate && !item.interrupted) { item.candidate.segmentId = segmentId; this.maybePresent(item, Date.now()); }
+  }
+  speechFallback(attemptId: string): void {
+    const item = this.get(attemptId);
+    item.mode = 'text'; item.deliveryMode = 'text'; item.candidate = undefined;
+    this.recomputeUnplayed(item);
+  }
+
   setQuestionCandidate(attemptId: string, questionId: string, text: string, segmentId?: string, at = Date.now()): void {
     const item = this.get(attemptId);
     if (item.action !== 'SPEAK' || !item.expectsReply || !questionId || !text || !item.generated.trimEnd().endsWith(text.trimEnd())) throw new Error('declared question must end generated reply');
-    if (item.mode === 'voice' && !segmentId) throw new Error('voice question needs final segment id');
     item.candidate = { questionId, text, segmentId };
     this.maybePresent(item, at);
   }
@@ -100,14 +126,14 @@ export class DeliveryLedger {
 
   private get(id: string): MutableAttempt { const item = this.attempts.get(id); if (!item) throw new Error('unknown attempt'); return item; }
   private recomputeUnplayed(item: MutableAttempt): void {
-    const heardLength = item.fullyPlayedSegments.reduce((n, s) => n + s.text.length, 0) + (item.partiallyPlayedSegment?.text.length ?? 0);
+    const heardLength = (item.fullyPlayedSegments.at(-1)?.rawEnd ?? item.fullyPlayedSegments.reduce((n, s) => n + s.text.length, 0)) + (item.partiallyPlayedSegment?.text.length ?? 0);
     item.unplayed = item.mode === 'voice' ? item.generated.slice(heardLength) : item.generated.slice(item.displayed.length);
   }
   private maybePresent(item: MutableAttempt, at: number): void {
     const candidate = item.candidate;
     if (!candidate) return;
     const presented = item.mode === 'text' ? item.displayed.trimEnd().endsWith(candidate.text.trimEnd())
-      : item.fullyPlayedSegments.at(-1)?.segmentId === candidate.segmentId
+      : !!candidate.segmentId && item.fullyPlayedSegments.at(-1)?.segmentId === candidate.segmentId
         && item.fullyPlayedSegments.map(s => s.text).join('').trimEnd().endsWith(candidate.text.trimEnd());
     if (presented) { this.pending = { questionId: candidate.questionId, turnId: item.turnId, text: candidate.text, presentedAt: at, status: 'awaiting' }; item.candidate = undefined; }
   }

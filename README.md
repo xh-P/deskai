@@ -6,11 +6,12 @@ Windows 桌面 AI 语音对话项目：**dsh SenseVoiceSmall + dsh + GPT-SoVITS*
 
 ## 当前状态
 
-截至 2026-10-28：**M1 自动采集与 M2 选择性回应代码已接入桌面**。支持自动识别、单请求回应决策、流式正文、文字输入、人格/回复语言独立设置、显式停止与重试。M2 本地协议/界面回放通过；真实模型请求仍返回 `MISSING_CREDENTIAL`，按用户本轮安排保留真实模型语义验收未完成。语音合成桌面集成待 M3，当前只显示生成正文；真实麦克风、扬声器和 AEC 未验收。
+截至 2026-10-30：**M3 逐句 v2 合成/换声与 M4 桌面功能已接入**。支持自动识别、单请求选择性回应、自然插话状态机、播放回执、十角色/参考切换、独立人格和语言、托盘、设备与音量/语速设置。十声音真实 GPU 生成、39 条真实模型文本案例、模拟麦克风→真实 ASR→dsh 模型→v2→播放贯通通过；真实麦克风、扬声器/AEC、主观听校和 M5 长时自然对话仍未验收。
 
-- 双击 `启动桌面语音对话.cmd`，或执行 `npm run desktop:dev`；点击“开始对话”后才采音，“结束对话”释放麦克风。
+- 双击 `启动桌面语音对话.cmd`，或执行 `npm run desktop:dev`；启动会预热本地服务，点击“开始语音对话”后才采音。关闭窗口默认隐藏到托盘，退出使用托盘菜单。
+- 可运行目录包：`npm run desktop:package` 后双击 `release/DeskAI2/DeskAI.exe`。大模型、Conda 与 runtime 使用外部资源；移动包后修改旁边 `deskai-runtime.json` 的 assetRoot。
 - `npm run desktop:test`：确定性回归；`npm run desktop:smoke`：模拟麦克风、真实本地 ASR 回放；`npm run m2:smoke`：模拟模型的桌面界面回放。这些命令不验收物理设备。
-- [M2 运行与验证](./docs/desktop-voice/m2-validation.md) · [M1 验证](./docs/desktop-voice/m1-validation.md) · [M0 剩余门禁](./docs/desktop-voice/m0-validation.md)。
+- [M3–M4 运行与验证](./docs/desktop-voice/m3-m4-validation.md) · [真实模型验证](./docs/desktop-voice/m2-live-validation-20261030.md) · [临时协助清单](./docs/desktop-voice/temporary-user-checks.md) · [M0 剩余门禁](./docs/desktop-voice/m0-validation.md)。
 
 - [设计与实现交接](./docs/desktop-voice/README.md)
 - [分阶段执行计划与验收](./docs/desktop-voice/execution-plan.md)
@@ -24,7 +25,7 @@ Windows 桌面 AI 语音对话项目：**dsh SenseVoiceSmall + dsh + GPT-SoVITS*
 - `compare-nagato-voices.cmd`：已有试听比较入口；具体实验见 outputs 和训练文档。
 - `启动长门v5训练.cmd` 等训练入口：仅在明确需要训练时使用，不属于桌面应用启动步骤。
 
-新增桌面入口与这些原入口相互独立。当前为源码开发启动方式，尚未制作可分发安装包。
+新增桌面入口与这些原入口相互独立。已提供 Windows 目录运行包；尚未提供签名安装程序，外部模型/Conda 资产不随包复制。
 
 ## 环境与目录
 

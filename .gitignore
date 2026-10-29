@@ -14,6 +14,7 @@ __pycache__/
 apps/desktop/renderer/public/vad/
 assets/
 outputs/
+release/
 tests/voice/fixtures/*.wav
 .cursor/
 .env

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { FrameVAD } from './frame-vad'
-import type { DeskaiEvent, DialogueSmokeReport, PersonaId, ReplyLanguage, RuntimeInfo, SessionStart, SmokeReport } from './bridge'
+import type { DeskaiEvent, DialogueSmokeReport, PersonaId, ReplyLanguage, RuntimeInfo, SessionStart, SmokeReport, Preferences } from './bridge'
 import type { DialogueEvent } from '../../../../packages/voice-core/src/dialogue.ts'
 import { PcmPlayer } from './player'
 import './style.css'
@@ -8,6 +8,7 @@ import './style.css'
 type Entry = { id: number; role: 'user' | 'system' | 'assistant'; text: string; turnId?: string; attemptId?: string;
   generationId?: number; interrupted?: boolean; completed?: boolean }
 type Capture = { stream: MediaStream; vad: FrameVAD; context: AudioContext; player: PcmPlayer; sessionId: string }
+type Output = { context: AudioContext; player: PcmPlayer; sessionId: string }
 
 function describeMediaError(error: unknown): string {
   if (error instanceof Error && /MISSING_CREDENTIAL/.test(error.message)) return '模型凭据未配置：服务尚未接通。请在 dsh 配置后重试。'
@@ -30,14 +31,18 @@ export default function App() {
   const [mediaSettings, setMediaSettings] = useState<MediaTrackSettings | null>(null)
   const [entries, setEntries] = useState<Entry[]>([])
   const [error, setError] = useState('')
-  const [fixtureLoading, setFixtureLoading] = useState(false)
   const [textDraft, setTextDraft] = useState('')
   const [sendingText, setSendingText] = useState(false)
   const [modelState, setModelState] = useState('idle')
   const [retryable, setRetryable] = useState(false)
   const [preferences, setPreferences] = useState<RuntimeInfo['preferences'] | null>(null)
   const [preferenceNote, setPreferenceNote] = useState('')
+  const [ttsState, setTtsState] = useState('尚未准备')
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const captureRef = useRef<Capture | null>(null)
+  const outputRef = useRef<Output | null>(null)
+  const preferencesRef = useRef<Preferences | null>(null)
+  preferencesRef.current = preferences
   const startLock = useRef(false)
   const stopLock = useRef(false)
   const currentSession = useRef('')
@@ -54,6 +59,29 @@ export default function App() {
   const dialogueSmokeStarted = useRef(false)
   const microphoneOpened = useRef(false)
   const lastTranscript = useRef('')
+
+  const ensureOutput = useCallback(async (opened: SessionStart): Promise<Output> => {
+    if (outputRef.current?.sessionId === opened.sessionId) return outputRef.current
+    const context = new AudioContext()
+    await context.resume()
+    const player = new PcmPlayer(context, opened.sessionId, report => {
+      window.deskai.playbackState(report)
+      playbackRef.current = report.playing
+      setPlayback(report.completed ? '播放完成' : report.paused ? '因候选插话暂停' : report.playing ? '播放中' : '空闲')
+    }, message => { setError(message); window.deskai.playbackState({ sessionId: opened.sessionId, generationId: generationFloor.current, playing: false, paused: false, errorCode: 'PLAYER_ERROR' }) })
+    try {
+      await player.initialize()
+      player.setVolume(preferencesRef.current?.volume ?? 0.8)
+      const sink = preferencesRef.current?.outputDeviceId
+      if (sink) {
+        const selectable = context as AudioContext & { setSinkId?: (id: string) => Promise<void> }
+        if (!selectable.setSinkId) throw new Error('当前音频设备不支持应用内选择，请在 Windows 中选择输出设备。')
+        await selectable.setSinkId(sink)
+      }
+      if (currentSession.current !== opened.sessionId) throw new Error('会话已结束')
+      return outputRef.current = { context, player, sessionId: opened.sessionId }
+    } catch (cause) { player.close(); await context.close(); throw cause }
+  }, [])
 
   const addEntry = useCallback((role: Entry['role'], text: string) => {
     setEntries(previous => [...previous.slice(-49), { id: ++nextEntry.current, role, text }])
@@ -194,7 +222,9 @@ export default function App() {
     acknowledged.current.clear()
     lastTranscript.current = ''
     const old = captureRef.current
+    const oldOutput = outputRef.current
     captureRef.current = null
+    outputRef.current = null
     setCaptureState(reason ?? '未开启')
     setInputState('OFF')
     setPlayback('空闲')
@@ -209,9 +239,9 @@ export default function App() {
       if (old) {
         old.stream.getAudioTracks().forEach(track => { track.onended = null; track.stop() })
         try { await old.vad.destroy() } catch { /* The stream may already have ended. */ }
-        old.player.close()
-        await old.context.close()
       }
+      oldOutput?.player.close()
+      await oldOutput?.context.close()
     } catch (cause) {
       setError(describeMediaError(cause))
     } finally {
@@ -238,14 +268,9 @@ export default function App() {
       currentSession.current = opened.sessionId
       setSession(opened)
       setServiceState(opened.status)
-      context = new AudioContext()
-      await context.resume()
-      player = new PcmPlayer(context, opened.sessionId, report => {
-        window.deskai.playbackState(report)
-        playbackRef.current = report.playing
-        setPlayback(report.completed ? '播放完成' : report.paused ? '因候选插话暂停' : report.playing ? '播放中' : '空闲')
-      }, setError)
-      await player.initialize()
+      const output = await ensureOutput(opened)
+      context = output.context
+      player = output.player
       if (epoch !== startEpoch.current) throw new Error('会话已结束')
       vad = await FrameVAD.new({
         context,
@@ -253,7 +278,8 @@ export default function App() {
           if (epoch !== startEpoch.current) throw new Error('会话已结束')
           microphoneOpened.current = true
           const acquired = await navigator.mediaDevices.getUserMedia({
-            audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: false },
+            audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: false,
+              ...(preferencesRef.current?.inputDeviceId ? { deviceId: { exact: preferencesRef.current.inputDeviceId } } : {}) },
           })
           if (epoch !== startEpoch.current) { acquired.getTracks().forEach(track => track.stop()); throw new Error('会话已结束') }
           stream = acquired
@@ -271,6 +297,7 @@ export default function App() {
       if (!deviceStream || !track) throw new DOMException('No audio input track', 'NotFoundError')
       if (epoch !== startEpoch.current || track.readyState !== 'live') throw new Error('麦克风已断开或会话已结束')
       setMediaSettings(track.getSettings())
+      void navigator.mediaDevices.enumerateDevices().then(setDevices).catch(() => {})
       track.onended = () => { void stop('麦克风连接中断') }
       captureRef.current = { stream: deviceStream, vad, context, player, sessionId: opened.sessionId }
       setCaptureState('自动监听中')
@@ -293,6 +320,7 @@ export default function App() {
       if (vad) { try { await vad.destroy() } catch { /* Initialization may be partial. */ } }
       player?.close()
       if (context) await context.close().catch(() => {})
+      outputRef.current = null
       currentSession.current = ''
       setSession(null)
       await window.deskai.stopSession().catch(() => {})
@@ -301,11 +329,23 @@ export default function App() {
       startLock.current = false
       setStarting(false)
     }
-  }, [finishSmoke, stop])
+  }, [ensureOutput, finishSmoke, stop])
+
+  const pauseCapture = useCallback(async () => {
+    if (startLock.current) { await stop('已取消麦克风准备'); return; }
+    const active = captureRef.current
+    captureRef.current = null
+    await window.deskai.pauseCapture()
+    if (active) {
+      active.stream.getTracks().forEach(track => { track.onended = null; track.stop() })
+      await active.vad.destroy().catch(() => {})
+    }
+    setCaptureState('已暂停麦克风'); setInputState('OFF'); setMediaSettings(null)
+  }, [stop])
 
   useEffect(() => {
     const unsubscribe = window.deskai.onEvent((event: DeskaiEvent) => {
-      if (event.sessionId && event.sessionId !== currentSession.current) return
+      if ('sessionId' in event && event.sessionId && event.sessionId !== currentSession.current) return
       switch (event.type) {
         case 'dialogue': handleDialogue(event.event); break
         case 'session-ended': setError(event.reason); void stop(event.reason); break
@@ -337,14 +377,25 @@ export default function App() {
         case 'input-state': setInputState(event.state); break
         case 'ready-text': if (smoke.current && event.text.trim()) addEntry('system', `待提交：${event.text}`); break
         case 'error': setError(event.code === 'MISSING_CREDENTIAL' ? '模型凭据未配置：语音识别或对话服务尚未接通。请在 dsh 配置后重试。' : event.message); break
-        case 'output-command': captureRef.current?.player.command(event); break
-        case 'audio-chunk': captureRef.current?.player.enqueue(event); break
+        case 'output-command': outputRef.current?.player.command(event); break
+        case 'audio-chunk': outputRef.current?.player.enqueue(event); break
+        case 'capture-command': void (event.command === 'pause' ? pauseCapture() : start()); break
+        case 'tts-status':
+          setTtsState(event.status.state + (event.status.code ? ` · ${event.status.code}` : ''))
+          if (event.status.state === 'ready') void window.deskai.getRuntime().then(info => { setRuntime(info); setPreferences(info.preferences) })
+          break
+        case 'speech-state': if (event.state === 'error') setError('语音合成失败，本轮保留文字；可点击恢复语音。'); break
       }
     })
     void window.deskai.getRuntime().then(info => {
       setRuntime(info)
       setPreferences(info.preferences)
-      if (info.smoke && info.fakeMedia && !info.dialogueSmoke) {
+      setServiceState(info.speechStatus?.status ?? '尚未准备')
+      setTtsState(info.ttsStatus?.state ?? '尚未准备')
+      if (!info.assetStatus?.ready) setError('本地运行资源不完整，请查看资源诊断。')
+      void navigator.mediaDevices.enumerateDevices().then(setDevices).catch(() => {})
+      if (info.ttsSmoke) { void start() }
+      else if (info.smoke && info.fakeMedia && !info.dialogueSmoke) {
         smoke.current = { simulated: true, vadInitialized: false, asrTranscriptSeen: false, inputDuringPlayback: false, completedSessions: 0, notes: [] }
         void start()
       } else if (info.dialogueSmoke) {
@@ -352,6 +403,7 @@ export default function App() {
       }
     }).catch(cause => setError(describeMediaError(cause)))
     const devicesChanged = async () => {
+      void navigator.mediaDevices.enumerateDevices().then(setDevices).catch(() => {})
       const active = captureRef.current
       if (!active) return
       const track = active.stream.getAudioTracks()[0]
@@ -370,7 +422,7 @@ export default function App() {
       if (smokeTimer.current) clearTimeout(smokeTimer.current)
       void stop()
     }
-  }, [addEntry, finishSmoke, handleDialogue, runDialogueSmoke, start, stop])
+  }, [addEntry, finishSmoke, handleDialogue, runDialogueSmoke, pauseCapture, start, stop])
 
   useEffect(() => {
     if (!currentSession.current) return
@@ -385,16 +437,6 @@ export default function App() {
     }
   }, [entries])
 
-  const playFixture = async () => {
-    const active = captureRef.current
-    if (!active || fixtureLoading) return
-    setFixtureLoading(true)
-    setError('')
-    try { await active.player.playFixture(await window.deskai.loadPlaybackFixture()) }
-    catch (cause) { setError(describeMediaError(cause)) }
-    finally { setFixtureLoading(false) }
-  }
-
   const openTextConversation = async (): Promise<SessionStart> => {
     if (session) return session
     if (stopLock.current) throw new Error('会话正在结束')
@@ -407,6 +449,7 @@ export default function App() {
       currentSession.current = opened.sessionId
       setSession(opened)
       setServiceState(opened.status)
+      await ensureOutput(opened)
       return opened
     } finally { if (epoch === startEpoch.current) setStarting(false) }
   }
@@ -435,6 +478,24 @@ export default function App() {
     } catch (cause) { setError(describeMediaError(cause)); setPreferenceNote('') }
   }
 
+  const changeSetting = async (patch: Partial<Preferences>) => {
+    setPreferenceNote('正在保存设置…')
+    try {
+      const next = await window.deskai.updatePreferences(patch)
+      setPreferences(next)
+      outputRef.current?.player.setVolume(next.volume)
+      if ('outputDeviceId' in patch && outputRef.current) {
+        const context = outputRef.current.context as AudioContext & { setSinkId?: (id: string) => Promise<void> }
+        if (!context.setSinkId) throw new Error('当前不支持应用内选择输出，请使用 Windows 声音设置。')
+        await context.setSinkId(next.outputDeviceId)
+      }
+      setPreferenceNote('设置已保存。输入设备在下次开启麦克风时生效。')
+      if ('voiceId' in patch || 'referenceId' in patch) {
+        const info = await window.deskai.getRuntime(); setRuntime(info)
+      }
+    } catch (cause) { setError(describeMediaError(cause)); setPreferenceNote('设置未完成，请检查提示') }
+  }
+
   const cancelTurn = async () => {
     try { await window.deskai.cancelTurn() }
     catch (cause) { setError(describeMediaError(cause)) }
@@ -449,18 +510,27 @@ export default function App() {
     } catch (cause) { setError(describeMediaError(cause)); setRetryable(true) }
   }
 
-  const selectedVoiceName = preferences?.voiceId === 'nagato-normal-v2' ? '常态有希 · v2'
-    : session?.catalog.find(voice => voice.voiceId === preferences?.voiceId)?.name ?? '当前声音'
+  const voices = runtime?.voices ?? []
+  const selectedVoice = voices.find(voice => voice.id === preferences?.voiceId)
+  const selectedVoiceName = selectedVoice?.name ?? '常态有希 · v2'
+  const ttsLabel = ({ starting: '正在启动', loading: '正在加载模型', warming: '正在预热', switching: '正在切换声音', ready: '已就绪', error: '出错，可恢复', stopped: '已停止' } as Record<string, string>)[ttsState.split(' · ')[0]] ?? ttsState
+  const inputLabel = ({ OFF: '未开启', LISTENING: '等待你说话', CAPTURING: '正在收音', TRANSCRIBING: '正在识别', ACCUMULATING: '等待续句', DECIDING: '正在提交' } as Record<string, string>)[inputState] ?? inputState
 
   return <main className="shell">
-    <header><div><h1>DeskAI 语音对话</h1><p>当前声音：{selectedVoiceName} · 声音切换将在后续版本接入</p></div><span className="stage">对话测试版</span></header>
+    <header><div><h1>DeskAI 语音对话</h1><p>当前声音：{selectedVoiceName}</p></div><span className="stage">桌面预览版</span></header>
     <section className="summary" aria-live="polite">
       <div><small>语音服务</small><strong>{serviceState}</strong></div>
       <div><small>麦克风</small><strong>{captureState}</strong></div>
-      <div><small>输入状态</small><strong>{inputState}</strong></div>
+      <div><small>输入状态</small><strong>{inputLabel}</strong></div>
       <div><small>播放</small><strong>{playback}</strong></div>
     </section>
     <section className="preferences" aria-label="对话设置">
+      <label>角色声音<select value={preferences?.voiceId ?? 'nagato-normal-v2'} disabled={!voices.length || starting} onChange={event => void changeSetting({ voiceId: event.target.value, referenceId: '' })}>
+        {voices.length ? voices.map(voice => <option key={voice.id} value={voice.id}>{voice.name}</option>) : <option value="nagato-normal-v2">常态有希 v2</option>}
+      </select></label>
+      <label>参考语气<select value={preferences?.referenceId || selectedVoice?.defaultReferenceId || ''} disabled={!selectedVoice || starting} onChange={event => void changeSetting({ referenceId: event.target.value })}>
+        {(selectedVoice?.references ?? []).map(ref => <option key={ref.id} value={ref.id}>{ref.name}</option>)}
+      </select></label>
       <label>人格风格<select value={preferences?.personaId ?? 'nagato-normal-light'} onChange={event => void changePreferences(event.target.value as PersonaId, preferences?.replyLanguage ?? 'auto')}>
         {(runtime?.personas ?? [{ id: 'nagato-normal-light' as PersonaId, displayName: '常态有希 · 轻量风格', revision: 1 }, { id: 'assistant-neutral' as PersonaId, displayName: '普通助手', revision: 1 }]).map(persona => <option key={persona.id} value={persona.id}>{persona.displayName}</option>)}
       </select></label>
@@ -470,6 +540,25 @@ export default function App() {
       <span>模型：{modelState === 'waiting' ? '等待续句' : modelState === 'silent' ? '本轮保持安静' : modelState === 'generating' ? '正在回复' : modelState === 'cancelling' ? '正在停止' : modelState === 'error' ? '回复出错' : '空闲'}</span>
     </section>
     {preferenceNote && <p className="hint">{preferenceNote}</p>}
+    <details className="settings"><summary>声音与设备设置 · 合成服务：{ttsLabel}</summary>
+      <div className="preferences">
+        <label>输入设备<select value={preferences?.inputDeviceId ?? ''} onChange={event => void changeSetting({ inputDeviceId: event.target.value })}>
+          <option value="">系统默认麦克风</option>{devices.filter(device => device.kind === 'audioinput' && device.deviceId !== 'default').map((device, i) => <option key={device.deviceId || i} value={device.deviceId}>{device.label || `输入设备 ${i + 1}`}</option>)}
+        </select></label>
+        <label>输出设备<select value={preferences?.outputDeviceId ?? ''} onChange={event => void changeSetting({ outputDeviceId: event.target.value })}>
+          <option value="">系统默认扬声器</option>{devices.filter(device => device.kind === 'audiooutput' && device.deviceId !== 'default').map((device, i) => <option key={device.deviceId || i} value={device.deviceId}>{device.label || `输出设备 ${i + 1}`}</option>)}
+        </select></label>
+        <label>音量 {Math.round((preferences?.volume ?? 0.8) * 100)}%<input aria-label="音量" type="range" min="0" max="1" step="0.05" value={preferences?.volume ?? 0.8} onChange={event => void changeSetting({ volume: Number(event.target.value) })} /></label>
+        <label>语速<select value={preferences?.speed ?? 1} onChange={event => void changeSetting({ speed: Number(event.target.value) })}>
+          {[0.6, 0.8, 1, 1.2, 1.4, 1.6].map(value => <option key={value} value={value}>{value}×</option>)}
+        </select></label>
+        <label>关闭主窗口<select value={String(preferences?.closeToTray ?? true)} onChange={event => void changeSetting({ closeToTray: event.target.value === 'true' })}>
+          <option value="true">隐藏到托盘（会话继续）</option><option value="false">退出并释放服务</option>
+        </select></label>
+        <button className="secondary" onClick={() => void window.deskai.retrySpeech().then(() => window.deskai.getRuntime()).then(setRuntime).catch(cause => setError(describeMediaError(cause)))}>恢复语音服务</button>
+      </div>
+      <p>声音、人格、语言分别设置。系统睡眠会结束会话；恢复后请重新开启。设备名称需麦克风授权后才可能显示。</p>
+    </details>
     {error && <p className="error" role="alert">{error}</p>}
     <section className="conversation" aria-label="对话记录">
       {entries.length === 0 ? <p className="empty">可直接输入文字开始对话，或点击“开始语音对话”自动监听和识别。</p> : entries.map(entry => <div className={`entry ${entry.role}`} data-attempt-id={entry.attemptId} key={entry.id}><small>{entry.role === 'user' ? '你' : entry.role === 'assistant' ? `助手${entry.interrupted ? ' · 已中断' : ''}` : '轮次状态'}</small><p>{entry.text}</p></div>)}
@@ -479,17 +568,18 @@ export default function App() {
       <button type="submit" disabled={!textDraft.trim() || sendingText}>发送</button>
     </form>
     <nav className="actions">
+      {captureRef.current && <button className="secondary" onClick={() => void pauseCapture()}>暂停麦克风</button>}
       {captureRef.current ? <button onClick={() => void stop()}>结束对话</button>
         : starting ? <button onClick={() => void stop()}>取消准备</button>
           : <button onClick={() => void start()}>开始语音对话</button>}
       {session && !starting && <button className="secondary" onClick={() => void stop()}>结束会话</button>}
-      <button className="secondary" onClick={() => void cancelTurn()} disabled={modelState !== 'generating' && modelState !== 'cancelling'}>停止回复</button>
+      <button className="secondary" onClick={() => void cancelTurn()} disabled={!session}>停止回复</button>
       <button className="secondary" onClick={() => void retryTurn()} disabled={!retryable}>重试回复</button>
-      <button className="secondary" onClick={() => void playFixture()} disabled={!captureRef.current || fixtureLoading}>播放插话测试音频</button>
     </nav>
-    <p className="hint">插话测试播放已有常态有希参考 WAV；它是测试音频，不是模型生成回复。播放时麦克风继续采集。</p>
     <p className="hint">开始语音对话后自动监听；识别文字经 dsh 发送至所选模型服务，原音频在本机处理。等待或安静时仅更新状态。</p>
-    <p className="hint">当前显示模型回复文字；语音合成与真实播放进度将在后续版本接入。</p>
-    <details><summary>技术设置与诊断</summary><p>会话：{session?.sessionId ?? '无'} · 运行模式：{runtime?.fakeMedia ? '模拟设备' : '普通设备'}</p><p>浏览器实际麦克风设置（仅供诊断，不代表物理 AEC 验收）：</p><pre>{mediaSettings ? JSON.stringify(mediaSettings, null, 2) : '未获取'}</pre></details>
+    <p className="hint">有效回复逐句播放；合成故障保留文字。播放进度是声卡提交估计；真实麦克风、外放回声效果仍需设备验收。</p>
+    <details><summary>技术设置与诊断</summary><p>会话：{session?.sessionId ?? '无'} · 运行模式：{runtime?.fakeMedia ? '模拟设备' : '普通设备'}</p>
+      {!!runtime?.assetStatus?.missing.length && <p>缺少本地资源：{runtime.assetStatus.missing.join('、')}</p>}
+      <p>浏览器实际麦克风设置（仅供诊断，不代表物理 AEC 验收）：</p><pre>{mediaSettings ? JSON.stringify(mediaSettings, null, 2) : '未获取'}</pre></details>
   </main>
 }

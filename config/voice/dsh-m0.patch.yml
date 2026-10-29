@@ -1,4 +1,4 @@
-# M0 only. Launch through scripts/m0/dsh-session-probe.mjs.
+# Shared desktop speech/chat-only baseline, also used by the M0 interface probe.
 # The profile is a new name; this invocation overlay never edits the existing web profile.
 - id: tool-working-directory
   disabled: true

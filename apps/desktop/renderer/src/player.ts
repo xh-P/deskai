@@ -6,6 +6,8 @@ type OutputCommand = Extract<DeskaiEvent, { type: 'output-command' }>
 /** The renderer owns one context for microphone VAD and all application playback. */
 export class PcmPlayer {
   private node: AudioWorkletNode | null = null
+  private gain: GainNode | null = null
+  private volume = 1
   private generationId = -1
   private fixtureGeneration = 0
   private fixtureQueue: { chunks: Float32Array[]; sampleRate: number } | null = null
@@ -21,16 +23,21 @@ export class PcmPlayer {
   async initialize(): Promise<void> {
     await this.context.audioWorklet.addModule(new URL('./worklets/pcm-player.js', document.baseURI).href)
     this.node = new AudioWorkletNode(this.context, 'deskai-pcm-player', { outputChannelCount: [1] })
-    this.node.connect(this.context.destination)
+    this.gain = this.context.createGain()
+    this.gain.gain.value = this.volume
+    this.node.connect(this.gain)
+    this.gain.connect(this.context.destination)
     this.node.port.onmessage = ({ data }: MessageEvent) => {
       if (data.generationId !== this.generationId) return
       if (data.type === 'overflow') {
         this.onError('播放缓冲已满，后续音频块未入队。')
+        this.report({ ...data, sessionId: this.sessionId, playing: false, paused: false, errorCode: 'PLAYBACK_OVERFLOW' })
         return
       }
       if (data.type === 'state') {
         this.queuedEstimate = Number.isFinite(data.queuedSamples) ? data.queuedSamples : 0
         this.report({
+          ...data,
           sessionId: this.sessionId,
           generationId: data.generationId,
           playing: Boolean(data.playing),
@@ -65,6 +72,8 @@ export class PcmPlayer {
     const samples = new Float32Array(chunk.samples)
     this.node.port.postMessage({
       type: 'enqueue', generationId: chunk.generationId, samples, sampleRate: chunk.sampleRate, final: chunk.final,
+      sessionId: chunk.sessionId, turnId: chunk.turnId, attemptId: chunk.attemptId, voiceRevision: chunk.voiceRevision,
+      segmentId: chunk.segmentId, chunkSeq: chunk.chunkSeq, segmentFinal: chunk.segmentFinal,
     }, [samples.buffer])
   }
 
@@ -80,7 +89,7 @@ export class PcmPlayer {
     }
     this.fixtureGeneration = Math.max(this.fixtureGeneration + 1, this.generationId + 1)
     this.generationId = this.fixtureGeneration
-    const chunkSize = Math.max(1, Math.floor(audio.sampleRate * 2))
+    const chunkSize = Math.max(1, Math.floor(audio.sampleRate))
     const chunks: Float32Array[] = []
     for (let start = 0; start < mono.length; start += chunkSize) chunks.push(mono.slice(start, start + chunkSize))
     this.fixtureQueue = { chunks, sampleRate: audio.sampleRate }
@@ -104,6 +113,14 @@ export class PcmPlayer {
     this.fixtureQueue = null
     this.node?.port.postMessage({ type: 'clear', generationId: this.generationId + 1 })
     this.node?.disconnect()
+    this.gain?.disconnect()
+    this.gain = null
     this.node = null
+  }
+
+  setVolume(value: number): void {
+    if (!Number.isFinite(value)) return
+    this.volume = Math.max(0, Math.min(1, value))
+    if (this.gain) this.gain.gain.setValueAtTime(this.volume, this.context.currentTime)
   }
 }

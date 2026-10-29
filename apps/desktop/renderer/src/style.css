@@ -33,4 +33,7 @@ strong { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 .error { margin: 0; padding: 12px; border-radius: 10px; color: #ffcbcb; background: #4d272a; }
 details { background: #20242c; padding: 12px; border-radius: 10px; color: #bdc4ce; font-size: 13px; }
 summary { cursor: pointer; }
+.settings .preferences { margin-top: 12px; border: 0; padding: 0; }
+.settings select { max-width: 240px; }
+.settings input[type="range"] { width: 160px; }
 pre { overflow: auto; font-size: 12px; }

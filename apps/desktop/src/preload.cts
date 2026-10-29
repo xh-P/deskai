@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('deskai', Object.freeze({
   acknowledgeDisplay: (report: unknown) => ipcRenderer.send('deskai:displayed', report),
   finishDialogueSmoke: (report: unknown) => ipcRenderer.send('deskai:finish-dialogue-smoke', report),
   stopSession: () => ipcRenderer.invoke('deskai:stop'),
+  pauseCapture: () => ipcRenderer.invoke('deskai:pause-capture'),
+  retrySpeech: () => ipcRenderer.invoke('deskai:retry-speech'),
   sendFrame: (frame: unknown) => ipcRenderer.send('deskai:frame', frame),
   playbackState: (state: unknown) => ipcRenderer.send('deskai:playback', state),
   loadPlaybackFixture: () => ipcRenderer.invoke('deskai:playback-fixture'),

@@ -68,6 +68,20 @@ test('WAIT/SILENT body is suppressed and later body JSON never changes action', 
   assert.equal(events[1].type === 'body' && events[1].text, JSON.stringify(silent));
 });
 
+test('a strict WAIT/SILENT final line may end at EOF while SPEAK still needs its body separator', () => {
+  for (const header of [wait, silent]) {
+    const stream = new DecisionStream();
+    assert.deepEqual(stream.push(JSON.stringify(header)), []);
+    assert.deepEqual(stream.finish(), [{ type: 'header', header }]);
+    assert.deepEqual(stream.finish(), []);
+  }
+  for (const source of [JSON.stringify(speak), JSON.stringify(silent) + 'junk', '```' + JSON.stringify(wait), JSON.stringify({ ...wait, extra: 1 })]) {
+    const stream = new DecisionStream();
+    assert.deepEqual(stream.push(source), []);
+    assert.equal(stream.finish()[0]?.type, 'error');
+  }
+});
+
 test('chunk cursor accepts increasing frame revisions, dedupes reconnect and detects conflicts', () => {
   const cursor = new ChunkCursor();
   const c = { attemptId: 'a', index: 0, revision: 2, text: 'hi' };

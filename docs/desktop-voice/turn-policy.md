@@ -73,7 +73,7 @@ WAIT 与 SILENT 均保持麦克风处于会话允许的监听状态。WAIT 在�
 - action 枚举仅为 SPEAK/WAIT/SILENT。
 - reason 枚举：direct_request、answer_to_question、sharing、clarification、unfinished、backchannel、not_addressed、closing、uncertain。
 - expectsReply 仅表示本次 SPEAK 正文是否确实询问用户或要求确认；WAIT/SILENT 必须 false。它是辅助信号，不覆盖可见正文证据。
-- 头部完整、严格校验并收到换行前，所有字符留在私有缓冲，绝不播报。
+- 头部完整、严格校验并收到换行前，所有字符留在私有缓冲，绝不播报。2026-10-30 真实模型验证后，允许正常流结束 EOF 终止一个严格完整的 WAIT/SILENT 末行（没有正文）；SPEAK 仍须换行再输出非空正文。
 - WAIT/SILENT 后的多余正文一律不播，记录协议违规；不从违规正文执行任何操作。
 - 代码围栏、无头、超长头、非法枚举、头中伪造工具调用均不合规。不用“找第一个大括号”的宽松正则把任意文本当指令。
 - 流结束前没有有效头：显示“本轮回复格式异常，可重试”，不朗读控制字符；不自动无限重试。首版默认不增加模型修复调用。用户显式重试才请求一次新 attempt，前一次结果不得再出声。

@@ -29,4 +29,32 @@ for (let i = 0; i < 40; i++) render()
 assert.equal(messages.some(message => message.type === 'state' && message.completed && message.generationId === 2), true)
 send({ type: 'enqueue', generationId: 2, sampleRate: 16000, samples: new Float32Array(16000 * 7) })
 assert.equal(messages.some(message => message.type === 'overflow'), true, 'queue is bounded to six seconds')
+
+// Real sentence identities survive acknowledgments and playback completion.
+const identified = new Player()
+const identity = { sessionId: 's', turnId: 't', attemptId: 'a', generationId: 3, voiceRevision: 2, segmentId: 'seg', chunkSeq: 0 }
+const input32 = { type: 'enqueue', ...identity, sampleRate: 32000, samples: new Float32Array(3200).fill(.5), segmentFinal: true, final: true }
+identified.command(input32)
+identified.command(input32)
+assert.ok(messages.some(m => m.chunkAccepted && m.segmentId === 'seg' && m.attemptId === 'a' && m.voiceRevision === 2))
+const before = messages.filter(m => m.segmentCompleted && m.segmentId === 'seg').length
+let frames32 = 0
+while (identified.queue.length && frames32 < 10000) {
+  identified.process([], [[new Float32Array(128)]])
+  frames32 += 128
+}
+assert.ok(Math.abs(frames32 - 4800) < 128, '32kHz input keeps its 100ms duration in a 48kHz context')
+assert.equal(messages.filter(m => m.segmentCompleted && m.segmentId === 'seg').length - before, 1, 'duplicate chunk never repeats a sentence')
+identified.command({ type: 'enqueue', ...identity, segmentId: 'seg48', sampleRate: 48000, samples: new Float32Array(4800).fill(.25), segmentFinal: true })
+let frames48 = 0
+while (identified.queue.length && frames48 < 10000) {
+  identified.process([], [[new Float32Array(128)]])
+  frames48 += 128
+}
+assert.ok(Math.abs(frames48 - 4800) < 128, '48kHz remains 100ms after a 32kHz sentence')
+identified.command({ type: 'enqueue', ...identity, segmentId: 'gap', chunkSeq: 2, sampleRate: 48000, samples: new Float32Array(128) })
+assert.ok(messages.some(m => m.errorCode === 'PLAYBACK_SEQUENCE' && m.segmentId === 'gap'))
+identified.command({ type: 'clear', generationId: 4 })
+identified.command(input32)
+assert.equal(identified.queue.length, 0, 'old identity is rejected after clearing')
 console.log('renderer-player: pass')

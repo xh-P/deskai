@@ -1,6 +1,7 @@
 import { DecisionStream, DeliveryLedger, PROMPT_VERSION } from './m2.ts';
 import type { DecisionHeader, DeliveryMode, Persona, ReplyLanguage } from './m2.ts';
 import { localDecision } from './policy.ts';
+import { cleanSpeech } from './sentences.ts';
 import type { ChatAccepted, ChatEvent, ChatPersonaId, ChatSettlement, ChatTurnInput } from '../../dsh-adapter/src/session.ts';
 
 export type DialoguePort = { runTurn(input: ChatTurnInput, event: (event: ChatEvent) => void): Promise<ChatAccepted>; cancel(): Promise<ChatSettlement | undefined> };
@@ -10,7 +11,7 @@ export type DialogueInput = { text: string; source: DeliveryMode; continuationOf
 export type DialogueEvent =
   | { type: 'user'; turnId: string; text: string; source: DeliveryMode }
   | { type: 'decision'; turnId: string; generationId: number; action: string; local: boolean }
-  | { type: 'assistant-delta'; turnId: string; attemptId: string; generationId: number; text: string }
+  | { type: 'assistant-delta'; turnId: string; attemptId: string; generationId: number; text: string; source?: DeliveryMode }
   | { type: 'assistant-state'; turnId: string; attemptId?: string; generationId: number; state: 'complete' | 'interrupted' | 'error' }
   | { type: 'output-clear'; generationId: number }
   | { type: 'model-state'; state: 'idle' | 'generating' | 'cancelling' | 'waiting' | 'silent' | 'error'; code?: string }
@@ -28,6 +29,8 @@ export class DialogueController {
   private preferences: DialoguePreferences;
   private emit: (event: DialogueEvent) => void;
   private active?: Active;
+  private outputAttempt?: Active;
+  private finalSegments = new Map<string, string>();
   private epoch = 0;
   private generation = 0;
   private serial = 0;
@@ -46,7 +49,7 @@ export class DialogueController {
     this.port = port; this.preferences = { ...preferences }; this.emit = emit;
   }
 
-  get isGenerating(): boolean { return !!this.active && !this.active.finished && !this.active.canceled; }
+  get isGenerating(): boolean { return !!this.active && !this.active.finished && !this.active.canceled && !this.active.failure; }
   get generationId(): number { return this.generation; }
   get stats() { return { ...this.counts, promptVersion: PROMPT_VERSION, personaId: this.preferences.personaId }; }
   expectsReply(now = Date.now()): boolean {
@@ -67,7 +70,7 @@ export class DialogueController {
       if (this.closed || epoch !== this.epoch || input.isEligible?.() === false) return { accepted: false };
       const pending = this.ledger.getPendingQuestion();
       this.clearWait();
-      const local = localDecision(input.text, { outputPlaying: this.isGenerating, expectsReply: this.expectsReply(),
+      const local = localDecision(input.text, { outputPlaying: this.isGenerating || !!this.outputAttempt, expectsReply: this.expectsReply(),
         noSpeech: input.noSpeech, acousticEcho: input.acousticEcho });
       const turnId = input.retryOf ?? `turn-${++this.serial}`;
       if (local !== 'MODEL') {
@@ -162,8 +165,9 @@ export class DialogueController {
           if (event.header.action === 'WAIT') this.beginWait();
         }
       } else if (event.type === 'body') {
+        if (state.input.source === 'voice') this.outputAttempt = state;
         this.ledger.appendGenerated(state.attemptId, event.text);
-        this.emit({ type: 'assistant-delta', turnId: state.id, attemptId: state.attemptId, generationId: state.generation, text: event.text });
+        this.emit({ type: 'assistant-delta', turnId: state.id, attemptId: state.attemptId, generationId: state.generation, text: event.text, source: state.input.source });
       } else this.ledger.noteViolation(state.attemptId, event.reason);
     }
   }
@@ -188,19 +192,21 @@ export class DialogueController {
           if (state.header.expectsReply) {
             const question = attempt.generated.match(/[^。.!！?？\n]*[?？]\s*$/u)?.[0]?.trim();
             if (question) this.ledger.setQuestionCandidate(state.attemptId, `question-${state.id}`, question,
-              state.input.source === 'voice' ? 'question-final-segment' : undefined);
+              state.input.source === 'voice' ? this.finalSegments.get(state.attemptId) : undefined);
           }
           this.emit({ type: 'assistant-state', turnId: state.id, attemptId: state.attemptId, generationId: state.generation, state: 'complete' });
         }
       }
     } else if (!state.canceled && !state.failure) this.fail(state, settlement.code ?? 'MODEL_REQUEST_FAILED');
     if (this.active === state) this.active = undefined;
+    if (this.outputAttempt === state && state.attemptId && !cleanSpeech(this.ledger.snapshot().find(item => item.attemptId === state.attemptId)?.unplayed ?? '')) this.outputAttempt = undefined;
     if (!state.failure && !state.canceled && state.header?.action === 'SPEAK') this.emit({ type: 'model-state', state: 'idle' });
   }
 
   private fail(state: Active, code: string): void {
     if (state.failure) return;
     state.failure = code;
+    if (this.outputAttempt === state) this.outputAttempt = undefined;
     for (const attemptId of state.attempts) this.ledger.interrupt(attemptId);
     if (code === 'MISSING_CREDENTIAL' || code.includes('credentials-unavailable')) this.blocked = 'MISSING_CREDENTIAL';
     this.failedInput = { ...state.input, retryOf: state.accepted ? state.id : state.input.retryOf };
@@ -212,15 +218,16 @@ export class DialogueController {
 
   async cancel(): Promise<void> {
     if (this.canceling) return this.canceling;
-    const state = this.active;
-    if (!state || state.finished) return;
+    const state = this.active ?? this.outputAttempt;
+    if (!state || state.canceled) return;
     state.canceled = true;
     ++this.generation;
     for (const attemptId of state.attempts) this.ledger.interrupt(attemptId);
     this.emit({ type: 'output-clear', generationId: this.generation });
     this.emit({ type: 'assistant-state', turnId: state.id, attemptId: state.attemptId, generationId: state.generation, state: 'interrupted' });
     this.emit({ type: 'model-state', state: 'cancelling' });
-    this.canceling = this.port.cancel().then(() => {}).finally(() => {
+    this.outputAttempt = undefined;
+    this.canceling = (state.finished ? Promise.resolve() : this.port.cancel()).then(() => {}).finally(() => {
       if (this.active === state) this.active = undefined;
       this.canceling = undefined;
       if (!this.closed) this.emit({ type: 'model-state', state: 'idle' });
@@ -247,6 +254,25 @@ export class DialogueController {
     const item = this.ledger.snapshot().find(attempt => attempt.attemptId === attemptId);
     if (!item || !Number.isSafeInteger(characters) || characters < item.displayed.length || characters > item.generated.length) return;
     this.ledger.recordDisplayed(attemptId, item.generated.slice(item.displayed.length, characters));
+  }
+
+  recordPlayback(progress: { attemptId: string; generationId: number; segmentId: string; text: string; rawText: string; rawStart: number; rawEnd: number; completed: boolean }): void {
+    if (progress.generationId !== this.generation) return;
+    const item = this.ledger.snapshot().find(attempt => attempt.attemptId === progress.attemptId);
+    if (!item || item.interrupted) return;
+    this.ledger.recordMappedPlayback(progress.attemptId, progress, progress.completed);
+    if (progress.completed && !cleanSpeech(item.generated.slice(progress.rawEnd)) && this.outputAttempt?.finished) this.outputAttempt = undefined;
+  }
+  finalSegment(attemptId: string, segmentId: string): void {
+    if (!this.ledger.snapshot().some(item => item.attemptId === attemptId && !item.interrupted)) return;
+    this.finalSegments.set(attemptId, segmentId);
+    if (this.finalSegments.size > 16) this.finalSegments.delete(this.finalSegments.keys().next().value!);
+    this.ledger.setFinalSegment(attemptId, segmentId);
+  }
+  speechFallback(attemptId: string): void {
+    if (!this.ledger.snapshot().some(item => item.attemptId === attemptId)) return;
+    this.ledger.speechFallback(attemptId);
+    if (this.outputAttempt?.attemptId === attemptId) this.outputAttempt = undefined;
   }
 
   projectHistory(): { history: unknown[]; attempts: unknown[] } {
