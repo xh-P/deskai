@@ -2,14 +2,17 @@ import * as ort from 'onnxruntime-web/wasm'
 import { Silero } from '@ricky0123/vad-web/dist/models/silero'
 import type { SpeechProbabilities } from '@ricky0123/vad-web/dist/models/common'
 import { FrameQueue } from './frame-queue'
+import { aecUsesWebRtc, aecWasmOptions, type AecMode } from '../../../../packages/voice-core/src/aec-mode'
 
 type Options = {
   context: AudioContext
-  aecMode: 'browser' | 'webrtc'
+  aecMode: AecMode
   referenceOutput: AudioNode
   getStream: () => Promise<MediaStream>
   onFrameProcessed: (probabilities: SpeechProbabilities, frame: Float32Array, sampleStart: number) => void
-  onAecStats?: (stats: { frames: number; referenceFrames: number; delayMs: number | null; erleDb: number | null; errors: number }) => void
+  onAecStats?: (stats: { frames: number; referenceFrames: number; delayMs: number | null; erleDb: number | null;
+    errors: number; rawRms: number; referenceRms: number; residualRms: number; latencyMs: number;
+    referenceDropped: number; referenceShort: number }) => void
   onError: (error: unknown) => void
 }
 
@@ -39,7 +42,7 @@ export class FrameVAD {
   }
 
   static async new(options: Options): Promise<FrameVAD> {
-    if (options.aecMode === 'webrtc' && options.context.sampleRate !== 48000) throw new Error('WebRTC AEC 需要 48 kHz AudioContext')
+    if (aecUsesWebRtc(options.aecMode) && options.context.sampleRate !== 48000) throw new Error('WebRTC AEC 需要 48 kHz AudioContext')
     ort.env.wasm.wasmPaths = new URL('./vad/', document.baseURI).href
     ort.env.wasm.numThreads = 1
     ort.env.wasm.proxy = false
@@ -53,14 +56,14 @@ export class FrameVAD {
     try {
       // Initialize worklet before requesting audio so the first speech frames survive.
       await options.context.audioWorklet.addModule(new URL('./vad/vad.worklet.bundle.min.js', document.baseURI))
-      if (options.aecMode === 'webrtc') {
+      if (aecUsesWebRtc(options.aecMode)) {
         const wasmResponse = await fetch(new URL('./worklets/webrtc-audio-processing.wasm', document.baseURI))
         if (!wasmResponse.ok) throw new Error('WebRTC AEC 模块资源加载失败')
         const aecModule = await WebAssembly.compile(await wasmResponse.arrayBuffer())
         await options.context.audioWorklet.addModule(new URL('./worklets/aec.js', document.baseURI))
         vad.aecNode = new AudioWorkletNode(options.context, 'deskai-aec', {
           numberOfInputs: 2, numberOfOutputs: 1, outputChannelCount: [1],
-          channelCount: 1, channelCountMode: 'explicit', processorOptions: { module: aecModule },
+          channelCount: 1, channelCountMode: 'explicit', processorOptions: { module: aecModule, ...aecWasmOptions(options.aecMode) },
         })
         vad.aecNode.port.onmessage = ({ data }) => {
           if (vad.closed) return

@@ -31,13 +31,26 @@ test('legacy saved settings gain a dormant friend mode without changing the file
       inputDeviceId: 'mic-old', outputDeviceId: 'speaker-old', volume: 0.35, speed: 1.4, closeToTray: false };
     const file = path.join(directory, 'voice-preferences.json'), original = JSON.stringify(legacy);
     await writeFile(file, original);
-    assert.deepEqual(await loadPreferences(directory), { ...legacy, relationshipMode: 'friend' });
+    assert.deepEqual(await loadPreferences(directory), { ...legacy, relationshipMode: 'friend', wakePhrases: null, aecMode: null });
     assert.equal(await readFile(file, 'utf8'), original);
     const next = mergePreferences(await loadPreferences(directory), { personaId: 'nagato-mainline-post-disappearance', relationshipMode: 'kyon' });
-    assert.deepEqual(next, { ...legacy, personaId: 'nagato-mainline-post-disappearance', relationshipMode: 'kyon' });
+    assert.deepEqual(next, { ...legacy, personaId: 'nagato-mainline-post-disappearance', relationshipMode: 'kyon', wakePhrases: null, aecMode: null });
     await savePreferences(directory, next);
     assert.deepEqual(await loadPreferences(directory), next);
     for (const relationshipMode of ['lover', '', null, 1]) assert.throws(() => mergePreferences(next, { relationshipMode }), /INVALID_RELATIONSHIP/u);
     assert.throws(() => mergePreferences(next, { personaId: '../evil' }), /INVALID_PERSONA/u);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('wake and AEC preferences persist, reject invalid values, and allow defaults', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'deskai-voice-prefs-'));
+  try {
+    const next = mergePreferences(defaultPreferences, { wakePhrases: ['  测试  ', '测试'], aecMode: 'webrtc-ns' });
+    assert.deepEqual(next.wakePhrases, ['测试']);
+    await savePreferences(directory, next);
+    assert.deepEqual(await loadPreferences(directory), next);
+    assert.deepEqual(mergePreferences(next, { wakePhrases: null, aecMode: null }), defaultPreferences);
+    for (const wakePhrases of [[], [' '], ['bad\nword']]) assert.throws(() => mergePreferences(next, { wakePhrases }), /INVALID_WAKE_PHRASES/);
+    assert.throws(() => mergePreferences(next, { aecMode: 'invalid' }), /INVALID_AEC_CONFIG/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

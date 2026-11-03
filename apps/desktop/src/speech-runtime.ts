@@ -1,10 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { LocalQwenSpeech } from './local-qwen-speech.ts';
+import { AEC_MODES, type AecMode } from '../../../packages/voice-core/src/aec-mode.ts';
 
 export type SpeechMode = 'wake' | 'conversation';
 export type InputRuntimeConfig = {
-  aec: { mode: 'browser' | 'webrtc' };
+  aec: { mode: AecMode };
   wake: { phrases: string[]; idleTimeoutMs: number };
   interruption: { interruptionCandidateMs: number; interruptionConfirmMs: number };
   endpoint: { candidateWindowMs: number; continuationWindowMs: number; unfinishedWindowMs: number; vadThreshold: number };
@@ -15,7 +16,7 @@ export type InputRuntimeConfig = {
 export async function loadInputRuntimeConfig(root: string): Promise<InputRuntimeConfig> {
   const config = JSON.parse(await readFile(path.join(root, 'config/voice/input-runtime.json'), 'utf8')) as InputRuntimeConfig;
   const { wake, endpoint, conversation, interruption, aec } = config;
-  if (!aec || !['browser', 'webrtc'].includes(aec.mode)) throw new Error('INVALID_AEC_CONFIG');
+  if (!aec || !(AEC_MODES as readonly string[]).includes(aec.mode)) throw new Error('INVALID_AEC_CONFIG');
   if (!interruption || ![interruption.interruptionCandidateMs, interruption.interruptionConfirmMs].every(n => Number.isFinite(n) && n > 0) || interruption.interruptionCandidateMs > interruption.interruptionConfirmMs) throw new Error('INVALID_INTERRUPTION_CONFIG');
   if (!wake || !Array.isArray(wake.phrases) || !wake.phrases.length || wake.phrases.some(p => typeof p !== 'string' || !p.trim()) || !Number.isFinite(wake.idleTimeoutMs) || wake.idleTimeoutMs <= 0) throw new Error('INVALID_WAKE_CONFIG');
   if (!endpoint || ![endpoint.candidateWindowMs, endpoint.continuationWindowMs, endpoint.unfinishedWindowMs].every(n => Number.isFinite(n) && n > 0 && n <= 3000) || endpoint.candidateWindowMs > endpoint.continuationWindowMs || endpoint.unfinishedWindowMs < endpoint.continuationWindowMs || !Number.isFinite(endpoint.vadThreshold) || endpoint.vadThreshold <= 0 || endpoint.vadThreshold > 1) throw new Error('INVALID_ENDPOINT_CONFIG');

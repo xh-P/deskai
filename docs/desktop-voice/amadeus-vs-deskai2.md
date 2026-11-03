@@ -1,6 +1,6 @@
 # Amadeus 与 DeskAI2 核心技术方案对照
 
-> 前五项的 DeskAI2 描述是本轮迁移前基准；本轮实际改造与未完成项见[迁移临时记录](./amadeus-migration-temporary.md)。
+> DeskAI2 描述是迁移前比较基准；已完成迁移见[上轮历史记录](./amadeus-migration-temporary.md)，后续变化与未完成项见[本轮记录](./iteration-20261104.md)。
 
 **对照基准：**Amadeus `f86c72a366bd8ef99102c4a5ab2bb7a57fc5522e`；DeskAI2 当前工作区源码（2026-11-04）。两者都是 ASR → LLM → TTS 级联，实时策略和桌面表现不同。
 

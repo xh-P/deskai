@@ -1,6 +1,6 @@
 {
-  "aec": { "mode": "browser" },
-  "wake": { "phrases": ["有希", "长门有希"], "idleTimeoutMs": 180000 },
+  "aec": { "mode": "browser-ns" },
+  "wake": { "phrases": ["长门", "有希", "长门有希", "長門", "長門有希", "ながと", "ゆき", "ながとゆき"], "idleTimeoutMs": 180000 },
   "interruption": { "interruptionCandidateMs": 64, "interruptionConfirmMs": 96 },
   "endpoint": { "candidateWindowMs": 160, "continuationWindowMs": 350, "unfinishedWindowMs": 350, "vadThreshold": 0.5 },
   "conversation": { "provider": "qwen-local", "model": "Qwen/Qwen3-ASR-0.6B", "device": "cuda:0", "idlePolicy": "resident" }

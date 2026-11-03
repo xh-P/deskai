@@ -4,12 +4,18 @@ import type { SpeechMode } from './speech-runtime.ts';
 export class WakeGate {
   private activeUntil = 0;
   private generation = 0;
-  private readonly phrases: string[];
+  private phrases: string[] = [];
   private readonly idleTimeoutMs: number;
   constructor(phrases: string[], idleTimeoutMs = 180_000) {
     this.idleTimeoutMs = idleTimeoutMs;
-    this.phrases = phrases.map(p => p.trim().toLocaleLowerCase()).filter(Boolean).sort((a, b) => b.length - a.length);
-    if (!this.phrases.length || !Number.isFinite(idleTimeoutMs) || idleTimeoutMs <= 0) throw new Error('INVALID_WAKE_CONFIG');
+    if (!Number.isFinite(idleTimeoutMs) || idleTimeoutMs <= 0) throw new Error('INVALID_WAKE_CONFIG');
+    this.setPhrases(phrases);
+  }
+  setPhrases(phrases: string[]): void {
+    const next = phrases.map(p => p.trim().toLocaleLowerCase()).filter(Boolean).sort((a, b) => b.length - a.length);
+    if (!next.length) throw new Error('INVALID_WAKE_CONFIG');
+    this.phrases = next;
+    this.generation++;
   }
   snapshot(now: number): { mode: SpeechMode; generation: number } {
     if (this.activeUntil && now >= this.activeUntil) { this.activeUntil = 0; this.generation++; }

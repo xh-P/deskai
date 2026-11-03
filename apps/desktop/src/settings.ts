@@ -1,15 +1,17 @@
 import { access, readFile, writeFile, rename, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { isPersonaId, isRelationshipMode, type ChatPersonaId, type RelationshipMode } from '../../../packages/voice-core/src/persona-catalog.ts';
+import { AEC_MODES, type AecMode } from '../../../packages/voice-core/src/aec-mode.ts';
 
 export type DesktopPreferences = {
   personaId: ChatPersonaId; relationshipMode: RelationshipMode; replyLanguage: 'auto' | 'zh' | 'ja' | 'en';
   voiceId: string; referenceId: string; inputDeviceId: string; outputDeviceId: string;
-  volume: number; speed: number; closeToTray: boolean;
+  volume: number; speed: number; closeToTray: boolean; wakePhrases: string[] | null;
+  aecMode: AecMode | null;
 };
 export const defaultPreferences: DesktopPreferences = {
   personaId: 'nagato-normal-light', relationshipMode: 'friend', replyLanguage: 'auto', voiceId: 'nagato-normal-v2', referenceId: '',
-  inputDeviceId: '', outputDeviceId: '', volume: 0.8, speed: 1, closeToTray: true,
+  inputDeviceId: '', outputDeviceId: '', volume: 0.8, speed: 1, closeToTray: true, wakePhrases: null, aecMode: null,
 };
 /** Only supported UI values are persisted; no arbitrary paths, prompts or credentials. */
 export function mergePreferences(previous: DesktopPreferences, value: unknown): DesktopPreferences {
@@ -18,7 +20,13 @@ export function mergePreferences(previous: DesktopPreferences, value: unknown): 
   const next = { ...previous };
   for (const [key, item] of Object.entries(patch)) {
     if (!(key in defaultPreferences)) throw new Error('INVALID_PREFERENCES');
-    if (key === 'personaId') {
+    if (key === 'wakePhrases') {
+      if (item !== null && (!Array.isArray(item) || item.length === 0 || item.length > 50 || item.some(p => typeof p !== 'string' || !p.trim() || p.length > 100 || /[\x00-\x1f]/u.test(p)))) throw new Error('INVALID_WAKE_PHRASES');
+      Object.assign(next, { wakePhrases: item === null ? null : [...new Set((item as string[]).map(p => p.trim()))] });
+      continue;
+    } else if (key === 'aecMode') {
+      if (item !== null && (typeof item !== 'string' || !(AEC_MODES as readonly string[]).includes(item))) throw new Error('INVALID_AEC_CONFIG');
+    } else if (key === 'personaId') {
       if (!isPersonaId(item)) throw new Error('INVALID_PERSONA');
     } else if (key === 'relationshipMode') {
       if (!isRelationshipMode(item)) throw new Error('INVALID_RELATIONSHIP');

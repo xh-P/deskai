@@ -19,6 +19,7 @@ import { PET_VARIANTS, type PetGeometry, type PetSnapshot } from '../../../packa
 import { PetWindowManager, petPage } from './pet-window.ts';
 import { loadInputRuntimeConfig, SpeechRuntime } from './speech-runtime.ts';
 import { WakeGate } from './wake-gate.ts';
+import { loadWorkOptions, WorkRuntime } from './work-runtime.ts';
 
 const root = path.resolve(process.env.DESKAI_PROJECT_ROOT ?? process.cwd());
 const assetRoot = path.resolve(process.env.DESKAI_ASSET_ROOT ?? root);
@@ -44,6 +45,8 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'deskai', privileges: {
 if (smokeMode) app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 let window: BrowserWindow | undefined;
+let workRuntime: WorkRuntime | undefined;
+let workOpening: Promise<ReturnType<WorkRuntime['getStatus']>> | undefined;
 let speech: LocalDshSpeech | undefined;
 let controller: InputController | undefined;
 let sessionId = '';
@@ -82,18 +85,19 @@ const metrics = { inputFrames: 0, inputSamples: 0, inputFramesDuringPlayback: 0,
 let outputActive = false;
 const inputRuntimeConfig = await loadInputRuntimeConfig(root);
 const continuationWindowMs = inputRuntimeConfig.endpoint.continuationWindowMs;
-const wakeGate = new WakeGate(inputRuntimeConfig.wake.phrases, inputRuntimeConfig.wake.idleTimeoutMs);
+const effectiveWakePhrases = () => preferences.wakePhrases ?? inputRuntimeConfig.wake.phrases;
+const wakeGate = new WakeGate(effectiveWakePhrases(), inputRuntimeConfig.wake.idleTimeoutMs);
 const inputRoutes = new Map<number, ReturnType<WakeGate['snapshot']>>();
 let speechRuntime: SpeechRuntime | undefined;
 let listeningMode = '';
-function refreshListeningMode() {
+function refreshListeningMode(force = false) {
   if (!captureArmed || smokeMode) return;
   const mode = wakeGate.snapshot(performance.now()).mode;
-  if (mode === listeningMode) return;
+  if (mode === listeningMode && !force) return;
   listeningMode = mode;
   if (mode === 'wake') speechRuntime?.standby();
   send({ type: 'status', status: mode === 'wake'
-    ? '等待唤醒：' + inputRuntimeConfig.wake.phrases.join(' / ')
+    ? '等待唤醒：' + effectiveWakePhrases().join(' / ')
     : '连续对话中；空闲后自动回到唤醒待机' });
 }
 const outputTimeline = new OutputTimeline();
@@ -275,9 +279,23 @@ async function stopSession(retainPetError = false) {
   await oldSpeechRuntime?.dispose();
 }
 
+ipcMain.handle('deskai:work-open', event => {
+  trusted(event);
+  return workOpening ??= (async () => {
+    try {
+      if (!workRuntime) workRuntime = new WorkRuntime(root, status => {
+        if (window && !window.isDestroyed()) window.webContents.send('deskai:work-status', status);
+      }, await loadWorkOptions(root));
+      if (shutdown) return { state: 'stopped' as const };
+      return await workRuntime.open();
+    } catch { return { state: 'error' as const, code: 'INVALID_WORK_CONFIG' }; }
+  })().finally(() => { workOpening = undefined; });
+});
+ipcMain.handle('deskai:work-status', event => { trusted(event); return workRuntime?.getStatus() ?? { state: 'stopped' }; });
+
 ipcMain.handle('deskai:runtime', event => {
   trusted(event);
-  return { smoke: smokeMode, fakeMedia, dialogueSmoke, ttsSmoke, preferences, personas, aecMode: inputRuntimeConfig.aec.mode,
+  return { smoke: smokeMode, fakeMedia, dialogueSmoke, ttsSmoke, preferences, personas, aecMode: preferences.aecMode ?? inputRuntimeConfig.aec.mode, defaultWakePhrases: inputRuntimeConfig.wake.phrases,
     speechStatus: lastSpeechStatus, assetStatus, ttsStatus, voices: tts?.registry() ?? [],
     voiceDiagnostics: { continuationWindowMs, input: metrics.inputTimeline, output: outputTimeline.snapshot() },
     versions: { electron: process.versions.electron ?? '', chrome: process.versions.chrome ?? '' } };
@@ -459,7 +477,7 @@ async function openConversation() {
 function sessionDescription() {
   return { sessionId, catalog: [{ voiceId: 'nagato-normal-v2', name: '常态有希 v2' }],
     status: dialogueSmoke ? '本地模拟模型验证' : captureArmed
-      ? '等待唤醒：' + inputRuntimeConfig.wake.phrases.join(' / ') : '文字对话已就绪' };
+      ? (wakeGate.snapshot(performance.now()).mode === 'wake' ? '等待唤醒：' + effectiveWakePhrases().join(' / ') : '连续对话中；空闲后自动回到唤醒待机') : '文字对话已就绪' };
 }
 ipcMain.handle('deskai:open-conversation', async event => { trusted(event); await openConversation(); return sessionDescription(); });
 ipcMain.handle('deskai:start', async event => {
@@ -516,9 +534,11 @@ ipcMain.handle('deskai:preferences', async (event, value: unknown) => {
       next.referenceId = voiceSelection.referenceId;
     }
     if (next.personaId !== preferences.personaId || next.replyLanguage !== preferences.replyLanguage || next.relationshipMode !== preferences.relationshipMode) await dialogue?.updatePreferences(next);
+    const wakeChanged = JSON.stringify(next.wakePhrases) !== JSON.stringify(preferences.wakePhrases);
+    if (!smokeMode) await savePreferences(app.getPath('userData'), next);
     preferences = next;
     voiceOutput?.setSelection({ ...voiceSelection, language: next.replyLanguage, speed: next.speed });
-    if (!smokeMode) await savePreferences(app.getPath('userData'), preferences);
+    if (wakeChanged) { wakeGate.setPhrases(effectiveWakePhrases()); refreshListeningMode(true); }
     refreshOutput();
     return preferences;
   });
@@ -832,6 +852,7 @@ app.whenReady().then(async () => {
   if (!hasInstanceLock) return;
   await mkdir(app.getPath('userData'), { recursive: true });
   if (!smokeMode && !shellSmoke) preferences = await loadPreferences(app.getPath('userData'));
+  wakeGate.setPhrases(effectiveWakePhrases());
   assetStatus = await inspectAssets(assetRoot);
   personas = await Promise.all(PERSONA_IDS.map(async id => {
     const card = validatePersona(JSON.parse(await readFile(path.join(root, 'config/personas', id + '.json'), 'utf8')));
@@ -957,5 +978,6 @@ app.on('before-quit', event => {
   shutdown = true;
   petWindow?.prepareToQuit();
   tray?.destroy();
-  void stopSession().then(() => Promise.allSettled([speech?.dispose(), tts?.dispose(), petWindow?.flush()])).finally(() => app.quit());
+  void Promise.allSettled([stopSession(), workOpening?.then(() => workRuntime?.dispose()), workRuntime?.dispose()])
+    .then(() => Promise.allSettled([speech?.dispose(), tts?.dispose(), petWindow?.flush()])).finally(() => app.quit());
 });

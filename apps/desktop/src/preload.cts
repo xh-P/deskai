@@ -2,6 +2,13 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('deskai', Object.freeze({
   getRuntime: () => ipcRenderer.invoke('deskai:runtime'),
+  openWork: () => ipcRenderer.invoke('deskai:work-open'),
+  getWorkStatus: () => ipcRenderer.invoke('deskai:work-status'),
+  onWorkStatus: (callback: (status: unknown) => void) => {
+    const listener = (_: unknown, status: unknown) => callback(status);
+    ipcRenderer.on('deskai:work-status', listener);
+    return () => ipcRenderer.removeListener('deskai:work-status', listener);
+  },
   startSession: () => ipcRenderer.invoke('deskai:start'),
   openConversation: () => ipcRenderer.invoke('deskai:open-conversation'),
   sendText: (input: unknown) => ipcRenderer.invoke('deskai:send-text', input),

@@ -3,6 +3,7 @@ import { FrameVAD } from './frame-vad'
 import type { DeskaiEvent, DialogueSmokeReport, PersonaId, ReplyLanguage, RuntimeInfo, SessionStart, SmokeReport, Preferences } from './bridge'
 import type { DialogueEvent } from '../../../../packages/voice-core/src/dialogue.ts'
 import type { PetPreferencePatch, PetSnapshot } from '../../../../packages/desktop-pet/src/types.ts'
+import { aecCaptureOptions, DEFAULT_AEC_MODE } from '../../../../packages/voice-core/src/aec-mode.ts'
 import { PcmPlayer } from './player'
 import './style.css'
 
@@ -39,6 +40,8 @@ export default function App() {
   const [preferences, setPreferences] = useState<RuntimeInfo['preferences'] | null>(null)
   const [petSnapshot, setPetSnapshot] = useState<PetSnapshot | null>(null)
   const [preferenceNote, setPreferenceNote] = useState('')
+  const [wakeDraft, setWakeDraft] = useState('')
+  const [workState, setWorkState] = useState('stopped')
   const [ttsState, setTtsState] = useState('尚未准备')
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const captureRef = useRef<Capture | null>(null)
@@ -65,6 +68,12 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = window.deskai.onPetSnapshot(setPetSnapshot)
     void window.deskai.getPetSnapshot().then(setPetSnapshot).catch(() => {})
+    return unsubscribe
+  }, [])
+
+  useEffect(() => {
+    const unsubscribe = window.deskai.onWorkStatus(status => setWorkState(status.state))
+    void window.deskai.getWorkStatus().then(status => setWorkState(status.state)).catch(() => {})
     return unsubscribe
   }, [])
 
@@ -292,7 +301,7 @@ export default function App() {
       currentSession.current = opened.sessionId
       setSession(opened)
       setServiceState(opened.status)
-      const aecMode = (await window.deskai.getRuntime()).aecMode ?? 'browser'
+      const aecMode = (await window.deskai.getRuntime()).aecMode ?? DEFAULT_AEC_MODE
       const output = await ensureOutput(opened)
       context = output.context
       player = output.player
@@ -310,7 +319,7 @@ export default function App() {
           if (epoch !== startEpoch.current) throw new Error('会话已结束')
           microphoneOpened.current = true
           const acquired = await navigator.mediaDevices.getUserMedia({
-            audio: { channelCount: 1, echoCancellation: aecMode === 'browser', noiseSuppression: aecMode === 'browser', autoGainControl: false,
+            audio: { channelCount: 1, ...aecCaptureOptions(aecMode),
               ...(preferencesRef.current?.inputDeviceId ? { deviceId: { exact: preferencesRef.current.inputDeviceId } } : {}) },
           })
           if (epoch !== startEpoch.current) { acquired.getTracks().forEach(track => track.stop()); throw new Error('会话已结束') }
@@ -332,7 +341,7 @@ export default function App() {
       void navigator.mediaDevices.enumerateDevices().then(setDevices).catch(() => {})
       track.onended = () => { void stop('麦克风连接中断') }
       captureRef.current = { stream: deviceStream, vad, context, player, sessionId: opened.sessionId }
-      setCaptureState(aecMode === 'webrtc' ? '自动监听中 · WebRTC AEC3（试验）' : '自动监听中 · 浏览器回声消除')
+      setCaptureState(`自动监听中 · ${aecMode}`)
       setInputState(previous => previous === 'OFF' ? 'LISTENING' : previous)
       if (smoke.current) {
         smoke.current.vadInitialized = true
@@ -422,6 +431,7 @@ export default function App() {
     void window.deskai.getRuntime().then(info => {
       setRuntime(info)
       setPreferences(info.preferences)
+      setWakeDraft((info.preferences.wakePhrases ?? []).join('，'))
       setServiceState(info.speechStatus?.status ?? '尚未准备')
       setTtsState(info.ttsStatus?.state ?? '尚未准备')
       if (!info.assetStatus?.ready) setError('本地运行资源不完整，请查看资源诊断。')
@@ -522,7 +532,7 @@ export default function App() {
         if (!context.setSinkId) throw new Error('当前不支持应用内选择输出，请使用 Windows 声音设置。')
         await context.setSinkId(next.outputDeviceId)
       }
-      setPreferenceNote('设置已保存。输入设备在下次开启麦克风时生效。')
+      setPreferenceNote('aecMode' in patch || 'inputDeviceId' in patch ? '设置已保存，请重新开启麦克风后生效。' : '设置已保存。')
       if ('voiceId' in patch || 'referenceId' in patch) {
         const info = await window.deskai.getRuntime(); setRuntime(info)
       }
@@ -598,6 +608,12 @@ export default function App() {
     {preferenceNote && <p className="hint">{preferenceNote}</p>}
     <details className="settings"><summary>声音与设备设置 · 合成服务：{ttsLabel}</summary>
       <div className="preferences">
+        <label>唤醒词（逗号或换行分隔）<textarea aria-label="唤醒词" value={wakeDraft} onChange={event => setWakeDraft(event.target.value)} placeholder={(runtime?.defaultWakePhrases ?? []).join('，')} /></label>
+        <button className="secondary" onClick={() => { const phrases = wakeDraft.split(/[,，\n]+/u).map(p => p.trim()).filter(Boolean); void changeSetting({ wakePhrases: phrases.length ? phrases : null }) }}>保存唤醒词</button>
+        <button className="secondary" onClick={() => { setWakeDraft(''); void changeSetting({ wakePhrases: null }) }}>恢复默认唤醒词</button>
+        <label>回声与降噪<select value={preferences?.aecMode ?? ''} onChange={event => void changeSetting({ aecMode: (event.target.value || null) as Preferences['aecMode'] })}>
+          <option value="">跟随默认</option><option value="off">关闭</option><option value="browser">浏览器回声消除</option><option value="browser-ns">浏览器回声消除与降噪</option><option value="webrtc">WebRTC AEC（试验）</option><option value="webrtc-ns">WebRTC AEC 与降噪（试验）</option>
+        </select></label>
         <label>输入设备<select value={preferences?.inputDeviceId ?? ''} onChange={event => void changeSetting({ inputDeviceId: event.target.value })}>
           <option value="">系统默认麦克风</option>{devices.filter(device => device.kind === 'audioinput' && device.deviceId !== 'default').map((device, i) => <option key={device.deviceId || i} value={device.deviceId}>{device.label || `输入设备 ${i + 1}`}</option>)}
         </select></label>
@@ -624,6 +640,7 @@ export default function App() {
       <button type="submit" disabled={!textDraft.trim() || sendingText}>发送</button>
     </form>
     <nav className="actions">
+      <button className="secondary" onClick={() => void window.deskai.openWork().then(status => setWorkState(status.state)).catch(cause => setError(describeMediaError(cause)))}>打开任务工作台 · {({ stopped: '未启动', starting: '启动中', ready: '就绪', error: '出错' } as Record<string, string>)[workState] ?? workState}</button>
       {captureRef.current && <button className="secondary" onClick={() => void pauseCapture()}>暂停麦克风</button>}
       {captureRef.current ? <button onClick={() => void stop()}>结束对话</button>
         : starting ? <button onClick={() => void stop()}>取消准备</button>

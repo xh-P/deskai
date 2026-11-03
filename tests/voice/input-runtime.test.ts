@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { WakeGate } from '../../apps/desktop/src/wake-gate.ts';
 import { SpeechRuntime } from '../../apps/desktop/src/speech-runtime.ts';
+import { loadInputRuntimeConfig } from '../../apps/desktop/src/speech-runtime.ts';
 import { createInputController } from '../../packages/voice-core/src/index.ts';
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
@@ -36,6 +37,21 @@ test('wake gate routes remainder, rejects stale results, and expires after inact
   assert.equal(gate.accept('有希', wake, 2).accepted, false);
   gate.touch(100000); assert.equal(gate.snapshot(200000).mode, 'conversation');
   assert.equal(gate.snapshot(280000).mode, 'wake');
+});
+
+test('configured multilingual wake phrases and updates invalidate in-flight results', async () => {
+  const config = await loadInputRuntimeConfig(process.cwd());
+  assert.equal(config.conversation.idlePolicy, 'resident');
+  for (const phrase of ['长门', '有希', '长门有希', '長門', '有希', '長門有希', 'ながと', 'ゆき', 'ながとゆき']) {
+    const gate = new WakeGate(config.wake.phrases);
+    assert.deepEqual(gate.accept(`${phrase}，你好`, gate.snapshot(1), 1), { accepted: true, text: '你好', woke: true });
+  }
+  const gate = new WakeGate(config.wake.phrases);
+  const oldRoute = gate.snapshot(1);
+  gate.setPhrases(['自定义']);
+  assert.equal(gate.accept('有希', oldRoute, 2).accepted, false);
+  assert.equal(gate.accept('有希', gate.snapshot(2), 2).woke, false);
+  assert.equal(gate.accept('自定义，您好', gate.snapshot(3), 3).text, '您好');
 });
 
 test('openai transcription and local wake are separate routes', async () => {

@@ -1,19 +1,23 @@
 import type { DialogueEvent } from '../../../../packages/voice-core/src/dialogue.ts'
 import type { VoiceDiagnostics } from '../../../../packages/voice-core/src/diagnostics.ts'
 import type { PetGeometry, PetPreferencePatch, PetSnapshot } from '../../../../packages/desktop-pet/src/types.ts'
+import type { AecMode } from '../../../../packages/voice-core/src/aec-mode.ts'
 
 import type { ChatPersonaId, RelationshipMode } from '../../../../packages/voice-core/src/persona-catalog.ts'
 export type PersonaId = ChatPersonaId
 export type ReplyLanguage = 'auto' | 'zh' | 'ja' | 'en'
+export type WorkStatus = { state: 'stopped' | 'starting' | 'ready' | 'error'; code?: string }
 export interface Preferences { personaId: PersonaId; relationshipMode: RelationshipMode; replyLanguage: ReplyLanguage; voiceId: string; referenceId: string;
-  inputDeviceId: string; outputDeviceId: string; volume: number; speed: number; closeToTray: boolean }
+  inputDeviceId: string; outputDeviceId: string; volume: number; speed: number; closeToTray: boolean; wakePhrases: string[] | null;
+  aecMode: AecMode | null }
 
 export interface RuntimeInfo {
   smoke: boolean
   dialogueSmoke: boolean
   ttsSmoke?: boolean
   fakeMedia: boolean
-  aecMode?: 'browser' | 'webrtc'
+  aecMode: NonNullable<Preferences['aecMode']>
+  defaultWakePhrases: string[]
   versions: Record<string, string>
   preferences: Preferences
   personas: { id: PersonaId; displayName: string; revision: number }[]
@@ -106,6 +110,9 @@ export interface DialogueSmokeReport {
 }
 
 export interface DeskaiBridge {
+  openWork(): Promise<WorkStatus>
+  getWorkStatus(): Promise<WorkStatus>
+  onWorkStatus(listener: (status: WorkStatus) => void): () => void
   getRuntime(): Promise<RuntimeInfo>
   getPetSnapshot(): Promise<PetSnapshot>
   updatePetPreferences(input: PetPreferencePatch): Promise<PetSnapshot>
