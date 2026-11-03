@@ -6,17 +6,18 @@ const RATE = 16000;
  * publication freezes it. Text is never used to repair/overlap-deduplicate PCM.
  * At most one max-sized snapshot is retained, in addition to the ASR queue. */
 export class InputEndpoint {
-  readonly candidateSamples = 9600;
+  readonly candidateSamples: number;
   readonly commitSamples: number;
   readonly unfinishedSamples: number;
   private tail?: Segment;
 
-  constructor(continuationWindowMs = 600) {
-    if (!Number.isFinite(continuationWindowMs) || continuationWindowMs < 600 || continuationWindowMs > 3000) {
-      throw new RangeError('continuationWindowMs must be between 600 and 3000');
+  constructor(continuationWindowMs = 600, candidateWindowMs = 600, unfinishedWindowMs = 1200) {
+    if (![continuationWindowMs, candidateWindowMs, unfinishedWindowMs].every(value => Number.isFinite(value) && value > 0 && value <= 3000) || candidateWindowMs > continuationWindowMs || unfinishedWindowMs < continuationWindowMs) {
+      throw new RangeError('invalid endpoint windows');
     }
+    this.candidateSamples = Math.ceil(candidateWindowMs * RATE / 1000);
     this.commitSamples = Math.ceil(continuationWindowMs * RATE / 1000);
-    this.unfinishedSamples = Math.max(this.commitSamples, 19200);
+    this.unfinishedSamples = Math.ceil(unfinishedWindowMs * RATE / 1000);
   }
 
   remember(segment: Segment): void { this.tail = segment; }

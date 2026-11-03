@@ -4,7 +4,7 @@ import { access, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import WebSocket from 'ws';
 
-export type VoiceInfo = { id: string; name: string; version: 'v2'; defaultReferenceId: string; references: { id: string; name: string }[] };
+export type VoiceInfo = { id: string; name: string; version: 'v2' | 'v3'; defaultReferenceId: string; references: { id: string; name: string }[] };
 export type VoiceSelection = { voiceId: string; referenceId: string; voiceRevision: number };
 export type TtsStatus = { state: 'starting' | 'loading' | 'warming' | 'switching' | 'ready' | 'error' | 'stopped'; code?: string } & Partial<VoiceSelection>;
 export type SynthesisRequest = VoiceSelection & { sessionId: string; turnId: string; generationId: number; segmentId: string;
@@ -36,17 +36,17 @@ export function decodePCMFrame(raw: Uint8Array, requestId: string, expected: Syn
   catch { throw new Error('INVALID_TTS_PCM'); }
   if (!header || typeof header !== 'object' || header.v !== 1 || header.event !== 'audio.chunk' || header.requestId !== requestId ||
       !identities.every((key) => header[key] === expected[key]) || header.chunkSeq !== sequence ||
-      ![32000, 48000].includes(header.sampleRate as number) || header.channels !== 1 || header.format !== 'pcm_s16le' ||
+      ![24000, 32000, 48000].includes(header.sampleRate as number) || header.channels !== 1 || header.format !== 'pcm_s16le' ||
       !safeInt(header.samples) || (header.samples as number) < 1 || (header.samples as number) > (header.sampleRate as number) * 30 ||
       bytes.length - 4 - length !== (header.samples as number) * 2) throw new Error('INVALID_TTS_PCM');
   return { ...header, pcm: Uint8Array.from(bytes.subarray(4 + length)) } as PCMChunk;
 }
 
 function parseRegistry(value: unknown): VoiceInfo[] {
-  if (!Array.isArray(value) || value.length !== 10) throw new Error('INVALID_TTS_REGISTRY');
+  if (!Array.isArray(value) || !value.length) throw new Error('INVALID_TTS_REGISTRY');
   const ids = new Set<string>();
   for (const row of value) {
-    if (!row || !identifier(row.id) || ids.has(row.id) || typeof row.name !== 'string' || row.version !== 'v2' ||
+    if (!row || !identifier(row.id) || ids.has(row.id) || typeof row.name !== 'string' || !['v2', 'v3'].includes(row.version) ||
         !Array.isArray(row.references) || !row.references.length || row.references.length > 100 ||
         row.references.some((r: { id?: unknown; name?: unknown }) => !r || !identifier(r.id) || typeof r.name !== 'string') ||
         new Set(row.references.map((r: { id: string }) => r.id)).size !== row.references.length ||

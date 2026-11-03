@@ -2,6 +2,8 @@
 
 Windows 桌面 AI 语音对话项目：**dsh SenseVoiceSmall + dsh + GPT-SoVITS**。
 
+> **方向更新（2026-11-04）：**以上描述的是当前实现基线，不是后续技术路线要求。此前固定 v2、默认人格、交互协议和 M0–M5 范围等项目要求已撤销；当前以[项目方向](./docs/desktop-voice/current-direction.md)为准。
+
 默认常态有希 v2，支持自动语音对话、自然插话、选择性回应和角色声音切换。
 
 ## 当前状态
@@ -15,7 +17,7 @@ Windows 桌面 AI 语音对话项目：**dsh SenseVoiceSmall + dsh + GPT-SoVITS*
 - 语音体验修订已整合进当前源码；原 VoiceFlow 独立包已归档，需按整理记录恢复后才能运行。统一音频边界、整段续说重识别，保留中日英自动识别并按用户选择采用约一秒确认窗口，详见[修订与验证限制](./docs/desktop-voice/voice-flow-20261030.md)。可用 `npm run desktop:package -- --name DeskAI2-VoiceFlow-20261030` 复建。
 - `npm run desktop:test`：确定性回归；`npm run desktop:smoke`：模拟麦克风、真实本地 ASR 回放；`npm run m2:smoke`：模拟模型的桌面界面回放。这些命令不验收物理设备。
 - `npm run desktop:pet-smoke`：启动正式主应用与透明桌宠窗口，用模拟状态验证四造型和窗口控制，不启动语音模型、不采集物理麦克风。
-- [M3–M4 运行与验证](./docs/desktop-voice/m3-m4-validation.md) · [真实模型验证](./docs/desktop-voice/m2-live-validation-20261030.md) · [临时协助清单](./docs/desktop-voice/temporary-user-checks.md) · [M0 剩余门禁](./docs/desktop-voice/m0-validation.md)。
+- 旧版阶段记录（仅作历史证据）：[M3–M4 运行与验证](./docs/desktop-voice/m3-m4-validation.md) · [真实模型验证](./docs/desktop-voice/m2-live-validation-20261030.md) · [临时协助清单](./docs/desktop-voice/temporary-user-checks.md) · [M0 门禁记录](./docs/desktop-voice/m0-validation.md)。
 
 - [设计与实现交接](./docs/desktop-voice/README.md)
 - [分阶段执行计划与验收](./docs/desktop-voice/execution-plan.md)

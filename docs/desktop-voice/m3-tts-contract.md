@@ -1,5 +1,7 @@
 # M3 本地 TTS 接口
 
+> **旧版实现契约（2026-11-04）：**本文描述当前/过往 GPT-SoVITS 服务接口，不要求未来 TTS 架构兼容。改造时以实际代码和[当前项目方向](./current-direction.md)为准。
+
 `packages/tts-adapter/src/index.ts` 的 `LocalTtsService(root, onStatus?)` 仅拥有自己启动的 Python worker，不复用或终止已有训练、试听和外部 TTS。`root` 是应用代码根目录；设置 `DESKAI_ASSET_ROOT` 可把 assets、runtime、.conda 与模型缓存指向外部工作台，代码始终从应用根目录的 services/tts 加载。`DESKAI_TTS_PYTHON` 可显式指定已有 Python，不安装或升级环境。
 
 - `start(): Promise<VoiceInfo[]>` 启动、认证、加载常态有希 v2 FP16 CUDA、参考预热并返回十声音登记表。默认 `ref-01`，初始 revision 0。失败或退出后需新建 adapter。

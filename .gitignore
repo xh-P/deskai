@@ -12,6 +12,10 @@ training/**/checkpoints/
 training/**/audio/
 __pycache__/
 apps/desktop/renderer/public/vad/
+apps/desktop/renderer/public/worklets/aec-core.js
+apps/desktop/renderer/public/worklets/webrtc-audio-processing.wasm
+apps/desktop/renderer/public/worklets/aec-LICENSE.txt
+apps/desktop/renderer/public/worklets/aec-THIRD-PARTY-NOTICES.md
 assets/
 outputs/
 release/

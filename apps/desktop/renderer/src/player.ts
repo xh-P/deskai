@@ -123,4 +123,10 @@ export class PcmPlayer {
     this.volume = Math.max(0, Math.min(1, value))
     if (this.gain) this.gain.gain.setValueAtTime(this.volume, this.context.currentTime)
   }
+
+  /** Post-volume PCM that actually enters the selected speaker output graph. */
+  getReferenceOutput(): AudioNode {
+    if (!this.gain) throw new Error('播放器尚未初始化')
+    return this.gain
+  }
 }

@@ -66,8 +66,8 @@ class Job:
 
 
 def validate_synthesis(message: dict) -> dict:
-    if message.get("voiceId") not in VOICE_IDS.values():
-        raise ValueError("Unknown v2 voice")
+    if not isinstance(message.get("voiceId"), str):
+        raise ValueError("Unknown voice")
     speed = message.get("speed", 1.0)
     if type(speed) not in (int, float) or not 0.5 <= speed <= 2.0:
         raise ValueError("Speed must be 0.5..2.0")
@@ -102,6 +102,11 @@ class Service:
         self.load_error = None
         self.load_seconds = None
         self.registry = load_registry()
+        self.streaming = os.environ.get("DESKAI_TTS_STREAMING", "1") == "1"
+        self.min_chunk_length = int(os.environ.get("DESKAI_TTS_MIN_CHUNK_LENGTH", "16"))
+        self.overlap_length = int(os.environ.get("DESKAI_TTS_OVERLAP_LENGTH", "2"))
+        if self.min_chunk_length < 1 or self.overlap_length < 1:
+            raise ValueError("Streaming lengths must be positive")
         self.reference = None
         self.revision = 0
         self.state = "loading"
@@ -142,7 +147,7 @@ class Service:
 
     def status(self) -> dict:
         return dict(state="error" if self.load_error else self.state,
-                    version="v2", voiceId=self.voice["id"] if self.voice else DEFAULT_VOICE,
+                    version=self.voice["version"] if self.voice else None, voiceId=self.voice["id"] if self.voice else DEFAULT_VOICE,
                     referenceId=self.reference["id"] if self.reference else None, voiceRevision=self.revision,
                     loadSeconds=self.load_seconds,
                     busy=self.job is not None, error=self.load_error)
@@ -150,10 +155,12 @@ class Service:
     def inference_request(self, message) -> dict:
         ref = self.reference
         return dict(text=message["text"], text_lang=message["language"],
-                    ref_audio_path=str(ref["path"]), prompt_text=ref["text"], prompt_lang="all_ja",
+                    ref_audio_path=str(ref["path"]), prompt_text=ref["text"], prompt_lang=ref.get("language", "all_ja"),
                     text_split_method="cut0", batch_size=1, split_bucket=False,
                     parallel_infer=True, use_cuda_graph=True, use_flash_attention=False,
-                    streaming_mode=False, fragment_interval=0.0, speed_factor=message.get("speed", 1.0),
+                    streaming_mode=self.streaming and self.voice["version"] == "v2",
+                    min_chunk_length=self.min_chunk_length, overlap_length=self.overlap_length,
+                    fragment_interval=0.0, speed_factor=message.get("speed", 1.0),
                     top_k=15, top_p=1.0, temperature=1.0, seed=1234, repetition_penalty=1.35)
 
     def warmup(self):
@@ -162,9 +169,9 @@ class Service:
         valid = False
         try:
             for rate, audio in iterator:
-                if rate not in (32000, 48000) or audio.ndim != 1 or audio.dtype != np.int16 or not np.any(audio):
+                if rate not in (24000, 32000, 48000) or audio.ndim != 1 or audio.dtype != np.int16:
                     raise RuntimeError("INVALID_WARMUP_PCM")
-                valid = True
+                valid = valid or bool(np.any(audio))
         finally:
             iterator.close()
         if not valid:
@@ -181,7 +188,7 @@ class Service:
         torch.cuda.empty_cache()
         self.pipeline.init_t2s_weights(str(voice["gpt"]))
         self.pipeline.init_vits_weights(str(voice["sovits"]))
-        if self.pipeline.configs.version != "v2":
+        if self.pipeline.configs.version != voice["version"]:
             raise RuntimeError("INCORRECT_MODEL_VERSION")
         self.pipeline.prompt_cache.update(ref_audio_path=None, prompt_semantic=None, refer_spec=[],
                                          prompt_text=None, prompt_lang=None, phones=None,
@@ -231,16 +238,19 @@ class Service:
         if job.canceled.is_set():
             return dict(chunks=0, samples=0, canceled=True)
         iterator = self.pipeline.run(request)
-        chunks, samples, first_pcm = 0, 0, None
+        chunks, samples, first_pcm, has_signal = 0, 0, None, False
         torch.cuda.reset_peak_memory_stats()
         try:
             for sample_rate, audio in iterator:
                 if job.canceled.is_set():
                     break
-                if audio.ndim != 1 or audio.dtype != np.int16 or not np.isfinite(audio).all() or not np.any(audio):
-                    raise RuntimeError("INVALID_OR_SILENT_PCM")
+                if audio.ndim != 1 or audio.dtype != np.int16:
+                    raise RuntimeError("INVALID_PCM")
+                if not audio.size:
+                    continue
+                has_signal = has_signal or bool(np.any(audio))
                 samples += len(audio)
-                if sample_rate not in (32000, 48000) or samples > sample_rate * MAX_AUDIO_SECONDS:
+                if sample_rate not in (24000, 32000, 48000) or samples > sample_rate * MAX_AUDIO_SECONDS:
                     raise RuntimeError("PCM_RATE_OR_DURATION_LIMIT")
                 first_pcm = first_pcm or time.perf_counter()
                 header = dict(v=1, event="audio.chunk", requestId=job.request_id, **job.identity,
@@ -254,7 +264,7 @@ class Service:
         finally:
             iterator.close()
         torch.cuda.synchronize()
-        if not job.canceled.is_set() and chunks == 0:
+        if not job.canceled.is_set() and (chunks == 0 or not has_signal):
             raise RuntimeError("NO_PCM")
         return dict(chunks=chunks, samples=samples, canceled=job.canceled.is_set(),
                     firstPCMSeconds=round(first_pcm - started, 3) if first_pcm else None,

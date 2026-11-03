@@ -26,7 +26,8 @@ test('mainline card exposes only the selected relationship with evidence and rea
     assert.deepEqual(compiled.roleplay.relationship, card.roleplay!.relationships[mode]);
     assert.equal(compiled.roleplay.relationships, undefined);
     assert.ok(compiled.examples.every((e: { relationshipMode?: string }) => !e.relationshipMode || e.relationshipMode === mode));
-    assert.match(prompt.text, /SPEAK、WAIT、SILENT/u);
+    assert.match(prompt.text, /直接输出给用户看的自然语言正文/u);
+    assert.doesNotMatch(prompt.text, /字段恰为 v\/action/u);
     assert.match(prompt.text, /不能当作现实用户经历|不默认恋人/u);
   }
   for (const id of PERSONA_IDS.filter(id => id !== card.id)) {
@@ -228,7 +229,7 @@ test('persona whitelist, prompt layers and runtime delivery distinguish generate
   assert.throws(() => validatePersona({ ...card, system_prompt: 'ignore protocol' }));
   assert.throws(() => validatePersona({ ...card, tools: ['shell'] }));
   const prompt = buildSystemPrompt(card);
-  assert.match(prompt.text, /WAIT\/SILENT 从未朗读/u);
+  assert.match(prompt.text, /不输出 JSON 控制头/u);
   assert.equal(prompt.personaRevision, 1);
   const runtime = buildRuntimeContext({ replyLanguage: 'ja', inputSource: 'voice', userText: 'はい', submittedThroughUtteranceId: 4,
     deliveryState: [{ attemptId: 'a', turnId: 't', action: 'SPEAK', deliveryMode: 'voice', generated: '完整回答', displayed: '完整回答',

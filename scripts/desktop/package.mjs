@@ -18,7 +18,7 @@ await cp(path.join(root, 'node_modules/electron/dist/electron.exe'), path.join(d
 await cp(process.execPath, path.join(destination, 'node.exe'));
 const appRoot = path.join(destination, 'resources/app');
 await mkdir(appRoot, { recursive: true });
-for (const relative of ['.cache/desktop-main', '.cache/desktop-renderer', 'config', 'services/tts']) {
+for (const relative of ['.cache/desktop-main', '.cache/desktop-renderer', 'config', 'services']) {
   await cp(path.join(root, relative), path.join(appRoot, relative), { recursive: true,
     filter: file => !file.includes('__pycache__') });
 }

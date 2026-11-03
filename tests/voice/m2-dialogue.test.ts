@@ -5,7 +5,6 @@ import { localDecision } from '../../packages/voice-core/src/policy.ts';
 import type { ChatEvent, ChatSettlement, ChatTurnInput } from '../../packages/dsh-adapter/src/session.ts';
 
 const preferences = { personaId: 'nagato-normal-light', replyLanguage: 'auto', voiceId: 'nagato-normal-v2' } as const;
-const header = (action: string, expectsReply = false) => JSON.stringify({ v: 1, action, reason: action === 'WAIT' ? 'unfinished' : action === 'SILENT' ? 'closing' : 'direct_request', expectsReply }) + '\n';
 const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 class FakePort implements DialoguePort {
   requests: ChatTurnInput[] = [];
@@ -32,21 +31,16 @@ class FakePort implements DialoguePort {
   async cancel() { this.cancelCalls++; const value = { sessionId: 'session-' + this.requests.length, status: 'cancelled' as const }; this.finish?.(value); return value; }
 }
 
-test('one request chooses action and emits only SPEAK body, no automatic WAIT/SILENT calls', async () => {
-  for (const action of ['SPEAK', 'WAIT', 'SILENT']) {
-    const port = new FakePort(), events: DialogueEvent[] = [];
-    port.text = header(action) + (action === 'SPEAK' ? '你好。' : 'bad extra body');
-    const controller = new DialogueController(port, preferences, event => events.push(event));
-    assert.equal((await controller.submit({ text: '你好', source: 'text' })).accepted, true);
-    await settle();
-    assert.equal(port.requests.length, 1);
-    assert.equal(events.filter(event => event.type === 'assistant-delta').map(event => event.type === 'assistant-delta' ? event.text : '').join(''), action === 'SPEAK' ? '你好。' : '');
-    if (action !== 'SPEAK') assert.equal(controller.ledger.snapshot()[0].protocolViolations.length, 1);
-    controller.expectsReply(Date.now() + 600000);
-    controller.tick(Date.now() + 600000);
-    await settle(); assert.equal(port.requests.length, 1);
-    await controller.close();
-  }
+test('one Chat request streams direct text without a decision header', async () => {
+  const port = new FakePort(), events: DialogueEvent[] = [];
+  port.text = '你好。';
+  const controller = new DialogueController(port, preferences, event => events.push(event));
+  assert.equal((await controller.submit({ text: '你好', source: 'text' })).accepted, true);
+  await settle();
+  assert.equal(port.requests.length, 1);
+  assert.equal(events.filter(event => event.type === 'assistant-delta').map(event => event.type === 'assistant-delta' ? event.text : '').join(''), '你好。');
+  assert.equal(controller.ledger.snapshot()[0].generated, '你好。');
+  await controller.close();
 });
 
 test('hard local filters invoke no model and do not treat short answers as noise', async () => {
@@ -66,7 +60,7 @@ test('hard local filters invoke no model and do not treat short answers as noise
 });
 
 test('voice projection contains only heard content, text projection includes acknowledged display', async () => {
-  const port = new FakePort(); port.text = header('SPEAK', true) + '未播密码92817。继续吗？';
+  const port = new FakePort(); port.text = '未播密码92817。继续吗？';
   const events: DialogueEvent[] = [];
   const controller = new DialogueController(port, preferences, event => events.push(event));
   await controller.submit({ text: '告诉我一个信息', source: 'voice' }); await settle();
@@ -83,15 +77,14 @@ test('voice projection contains only heard content, text projection includes ack
   await controller.close();
 });
 
-test('WAIT and SILENT preserve a previously displayed pending question', async () => {
-  const port = new FakePort(); port.text = header('SPEAK', true) + '继续吗？';
+test('local WAIT and SILENT preserve a previously displayed pending question', async () => {
+  const port = new FakePort(); port.text = '继续吗？';
   const controller = new DialogueController(port, preferences, () => {});
   await controller.submit({ text: '问一个问题', source: 'text' }); await settle();
   controller.displayed(controller.ledger.snapshot()[0].attemptId, 4);
   assert.equal(controller.expectsReply(), true);
-  for (const action of ['WAIT', 'SILENT']) {
-    port.text = header(action);
-    await controller.submit({ text: '普通含混句', source: 'text' }); await settle();
+  for (const text of ['让我想想', '谢谢先这样']) {
+    await controller.submit({ text, source: 'text' }); await settle();
     assert.equal(controller.expectsReply(), true);
   }
   await controller.close();
@@ -105,7 +98,7 @@ test('model failure blocks repeated automatic account failures until an explicit
   port.finish?.({ sessionId: 'session-1', status: 'failed', code: 'MISSING_CREDENTIAL' }); await settle();
   assert.equal((await controller.submit({ text: '你在吗', source: 'voice' })).accepted, false);
   assert.equal(port.requests.length, 1);
-  port.auto = true; port.text = header('SPEAK') + '我在。';
+  port.auto = true; port.text = '我在。';
   await controller.retry(); await settle(); assert.equal(port.requests.length, 2);
   assert.equal((await controller.retry()).accepted, false);
   assert.equal(port.requests.length, 2);
@@ -116,7 +109,7 @@ test('failed partial text is marked interrupted in the next projected context', 
   const port = new FakePort(); port.auto = false;
   const controller = new DialogueController(port, preferences, () => {});
   await controller.submit({ text: '解释一下', source: 'text' });
-  port.listener?.({ type: 'text', attemptId: port.attempt, index: 0, revision: 2, text: header('SPEAK') + '部分答案' });
+  port.listener?.({ type: 'text', attemptId: port.attempt, index: 0, revision: 2, text: '部分答案' });
   controller.displayed(port.attempt, 4);
   port.listener?.({ type: 'error', code: 'PROVIDER_ERROR' });
   assert.match(JSON.stringify(controller.projectHistory()), /"interrupted":true/);
@@ -124,7 +117,7 @@ test('failed partial text is marked interrupted in the next projected context', 
 });
 
 test('an accepted model turn remains in history if late ASR bookkeeping cannot reconcile', async () => {
-  const port = new FakePort(); port.text = header('SPEAK') + '已收到。';
+  const port = new FakePort(); port.text = '已收到。';
   const controller = new DialogueController(port, preferences, () => {});
   const receipt = await controller.submit({ text: '真实已接受的前半句', source: 'voice', onAccepted: () => { throw new Error('ASR gap cleared prefix'); } });
   await settle();
@@ -135,7 +128,7 @@ test('an accepted model turn remains in history if late ASR bookkeeping cannot r
 });
 
 test('a final question with trailing newlines becomes pending only on display', async () => {
-  const port = new FakePort(); port.text = header('SPEAK', true) + '要继续吗？\n\n';
+  const port = new FakePort(); port.text = '要继续吗？\n\n';
   const controller = new DialogueController(port, preferences, () => {});
   await controller.submit({ text: '问我', source: 'text' }); await settle();
   const item = controller.ledger.snapshot()[0];
@@ -151,9 +144,9 @@ test('interruption cancels native session and rejects late old text; next turn i
   await controller.submit({ text: '先解释', source: 'text' });
   const oldListener = port.listener!, oldAttempt = port.attempt;
   await controller.cancel();
-  oldListener({ type: 'text', attemptId: oldAttempt, index: 0, revision: 2, text: header('SPEAK') + '旧内容' });
+  oldListener({ type: 'text', attemptId: oldAttempt, index: 0, revision: 2, text: '旧内容' });
   assert.equal(events.some(event => event.type === 'assistant-delta'), false);
-  port.auto = true; port.text = header('SPEAK') + '新回答';
+  port.auto = true; port.text = '新回答';
   await controller.submit({ text: '新问题', source: 'text' }); await settle();
   assert.equal(port.requests.length, 2);
   assert.equal(port.cancelCalls, 1);
@@ -161,7 +154,7 @@ test('interruption cancels native session and rejects late old text; next turn i
 });
 
 test('relation and persona changes isolate model history, reject queued old input and retain visible delivery records', async () => {
-  const port = new FakePort(); port.text = header('SPEAK', true) + '阿虚，我们一起参加SOS团。继续吗？';
+  const port = new FakePort(); port.text = '阿虚，我们一起参加SOS团。继续吗？';
   const role = { ...preferences, personaId: 'nagato-mainline-post-disappearance', relationshipMode: 'kyon' } as const;
   const controller = new DialogueController(port, role, () => {});
   await controller.submit({ text: '我们以前经历过什么？', source: 'text' }); await settle();
@@ -174,7 +167,7 @@ test('relation and persona changes isolate model history, reject queued old inpu
   assert.equal(controller.expectsReply(), false);
   assert.equal(controller.ledger.snapshot().length, 1, 'UI delivery audit remains available');
   assert.deepEqual(controller.projectHistory(), { history: [], attempts: [] });
-  port.text = header('SPEAK') + '从当前对话开始。';
+  port.text = '从当前对话开始。';
   await controller.submit({ text: '我是独立用户', source: 'text' }); await settle();
   assert.equal(port.requests.at(-1)?.relationshipMode, 'friend');
   assert.doesNotMatch(JSON.stringify(port.requests.at(-1)), /以前经历|SOS团|阿虚/u);
@@ -187,7 +180,7 @@ test('relation and persona changes isolate model history, reject queued old inpu
 });
 
 test('language changes preserve current role context while identity changes discard retry from old role', async () => {
-  const port = new FakePort(); port.text = header('SPEAK') + '知道了。';
+  const port = new FakePort(); port.text = '知道了。';
   const role = { ...preferences, personaId: 'nagato-mainline-post-disappearance', relationshipMode: 'friend' } as const;
   const controller = new DialogueController(port, role, () => {});
   await controller.submit({ text: '今天我在学日语', source: 'text' }); await settle();

@@ -20,6 +20,12 @@ export async function buildDesktop() {
   for (const file of ['vad-LICENSE.txt', 'onnxruntime-LICENSE.txt']) {
     await cp(path.join(root, 'third_party/voice-runtime', file), path.join(vadDest, file));
   }
+  const aecSource = path.join(root, 'node_modules/@ai-ecoverse/wasm-webrtc-audio-processing');
+  const workletDest = path.join(root, 'apps/desktop/renderer/public/worklets');
+  await cp(path.join(aecSource, 'index.js'), path.join(workletDest, 'aec-core.js'));
+  await cp(path.join(aecSource, 'dist/webrtc-audio-processing.wasm'), path.join(workletDest, 'webrtc-audio-processing.wasm'));
+  await cp(path.join(aecSource, 'LICENSE'), path.join(workletDest, 'aec-LICENSE.txt'));
+  await cp(path.join(aecSource, 'THIRD-PARTY-NOTICES.md'), path.join(workletDest, 'aec-THIRD-PARTY-NOTICES.md'));
   await run(['node_modules/typescript/bin/tsc', '-p', 'apps/desktop/tsconfig.main.json']);
   await run(['node_modules/typescript/bin/tsc', '-p', 'apps/desktop/tsconfig.renderer.json']);
   await mkdir(path.join(root, '.cache/desktop-main'), { recursive: true });

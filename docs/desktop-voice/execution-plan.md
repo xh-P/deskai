@@ -1,5 +1,7 @@
 # Sol 执行计划与验收
 
+> **历史计划（2026-11-04）：**本文的 M0–M5 顺序、模型/资产边界和验收门禁已被用户撤销。仅保留过往实施状态与验证记录；当前任务方向见[项目方向](./current-direction.md)。
+
 状态：2026-10-30，用户已授权实施 M3–M4。M0/M1/M2 原报告保留历史事实，当前以 [M3–M4](./m3-m4-validation.md) 和 [真实模型复测](./m2-live-validation-20261030.md) 为准；物理设备和 M5 完整验收未完成。先读 README、product、architecture、turn-policy、prompts、research。
 
 实际阶段：

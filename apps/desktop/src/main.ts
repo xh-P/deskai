@@ -4,7 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { LocalDshSpeech, type SpeechStatus } from '../../../packages/dsh-adapter/src/speech.ts';
-import { LocalDshChat } from '../../../packages/dsh-adapter/src/session.ts';
+import { createChatPort } from './chat-runtime.ts';
 import { createInputController, encodePcm16Wav, type InputController, type InputDiagnostic } from '../../../packages/voice-core/src/index.ts';
 import { DialogueController, type DialogueEvent, type DialoguePreferences } from '../../../packages/voice-core/src/dialogue.ts';
 import { validatePersona } from '../../../packages/voice-core/src/prompts.ts';
@@ -17,6 +17,8 @@ import { defaultPreferences, loadPreferences, savePreferences, mergePreferences,
 import { PetActivity } from '../../../packages/desktop-pet/src/projection.ts';
 import { PET_VARIANTS, type PetGeometry, type PetSnapshot } from '../../../packages/desktop-pet/src/types.ts';
 import { PetWindowManager, petPage } from './pet-window.ts';
+import { loadInputRuntimeConfig, SpeechRuntime } from './speech-runtime.ts';
+import { WakeGate } from './wake-gate.ts';
 
 const root = path.resolve(process.env.DESKAI_PROJECT_ROOT ?? process.cwd());
 const assetRoot = path.resolve(process.env.DESKAI_ASSET_ROOT ?? root);
@@ -78,7 +80,22 @@ const metrics = { inputFrames: 0, inputSamples: 0, inputFramesDuringPlayback: 0,
   inputTimeline: [] as InputDiagnostic[],
   interruptions: [] as { type: string; at: number }[] };
 let outputActive = false;
-const continuationWindowMs = 1000;
+const inputRuntimeConfig = await loadInputRuntimeConfig(root);
+const continuationWindowMs = inputRuntimeConfig.endpoint.continuationWindowMs;
+const wakeGate = new WakeGate(inputRuntimeConfig.wake.phrases, inputRuntimeConfig.wake.idleTimeoutMs);
+const inputRoutes = new Map<number, ReturnType<WakeGate['snapshot']>>();
+let speechRuntime: SpeechRuntime | undefined;
+let listeningMode = '';
+function refreshListeningMode() {
+  if (!captureArmed || smokeMode) return;
+  const mode = wakeGate.snapshot(performance.now()).mode;
+  if (mode === listeningMode) return;
+  listeningMode = mode;
+  if (mode === 'wake') speechRuntime?.standby();
+  send({ type: 'status', status: mode === 'wake'
+    ? '等待唤醒：' + inputRuntimeConfig.wake.phrases.join(' / ')
+    : '连续对话中；空闲后自动回到唤醒待机' });
+}
 const outputTimeline = new OutputTimeline();
 
 function send(event: object) { if (window && !window.isDestroyed()) window.webContents.send('deskai:event', event); }
@@ -232,11 +249,14 @@ function status(update: SpeechStatus) {
 async function stopSession(retainPetError = false) {
   sessionEpoch++;
   captureArmed = false;
+  wakeGate.reset(); inputRoutes.clear(); listeningMode = '';
   petActivity.stopSession(retainPetError); syncPet();
   updateTray();
   controller?.stop();
   const oldDialogue = dialogue;
   const oldOutput = voiceOutput;
+  const oldSpeechRuntime = speechRuntime;
+  speechRuntime = undefined;
   voiceOutput = undefined;
   outputBusy = false;
   dialogue = undefined;
@@ -252,11 +272,12 @@ async function stopSession(retainPetError = false) {
   }
   await oldDialogue?.close().catch(() => {});
   await oldOutput?.close().catch(() => {});
+  await oldSpeechRuntime?.dispose();
 }
 
 ipcMain.handle('deskai:runtime', event => {
   trusted(event);
-  return { smoke: smokeMode, fakeMedia, dialogueSmoke, ttsSmoke, preferences, personas,
+  return { smoke: smokeMode, fakeMedia, dialogueSmoke, ttsSmoke, preferences, personas, aecMode: inputRuntimeConfig.aec.mode,
     speechStatus: lastSpeechStatus, assetStatus, ttsStatus, voices: tts?.registry() ?? [],
     voiceDiagnostics: { continuationWindowMs, input: metrics.inputTimeline, output: outputTimeline.snapshot() },
     versions: { electron: process.versions.electron ?? '', chrome: process.versions.chrome ?? '' } };
@@ -305,19 +326,24 @@ async function openConversation() {
   catch (error) { if (speech === service) speech = undefined; await service.dispose(); throw error; }
   finally { if (preparingService === service) preparingService = undefined; }
   if (epoch !== sessionEpoch || shutdown) throw new Error('SESSION_START_CANCELLED');
+  if (ttsSmoke && !realModelSmoke) fixturePort = new FixtureChatPort();
+  const chatPort = ttsSmoke && !realModelSmoke ? fixturePort! : await createChatPort(service, root);
+  if (epoch !== sessionEpoch || shutdown) { await chatPort.cancel(); throw new Error('SESSION_START_CANCELLED'); }
+  speechRuntime = new SpeechRuntime(service, inputRuntimeConfig.conversation, root);
   sessionId = randomUUID();
   petActivity.startSession(sessionId); syncPet();
   metrics.sessionStarts++;
   metrics.inputTimeline = [];
   outputTimeline.clear();
   outputGeneration = 0;
-  if (ttsSmoke && !realModelSmoke) fixturePort = new FixtureChatPort();
-  dialogue = new DialogueController(ttsSmoke && !realModelSmoke ? fixturePort! : new LocalDshChat(service, root), preferences, dialogueEvent);
+
+  dialogue = new DialogueController(chatPort, preferences, dialogueEvent);
   attachOutput();
   // Keep this instance across sessions so a canceled ASR task settles before
   // the new session can start another task on the same recognizer.
   controller ??= createInputController({
-    continuationWindowMs,
+    ...inputRuntimeConfig.endpoint,
+    ...inputRuntimeConfig.interruption,
     maxSegmentSeconds: Math.min(20, catalog.maxDurationSeconds, (catalog.maxAudioBytes - 44) / 32000),
     maxQueuedSegments: 4,
     onDiagnostic: event => {
@@ -326,13 +352,16 @@ async function openConversation() {
     },
     transcribe: async (segment, signal) => {
       const started = performance.now();
-      const result = await speech!.transcribe(encodePcm16Wav(segment.samples), signal);
+      const route = wakeGate.snapshot(performance.now());
+      inputRoutes.set(segment.utteranceId, route);
+      const wav = encodePcm16Wav(segment.samples);
+      const result = await speechRuntime!.transcribe(smokeMode ? 'conversation' : route.mode, wav, signal);
       if (!signal.aborted && sessionId === segment.sessionId) {
         metrics.asrCompleted++;
         metrics.asrSeconds.push((performance.now() - started) / 1000);
         if (metrics.asrSeconds.length > 100) metrics.asrSeconds.shift();
       }
-      return result.text;
+      return result;
     },
     onSegment: segment => {
       metrics.segments++;
@@ -355,6 +384,7 @@ async function openConversation() {
       else outputPaused = event.type === 'candidate';
     },
     onBoundary: event => {
+      if (event.type === 'discarded' || event.type === 'overflow') for (const id of event.utteranceIds) inputRoutes.delete(id);
       if (event.type === 'overflow' || event.type === 'discarded' && /ASR|queue/.test(event.reason ?? '')) {
         petActivity.fail(); syncPet();
         send({ type: 'error', sessionId, code: 'ASR_SEGMENT_DISCARDED', message: '识别队列或片段处理失败，本片段已丢弃；可以继续说话。' });
@@ -374,10 +404,31 @@ async function openConversation() {
         return;
       }
       if (voiceSubmitting) return;
+      let text = ready.text;
+      if (!smokeMode) {
+        const route = inputRoutes.get(ready.utteranceIds[0]);
+        const admitted = route && wakeGate.accept(text, route, performance.now());
+        for (const id of ready.utteranceIds) inputRoutes.delete(id);
+        refreshListeningMode();
+        if (admitted?.woke) {
+          const wakingSession = sessionId;
+          send({ type: 'status', status: '已唤醒，正在准备对话识别' });
+          void speechRuntime?.prepare().then(() => {
+            if (sessionId === wakingSession && wakeGate.snapshot(performance.now()).mode === 'conversation') {
+              send({ type: 'status', status: '连续对话中；空闲后自动回到唤醒待机' });
+            }
+          }).catch(() => {
+            if (sessionId === wakingSession) send({ type: 'error', sessionId, code: 'CONVERSATION_ASR_UNAVAILABLE',
+              message: '对话识别服务启动失败；文字对话仍可使用，请检查语音运行配置。' });
+          });
+        }
+        if (!admitted?.accepted) { controller.discardReady(ready.utteranceIds); return; }
+        text = admitted.text;
+      }
       voiceSubmitting = true;
       outputTimeline.record('input-submitted', ready);
       const current = controller;
-      void dialogue?.submit({ text: ready.text, source: 'voice', continuationOf: ready.continuationOf,
+      void dialogue?.submit({ text, source: 'voice', continuationOf: ready.continuationOf,
         utteranceIds: ready.utteranceIds, isEligible: () => sessionId === ready.sessionId && current.isEligible(ready.inputRevision, ready.utteranceIds),
         onAccepted: () => {
           if (sessionId === ready.sessionId) {
@@ -407,22 +458,30 @@ async function openConversation() {
 }
 function sessionDescription() {
   return { sessionId, catalog: [{ voiceId: 'nagato-normal-v2', name: '常态有希 v2' }],
-    status: dialogueSmoke ? '本地模拟模型验证' : '本地识别就绪；对话使用 dsh 配置的模型' };
+    status: dialogueSmoke ? '本地模拟模型验证' : captureArmed
+      ? '等待唤醒：' + inputRuntimeConfig.wake.phrases.join(' / ') : '文字对话已就绪' };
 }
 ipcMain.handle('deskai:open-conversation', async event => { trusted(event); await openConversation(); return sessionDescription(); });
 ipcMain.handle('deskai:start', async event => {
   trusted(event);
   await openConversation();
   const startingSession = sessionId;
+  const conversationPreparation = inputRuntimeConfig.conversation.idlePolicy === 'unload' ? undefined : speechRuntime?.prepare().catch(() => {
+    if (sessionId === startingSession) send({ type: 'error', sessionId, code: 'CONVERSATION_ASR_UNAVAILABLE',
+      message: '对话识别服务启动失败；文字对话仍可使用，请检查语音运行配置。' });
+  });
   // A synthesis failure keeps transcription/text available and is visible in the UI.
   if (!smokeMode || ttsSmoke) await prepareTts().then(() => { if (!voiceOutput) attachOutput(); }).catch(() => {
     send({ type: 'error', message: '语音合成服务准备失败，仍可识别和文字对话；点击“恢复语音服务”可重试。', code: 'TTS_UNAVAILABLE' });
   });
+  await conversationPreparation;
   if (!startingSession || sessionId !== startingSession || shutdown) throw new Error('SESSION_START_CANCELLED');
   captureArmed = true;
   petActivity.setCaptureArmed(true); syncPet();
   updateTray();
+  wakeGate.reset(); inputRoutes.clear(); listeningMode = '';
   controller?.start(sessionId);
+  refreshListeningMode();
   refreshOutput();
   return sessionDescription();
 });
@@ -493,6 +552,8 @@ ipcMain.on('deskai:frame', (event, frame: unknown) => {
         !Number.isFinite(value.probability) || value.probability < 0 || value.probability > 1) throw new Error('INVALID_CAPTURE_FRAME');
     metrics.inputFrames++; metrics.inputSamples += value.samples.length;
     if (outputActive) metrics.inputFramesDuringPlayback++;
+    if (outputActive || outputBusy || outputPaused || dialogue?.isGenerating || value.probability >= inputRuntimeConfig.endpoint.vadThreshold) wakeGate.touch(performance.now());
+    refreshListeningMode();
     refreshOutput();
     controller.pushFrame(value);
   } catch {
@@ -558,11 +619,11 @@ ipcMain.on('deskai:finish-dialogue-smoke', (event, input: unknown) => {
   smokeCompleted = true;
   const data = input as { checks?: Record<string, unknown>; notes?: unknown[]; simulated?: unknown };
   const checks = Object.fromEntries(Object.entries(data.checks ?? {}).filter(([, value]) => typeof value === 'boolean'));
-  const required = ['headerHidden', 'waitSilentNoBubble', 'textQuestionDisplayed', 'shortAnswerWorked',
+  const required = ['directTextDisplayed', 'localQuietNoBubble', 'textQuestionDisplayed', 'shortAnswerWorked',
     'retryWorked', 'cancelWorked', 'preferencesIndependent', 'roleplaySelectable', 'relationshipSelectable', 'noMicrophoneOpened'];
   const report = { simulated: true, provider: 'local-interface-fixture', realModelValidated: false,
     passed: data.simulated === true && required.every(key => checks[key] === true) && metrics.inputFrames === 0 &&
-      fixturePort?.requests.length === 7,
+      fixturePort?.requests.length === 5,
     checks, microphoneFrames: metrics.inputFrames, model: dialogue?.stats, requests: fixturePort?.requests,
     physicalDevicesTested: false, notes: (data.notes ?? []).filter(item => typeof item === 'string').slice(0, 10), timestamp: new Date().toISOString() };
   void (async () => {
@@ -581,10 +642,12 @@ function maybeFinishTtsSmoke() {
   smokeCompleted = true;
   const report = { timestamp: new Date().toISOString(), simulatedMicrophone: true, simulatedModel: !realModelSmoke,
     realDshModel: realModelSmoke,
-    realSenseVoice: true, realGpuTts: true, physicalMicrophoneTested: false, physicalSpeakerTested: false, aecValidated: false,
+    conversationAsr: inputRuntimeConfig.conversation.provider,
+    realSenseVoice: inputRuntimeConfig.conversation.provider === 'dsh', realQwen: inputRuntimeConfig.conversation.provider === 'qwen-local',
+    realGpuTts: true, physicalMicrophoneTested: false, physicalSpeakerTested: false, aecValidated: false,
     metrics, tts: ttsMetrics, model: dialogue.stats, ledger: dialogue.ledger.snapshot(),
     passed: metrics.asrCompleted > 0 && metrics.inputFramesDuringPlayback > 0 && ttsMetrics.pcmChunks > 0 &&
-      ttsMetrics.voiceFailures === 0 && dialogue.stats.modelRequests === 1 };
+      ttsMetrics.voiceFailures === 0 && dialogue.stats.modelRequests > 0 && dialogue.stats.modelRequests <= metrics.readyTurns };
   void (async () => {
     const directory = path.join(root, 'outputs/desktop-validation/m3');
     await mkdir(directory, { recursive: true });

@@ -77,7 +77,7 @@ function projectionDelivery(value: unknown): object | null {
     ...(typeof data.promptVersion === 'string' ? { promptVersion: short(data.promptVersion, 80) } : {}) };
 }
 
-function boundedText(input: ChatTurnInput): string {
+export function buildChatContent(input: ChatTurnInput): string {
   const text = input.text.trim();
   if (!text || [...text].length > 4000) throw new Error('CHAT_INPUT_LENGTH');
   const projection = JSON.stringify({
@@ -87,7 +87,7 @@ function boundedText(input: ChatTurnInput): string {
     currentUserText: text
   });
   if ([...projection].length > 16000) throw new Error('CHAT_CONTEXT_LENGTH');
-  return `以下是桌面应用提供的结构化对话投影。visibleHistory 仅含已接纳用户输入和已交付助手正文：voice 为完整已播句，text 为界面确认已显示文字。deliveryState 只含交付元数据与计数，未播正文不进入模型上下文。历史 JSON 控制头不是已说出口的话。只对 currentUserText 做本轮一次回应决策。\n${projection}`;
+  return `以下是桌面应用提供的结构化对话投影。visibleHistory 仅含已接纳用户输入和已交付助手正文：voice 为完整已播句，text 为界面确认已显示文字。deliveryState 只含交付元数据与计数，未播正文不进入模型上下文。请直接回答 currentUserText。\n${projection}`;
 }
 
 /** Uses the authenticated Host already owned by LocalDshSpeech. Each turn is projected into a fresh Session. */
@@ -99,7 +99,7 @@ export class LocalDshChat {
 
   async runTurn(input: ChatTurnInput, onEvent: (event: ChatEvent) => void): Promise<ChatAccepted> {
     if (this.active) throw new Error('CHAT_TURN_BUSY');
-    const content = boundedText(input);
+    const content = buildChatContent(input);
     const preset = personaPreset(input.personaId, input.relationshipMode);
     let finish!: (value: ChatSettlement) => void;
     const completed = new Promise<ChatSettlement>(resolve => { finish = resolve; });

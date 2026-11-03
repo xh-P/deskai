@@ -5,14 +5,19 @@ import { FrameQueue } from './frame-queue'
 
 type Options = {
   context: AudioContext
+  aecMode: 'browser' | 'webrtc'
+  referenceOutput: AudioNode
   getStream: () => Promise<MediaStream>
   onFrameProcessed: (probabilities: SpeechProbabilities, frame: Float32Array, sampleStart: number) => void
+  onAecStats?: (stats: { frames: number; referenceFrames: number; delayMs: number | null; erleDb: number | null; errors: number }) => void
   onError: (error: unknown) => void
 }
 
 /** Frame-only adapter; intentionally does not instantiate MicVAD's audioBuffer. */
 export class FrameVAD {
   private node: AudioWorkletNode | null = null
+  private aecNode: AudioWorkletNode | null = null
+  private referenceConnected = false
   private source: MediaStreamAudioSourceNode | null = null
   private stream: MediaStream | null = null
   private queue: FrameQueue
@@ -34,6 +39,7 @@ export class FrameVAD {
   }
 
   static async new(options: Options): Promise<FrameVAD> {
+    if (options.aecMode === 'webrtc' && options.context.sampleRate !== 48000) throw new Error('WebRTC AEC 需要 48 kHz AudioContext')
     ort.env.wasm.wasmPaths = new URL('./vad/', document.baseURI).href
     ort.env.wasm.numThreads = 1
     ort.env.wasm.proxy = false
@@ -47,6 +53,22 @@ export class FrameVAD {
     try {
       // Initialize worklet before requesting audio so the first speech frames survive.
       await options.context.audioWorklet.addModule(new URL('./vad/vad.worklet.bundle.min.js', document.baseURI))
+      if (options.aecMode === 'webrtc') {
+        const wasmResponse = await fetch(new URL('./worklets/webrtc-audio-processing.wasm', document.baseURI))
+        if (!wasmResponse.ok) throw new Error('WebRTC AEC 模块资源加载失败')
+        const aecModule = await WebAssembly.compile(await wasmResponse.arrayBuffer())
+        await options.context.audioWorklet.addModule(new URL('./worklets/aec.js', document.baseURI))
+        vad.aecNode = new AudioWorkletNode(options.context, 'deskai-aec', {
+          numberOfInputs: 2, numberOfOutputs: 1, outputChannelCount: [1],
+          channelCount: 1, channelCountMode: 'explicit', processorOptions: { module: aecModule },
+        })
+        vad.aecNode.port.onmessage = ({ data }) => {
+          if (vad.closed) return
+          if (data?.type === 'error') options.onError(new Error(data.message ?? 'WebRTC AEC 处理失败'))
+          if (data?.type === 'stats') options.onAecStats?.(data)
+        }
+        vad.aecNode.onprocessorerror = () => options.onError(new Error('WebRTC AEC AudioWorklet 失败'))
+      }
       vad.node = new AudioWorkletNode(options.context, 'vad-helper-worklet', {
         processorOptions: { frameSamples: 512 }, channelCount: 1, channelCountMode: 'explicit', outputChannelCount: [1]
       })
@@ -60,7 +82,12 @@ export class FrameVAD {
       vad.node.connect(options.context.destination)
       vad.stream = await options.getStream()
       vad.source = options.context.createMediaStreamSource(vad.stream)
-      vad.source.connect(vad.node)
+      if (vad.aecNode) {
+        vad.source.connect(vad.aecNode, 0, 0)
+        options.referenceOutput.connect(vad.aecNode, 0, 1)
+        vad.referenceConnected = true
+        vad.aecNode.connect(vad.node)
+      } else vad.source.connect(vad.node)
       return vad
     } catch (error) { await vad.destroy(); throw error }
   }
@@ -72,6 +99,11 @@ export class FrameVAD {
     this.stream = null
     this.source?.disconnect()
     this.source = null
+    if (this.aecNode && this.referenceConnected) this.options.referenceOutput.disconnect(this.aecNode)
+    this.referenceConnected = false
+    this.aecNode?.disconnect()
+    this.aecNode?.port.close()
+    this.aecNode = null
     this.node?.port.postMessage('SPEECH_STOP')
     this.node?.disconnect()
     this.node?.port.close()

@@ -44,12 +44,30 @@ def load_registry() -> dict[str, dict]:
                                 sovits=contained_file(MODEL_ROOT, row["sovits"]), references=refs)
     if len(voices) != 10 or DEFAULT_VOICE not in voices:
         raise ValueError("Expected ten supplied v2 voices including normal Nagato")
+    extra = os.environ.get("DESKAI_TTS_VOICES")
+    if extra:
+        config_path = Path(extra).resolve()
+        for row in json.loads(config_path.read_text(encoding="utf-8-sig")):
+            voice_id, version = row["id"], row["version"]
+            if voice_id in voices or version not in ("v2", "v3"):
+                raise ValueError("Duplicate voice ID or unsupported model version")
+            def resource(value):
+                path = (config_path.parent / value).resolve()
+                if not path.is_file():
+                    raise FileNotFoundError("Voice resource missing")
+                return path
+            refs = [{**ref, "path": resource(ref["path"])} for ref in row["references"]]
+            if not refs or not any(ref["id"] == row["defaultReferenceId"] for ref in refs):
+                raise ValueError("Invalid voice references")
+            voices[voice_id] = dict(id=voice_id, name=row["name"], version=version,
+                defaultReferenceId=row["defaultReferenceId"], gpt=resource(row["gpt"]),
+                sovits=resource(row["sovits"]), references=refs)
     return voices
 
 
 def public_registry(registry: dict[str, dict]) -> list[dict]:
     """Only opaque IDs/labels cross IPC; never accept model or audio paths."""
-    return [dict(id=v["id"], name=v["name"], version="v2", defaultReferenceId=v["defaultReferenceId"],
+    return [dict(id=v["id"], name=v["name"], version=v["version"], defaultReferenceId=v["defaultReferenceId"],
                  references=[dict(id=r["id"], name=r["name"]) for r in v["references"]])
             for v in registry.values()]
 

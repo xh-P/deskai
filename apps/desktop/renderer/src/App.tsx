@@ -12,7 +12,7 @@ type Capture = { stream: MediaStream; vad: FrameVAD; context: AudioContext; play
 type Output = { context: AudioContext; player: PcmPlayer; sessionId: string }
 
 function describeMediaError(error: unknown): string {
-  if (error instanceof Error && /MISSING_CREDENTIAL/.test(error.message)) return '模型凭据未配置：服务尚未接通。请在 dsh 配置后重试。'
+  if (error instanceof Error && /MISSING_CREDENTIAL/.test(error.message)) return '模型凭据未配置。请检查当前 Chat Provider 的凭据设置后重试。'
   if (error instanceof DOMException) {
     if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') return '麦克风权限被拒绝。请在系统或应用权限设置中允许后重试。'
     if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') return '未找到可用的麦克风。请连接输入设备后重试。'
@@ -74,7 +74,7 @@ export default function App() {
 
   const ensureOutput = useCallback(async (opened: SessionStart): Promise<Output> => {
     if (outputRef.current?.sessionId === opened.sessionId) return outputRef.current
-    const context = new AudioContext()
+    const context = new AudioContext({ sampleRate: 48000 })
     await context.resume()
     const player = new PcmPlayer(context, opened.sessionId, report => {
       window.deskai.playbackState(report)
@@ -152,10 +152,10 @@ export default function App() {
         break
       case 'model-state':
         setModelState(event.state)
-        if (event.code === 'MISSING_CREDENTIAL') setError('模型账号未配置。请先在 dsh 设置中配置，再点击“重试回复”。')
+        if (event.code === 'MISSING_CREDENTIAL') setError('模型凭据未配置。请检查当前 Chat Provider 的凭据设置后重试。')
         break
       case 'error':
-        setError(event.code === 'MISSING_CREDENTIAL' ? '模型账号未配置。请先在 dsh 设置中配置，再点击“重试回复”。' : event.message)
+        setError(event.code === 'MISSING_CREDENTIAL' ? '模型凭据未配置。请检查当前 Chat Provider 的凭据设置后重试。' : event.message)
         setRetryable(event.retryable)
         break
       case 'usage': break
@@ -165,7 +165,7 @@ export default function App() {
   const runDialogueSmoke = useCallback(async () => {
     if (dialogueSmokeStarted.current) return
     dialogueSmokeStarted.current = true
-    const checks: DialogueSmokeReport['checks'] = { headerHidden: false, waitSilentNoBubble: false,
+    const checks: DialogueSmokeReport['checks'] = { directTextDisplayed: false, localQuietNoBubble: false,
       textQuestionDisplayed: false, shortAnswerWorked: false, retryWorked: false, cancelWorked: false,
       preferencesIndependent: false, roleplaySelectable: false, relationshipSelectable: false, noMicrophoneOpened: false }
     const notes: string[] = []
@@ -185,23 +185,23 @@ export default function App() {
       await new Promise(resolve => setTimeout(resolve, 150))
       const assistantText = speakDone.type === 'assistant-state'
         ? document.querySelector<HTMLElement>(`.entry.assistant[data-attempt-id="${speakDone.attemptId}"] p`)?.textContent ?? '' : ''
-      checks.headerHidden = !!assistantText && !/"v"\s*:|"action"\s*:|direct_request|```/u.test(assistantText)
+      checks.directTextDisplayed = assistantText === '已连接。这段回复只用于本地界面验证。要继续吗？'
       checks.textQuestionDisplayed = speakDone.type === 'assistant-state' && !!speakDone.attemptId
         && (acknowledged.current.get(speakDone.attemptId) ?? 0) >= assistantText.length && /[?？]/u.test(assistantText)
       const count = () => document.querySelectorAll('.entry.assistant').length
       const beforeQuiet = count()
-      const waitMark = await send('M2: wait')
+      const waitMark = await send('让我想想')
       await waitDialogue(waitMark, e => e.type === 'model-state' && e.state === 'waiting')
-      const silentMark = await send('M2: silent')
+      const silentMark = await send('谢谢先这样')
       await waitDialogue(silentMark, e => e.type === 'model-state' && e.state === 'silent')
       await new Promise(resolve => setTimeout(resolve, 100))
-      checks.waitSilentNoBubble = count() === beforeQuiet
+      checks.localQuietNoBubble = count() === beforeQuiet
       const shortMark = await send('M2: short')
       const shortDone = await waitDialogue(shortMark, e => e.type === 'assistant-state' && e.state === 'complete')
       checks.shortAnswerWorked = shortDone.type === 'assistant-state' && dialogueEvents.current.slice(shortMark)
         .some(e => e.type === 'assistant-delta' && e.attemptId === shortDone.attemptId)
       const malformedMark = await send('M2: malformed')
-      await waitDialogue(malformedMark, e => e.type === 'error' && /^PROTOCOL/u.test(e.code))
+      await waitDialogue(malformedMark, e => e.type === 'error' && e.code === 'CHAT_FIXTURE_FAILURE')
       const retryMark = dialogueEvents.current.length
       const retry = await window.deskai.retryTurn()
       if (!retry.accepted) throw new Error('M2 smoke 显式重试未接受')
@@ -292,17 +292,25 @@ export default function App() {
       currentSession.current = opened.sessionId
       setSession(opened)
       setServiceState(opened.status)
+      const aecMode = (await window.deskai.getRuntime()).aecMode ?? 'browser'
       const output = await ensureOutput(opened)
       context = output.context
       player = output.player
       if (epoch !== startEpoch.current) throw new Error('会话已结束')
       vad = await FrameVAD.new({
         context,
+        aecMode,
+        referenceOutput: player.getReferenceOutput(),
+        onAecStats: stats => {
+          if (smoke.current && stats.referenceFrames > 0 && !smoke.current.notes.some(note => note.startsWith('WebRTC AEC3 worklet'))) {
+            smoke.current.notes.push(`WebRTC AEC3 worklet processed ${stats.frames} frames with ${stats.referenceFrames} playback-reference frames; Chromium fake media, not physical AEC validation`)
+          }
+        },
         getStream: async () => {
           if (epoch !== startEpoch.current) throw new Error('会话已结束')
           microphoneOpened.current = true
           const acquired = await navigator.mediaDevices.getUserMedia({
-            audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: false,
+            audio: { channelCount: 1, echoCancellation: aecMode === 'browser', noiseSuppression: aecMode === 'browser', autoGainControl: false,
               ...(preferencesRef.current?.inputDeviceId ? { deviceId: { exact: preferencesRef.current.inputDeviceId } } : {}) },
           })
           if (epoch !== startEpoch.current) { acquired.getTracks().forEach(track => track.stop()); throw new Error('会话已结束') }
@@ -324,11 +332,11 @@ export default function App() {
       void navigator.mediaDevices.enumerateDevices().then(setDevices).catch(() => {})
       track.onended = () => { void stop('麦克风连接中断') }
       captureRef.current = { stream: deviceStream, vad, context, player, sessionId: opened.sessionId }
-      setCaptureState('自动监听中')
+      setCaptureState(aecMode === 'webrtc' ? '自动监听中 · WebRTC AEC3（试验）' : '自动监听中 · 浏览器回声消除')
       setInputState(previous => previous === 'OFF' ? 'LISTENING' : previous)
       if (smoke.current) {
         smoke.current.vadInitialized = true
-        smoke.current.notes.push('Silero v5 initialized; Chromium fake media, not physical microphone/AEC validation')
+        smoke.current.notes.push(`Silero v5 initialized; AEC mode ${aecMode}; Chromium fake media, not physical microphone/AEC validation`)
         smokeTimer.current = setTimeout(finishSmoke, 120_000)
         try {
           const bytes = await window.deskai.loadPlaybackFixture()

@@ -26,18 +26,18 @@ export type InputOptions = {
   maxSegmentSeconds?: number;
   maxQueuedSegments?: number;
   vadThreshold?: number;
-  /** Acoustic continuation tolerance, measured from the last voiced sample.
-   * 600 preserves the existing latency; larger values permit replacing a
-   * candidate ASR with the full continuing audio before publishing readiness. */
+  interruptionCandidateMs?: number;
+  interruptionConfirmMs?: number;
+  /** Silence durations measured from the last voiced sample. */
   continuationWindowMs?: number;
+  candidateWindowMs?: number;
+  unfinishedWindowMs?: number;
 };
 
 const RATE = 16000;
 // Silero can recognize a weak onset several frames after its first phoneme.
 // Keep PCM, rather than inventing missing text after recognition.
 const PREROLL = 12800;
-const CANDIDATE = 3200;
-const CONFIRM = 12800;
 const UNFINISHED_WAIT = 19200;
 
 function join(chunks: Float32Array[]): Float32Array {
@@ -104,16 +104,20 @@ export class InputController {
   private readonly maxSamples: number;
   private readonly maxQueue: number;
   private readonly threshold: number;
+  private readonly interruptionCandidateSamples: number;
+  private readonly interruptionConfirmSamples: number;
   private readonly releaseThreshold: number;
 
   constructor(options: InputOptions = {}) {
     this.options = options;
-    this.endpoint = new InputEndpoint(options.continuationWindowMs);
+    this.endpoint = new InputEndpoint(options.continuationWindowMs, options.candidateWindowMs, options.unfinishedWindowMs ?? Math.max(1200, options.continuationWindowMs ?? 600));
     if (options.sampleRate && options.sampleRate !== RATE) throw new RangeError('InputController requires 16 kHz mono');
     this.maxSamples = Math.floor(Math.min(20, options.maxSegmentSeconds ?? 20) * RATE);
     if (this.maxSamples < RATE) throw new RangeError('maxSegmentSeconds must be at least one second');
     this.maxQueue = Math.max(1, Math.floor(options.maxQueuedSegments ?? 8));
     this.threshold = options.vadThreshold ?? 0.5;
+    this.interruptionCandidateSamples = Math.ceil((options.interruptionCandidateMs ?? 200) * RATE / 1000);
+    this.interruptionConfirmSamples = Math.ceil((options.interruptionConfirmMs ?? 800) * RATE / 1000);
     this.releaseThreshold = Math.max(0, this.threshold - 0.15);
   }
 
@@ -408,11 +412,11 @@ export class InputController {
 
   private maybeInterrupt(): void {
     if (this.interrupt === 'confirmed' || (!this.output.playing && this.interrupt === 'none')) return;
-    if (this.speechRun >= CANDIDATE && this.interrupt === 'none') {
+    if (this.speechRun >= this.interruptionCandidateSamples && this.interrupt === 'none') {
       this.interrupt = 'candidate';
       this.options.onInterruption?.({ type: 'candidate', generationId: this.output.generationId, reason: 'sustained near-end speech' });
     }
-    if (this.speechRun >= CONFIRM) this.confirmInterruption('sustained near-end speech');
+    if (this.speechRun >= this.interruptionConfirmSamples) this.confirmInterruption('sustained near-end speech');
   }
 
   confirmInterruption(reason = 'confirmed by coordinator'): void {

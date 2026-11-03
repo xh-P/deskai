@@ -12,7 +12,7 @@
     "desktop:dev": "node scripts/desktop/launch.mjs",
     "desktop:build": "node scripts/desktop/build.mjs",
     "desktop:package": "node scripts/desktop/package.mjs",
-    "desktop:test": "node --experimental-strip-types --test tests/voice/core.test.ts tests/voice/renderer-player.mjs tests/voice/renderer-vad.test.ts tests/voice/m2-core.test.ts tests/voice/m2-dialogue.test.ts tests/voice/m2-dsh.test.ts tests/voice/m3-output.test.ts tests/voice/m3-tts.test.ts tests/voice/m4-settings.test.ts tests/voice/m4-model-route.test.ts tests/voice/pet-projection.test.ts tests/voice/pet-motion.test.ts",
+    "desktop:test": "node --experimental-strip-types --test tests/voice/core.test.ts tests/voice/renderer-player.mjs tests/voice/renderer-vad.test.ts tests/voice/m2-core.test.ts tests/voice/m2-dialogue.test.ts tests/voice/m2-dsh.test.ts tests/voice/m3-output.test.ts tests/voice/m3-tts.test.ts tests/voice/m4-settings.test.ts tests/voice/m4-model-route.test.ts tests/voice/pet-projection.test.ts tests/voice/pet-motion.test.ts tests/voice/input-runtime.test.ts tests/voice/chat-runtime.test.ts",
     "desktop:pet-smoke": "node scripts/desktop/launch.mjs --pet-smoke",
     "desktop:smoke": "node scripts/desktop/audio-smoke.mjs",
     "m0:speech": "node scripts/m0/dsh-session-probe.mjs --speech-only",
@@ -21,6 +21,7 @@
     "m3:smoke": "node scripts/desktop/launch.mjs --tts-smoke"
   },
   "dependencies": {
+    "@ai-ecoverse/wasm-webrtc-audio-processing": "^2.1.0-2",
     "@deepseek-ai/dsh": "0.2.1-rc.2",
     "@ricky0123/vad-web": "0.0.31",
     "onnxruntime-web": "1.22.0",

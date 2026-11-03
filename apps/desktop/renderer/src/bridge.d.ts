@@ -13,6 +13,7 @@ export interface RuntimeInfo {
   dialogueSmoke: boolean
   ttsSmoke?: boolean
   fakeMedia: boolean
+  aecMode?: 'browser' | 'webrtc'
   versions: Record<string, string>
   preferences: Preferences
   personas: { id: PersonaId; displayName: string; revision: number }[]
@@ -38,7 +39,7 @@ export interface CaptureFrame {
   sessionId: string
   /** Session-local sample position; a gap must fail instead of deleting audio. */
   sampleStart: number
-  /** Mono, 16 kHz, post-AEC PCM produced by Silero VAD's resampler. */
+  /** Mono, 16 kHz, processed by the configured AEC path and Silero's resampler. */
   samples: Float32Array
   probability: number
 }
@@ -91,8 +92,8 @@ export interface SmokeReport {
 export interface DialogueSmokeReport {
   simulated: true
   checks: {
-    headerHidden: boolean
-    waitSilentNoBubble: boolean
+    directTextDisplayed: boolean
+    localQuietNoBubble: boolean
     textQuestionDisplayed: boolean
     shortAnswerWorked: boolean
     retryWorked: boolean

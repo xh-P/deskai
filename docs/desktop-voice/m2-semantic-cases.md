@@ -1,5 +1,7 @@
 # M2 语义回归案例
 
+> **旧版验收案例（2026-11-04）：**下述 SPEAK / WAIT / SILENT 期望值用于旧方案验证，不再是当前产品规范。当前目标见[项目方向](./current-direction.md)。
+
 本文件说明人工预设的回归期待，案例本身不是模型输出，也不是已完成的运行结果。数据在 tests/voice/fixtures/m2-semantic-cases.json；报告工具只把单独采集的观察值按 ID 与预期比较。
 
 ## Fixture 约定

@@ -1,5 +1,5 @@
-import { DecisionStream, DeliveryLedger, PROMPT_VERSION } from './m2.ts';
-import type { DecisionHeader, DeliveryMode, Persona, ReplyLanguage } from './m2.ts';
+import { DeliveryLedger, PROMPT_VERSION } from './m2.ts';
+import type { DeliveryMode, ReplyLanguage } from './m2.ts';
 import { localDecision } from './policy.ts';
 import { cleanSpeech } from './sentences.ts';
 import type { ChatAccepted, ChatEvent, ChatPersonaId, ChatSettlement, ChatTurnInput, RelationshipMode } from '../../dsh-adapter/src/session.ts';
@@ -19,10 +19,10 @@ export type DialogueEvent =
   | { type: 'usage'; usage: unknown };
 type UserHistory = { role: 'user'; turnId: string; text: string };
 type Active = { id: string; epoch: number; generation: number; input: DialogueInput; accepted: boolean; canceled: boolean;
-  parser?: DecisionStream; attemptId?: string; header?: DecisionHeader; failure?: string; finished?: boolean;
+  attemptId?: string; failure?: string; finished?: boolean;
   attempts: string[]; completed?: Promise<ChatSettlement> };
 
-/** One decision/generation request per admitted turn, with explicit delivery projection. */
+/** Direct-text Chat streaming with explicit delivery projection and cancellation. */
 export class DialogueController {
   readonly ledger = new DeliveryLedger({ maxAttempts: 16, maxText: 12000 });
   private port: DialoguePort;
@@ -42,7 +42,7 @@ export class DialogueController {
   private blocked?: string;
   private closed = false;
   private canceling?: Promise<void>;
-  private counts = { modelRequests: 0, modelAttempts: 0, localFiltered: 0, protocolErrors: 0, usageEvents: 0 };
+  private counts = { modelRequests: 0, modelAttempts: 0, localFiltered: 0, usageEvents: 0 };
   private waitExpiresAt = 0;
   private waitTimer?: ReturnType<typeof setTimeout>;
 
@@ -87,7 +87,7 @@ export class DialogueController {
       }
       if (this.blocked) {
         this.failedInput = input;
-        this.emit({ type: 'error', code: this.blocked, message: '模型账号尚未配置。请在 dsh 设置中配置后，点击重试。', retryable: true });
+        this.emit({ type: 'error', code: this.blocked, message: '模型凭据未配置。请检查当前 Chat Provider 的凭据设置后重试。', retryable: true });
         return { accepted: false };
       }
       await this.cancel();
@@ -118,7 +118,7 @@ export class DialogueController {
           }
           // An explicit new request or answer resolves the previous question;
           // WAIT/SILENT alone never clears it.
-          if (state.header?.action === 'SPEAK' && question) this.ledger.markQuestionResolved();
+          if (question) this.ledger.markQuestionResolved();
         }
         void accepted.completed.then(settlement => this.finish(state, settlement)).catch(() => this.fail(state, 'DELIVERY_STATE_ERROR'));
         return { accepted: true };
@@ -139,38 +139,20 @@ export class DialogueController {
     if (event.type === 'attempt-start') {
       this.counts.modelAttempts++;
       if (state.attemptId && state.attemptId !== event.attemptId) this.abandon(state);
-      state.attemptId = event.attemptId; state.parser = new DecisionStream(12000); state.header = undefined;
+      state.attemptId = event.attemptId;
+      state.attempts.push(event.attemptId);
+      this.ledger.startAttempt(event.attemptId, state.id, { v: 1, action: 'SPEAK', reason: 'direct_request', expectsReply: true }, state.input.source);
+      this.emit({ type: 'decision', turnId: state.id, generationId: state.generation, action: 'SPEAK', local: false });
       return;
     }
     if (event.type === 'text') {
-      if (event.attemptId !== state.attemptId || !state.parser || state.failure) return;
-      this.consume(state, state.parser.push(event.text));
+      if (event.attemptId !== state.attemptId || state.failure) return;
+      if (state.input.source === 'voice') this.outputAttempt = state;
+      this.ledger.appendGenerated(event.attemptId, event.text);
+      this.emit({ type: 'assistant-delta', turnId: state.id, attemptId: event.attemptId, generationId: state.generation, text: event.text, source: state.input.source });
     } else if (event.type === 'attempt-end') {
       if (event.attemptId !== state.attemptId) return;
       if (event.outcome === 'abandoned') this.abandon(state);
-      else if (state.parser) this.consume(state, state.parser.finish());
-    }
-  }
-
-  private consume(state: Active, events: ReturnType<DecisionStream['push']>): void {
-    for (const event of events) {
-      if (state.failure || state.canceled || !state.attemptId) return;
-      if (event.type === 'error') { this.counts.protocolErrors++; this.fail(state, 'PROTOCOL_FORMAT'); void this.port.cancel().catch(() => {}); return; }
-      if (event.type === 'header') {
-        state.header = event.header;
-        state.attempts.push(state.attemptId);
-        this.ledger.startAttempt(state.attemptId, state.id, event.header, state.input.source);
-        if (event.header.action === 'SPEAK') this.ledger.markQuestionResolved();
-        this.emit({ type: 'decision', turnId: state.id, generationId: state.generation, action: event.header.action, local: false });
-        if (event.header.action !== 'SPEAK') {
-          this.emit({ type: 'model-state', state: event.header.action === 'WAIT' ? 'waiting' : 'silent' });
-          if (event.header.action === 'WAIT') this.beginWait();
-        }
-      } else if (event.type === 'body') {
-        if (state.input.source === 'voice') this.outputAttempt = state;
-        this.ledger.appendGenerated(state.attemptId, event.text);
-        this.emit({ type: 'assistant-delta', turnId: state.id, attemptId: state.attemptId, generationId: state.generation, text: event.text, source: state.input.source });
-      } else this.ledger.noteViolation(state.attemptId, event.reason);
     }
   }
 
@@ -179,30 +161,27 @@ export class DialogueController {
     this.emit({ type: 'assistant-state', turnId: state.id, attemptId: state.attemptId, generationId: state.generation, state: 'interrupted' });
     state.generation = ++this.generation;
     this.emit({ type: 'output-clear', generationId: this.generation });
-    state.parser = undefined;
   }
 
   private finish(state: Active, settlement: ChatSettlement): void {
     state.finished = true;
     if (state.epoch !== this.epoch || this.closed) return;
     if (!state.canceled && !state.failure && settlement.status === 'completed') {
-      if (!state.header) this.fail(state, 'PROTOCOL_FORMAT');
-      else if (state.header.action === 'SPEAK' && state.attemptId) {
+      if (!state.attemptId) this.fail(state, 'CHAT_EMPTY_RESPONSE');
+      else if (state.attemptId) {
         const attempt = this.ledger.snapshot().find(item => item.attemptId === state.attemptId);
-        if (!attempt?.generated.trim()) this.fail(state, 'PROTOCOL_EMPTY_BODY');
+        if (!attempt?.generated.trim()) this.fail(state, 'CHAT_EMPTY_RESPONSE');
         else {
-          if (state.header.expectsReply) {
-            const question = attempt.generated.match(/[^。.!！?？\n]*[?？]\s*$/u)?.[0]?.trim();
-            if (question) this.ledger.setQuestionCandidate(state.attemptId, `question-${state.id}`, question,
-              state.input.source === 'voice' ? this.finalSegments.get(state.attemptId) : undefined);
-          }
+          const question = attempt.generated.match(/[^。.!！?？\n]*[?？]\s*$/u)?.[0]?.trim();
+          if (question) this.ledger.setQuestionCandidate(state.attemptId, `question-${state.id}`, question,
+            state.input.source === 'voice' ? this.finalSegments.get(state.attemptId) : undefined);
           this.emit({ type: 'assistant-state', turnId: state.id, attemptId: state.attemptId, generationId: state.generation, state: 'complete' });
         }
       }
     } else if (!state.canceled && !state.failure) this.fail(state, settlement.code ?? 'MODEL_REQUEST_FAILED');
     if (this.active === state) this.active = undefined;
     if (this.outputAttempt === state && state.attemptId && !cleanSpeech(this.ledger.snapshot().find(item => item.attemptId === state.attemptId)?.unplayed ?? '')) this.outputAttempt = undefined;
-    if (!state.failure && !state.canceled && state.header?.action === 'SPEAK') this.emit({ type: 'model-state', state: 'idle' });
+    if (!state.failure && !state.canceled) this.emit({ type: 'model-state', state: 'idle' });
   }
 
   private fail(state: Active, code: string): void {
@@ -214,8 +193,8 @@ export class DialogueController {
     this.failedInput = { ...state.input, retryOf: state.accepted ? state.id : state.input.retryOf };
     this.emit({ type: 'assistant-state', turnId: state.id, attemptId: state.attemptId, generationId: state.generation, state: 'error' });
     this.emit({ type: 'model-state', state: 'error', code });
-    this.emit({ type: 'error', code, message: this.blocked ? '模型账号未配置；请在 dsh 设置中配置后重试。'
-      : /^PROTOCOL/.test(code) ? '本轮回复格式异常，可重试。' : '本轮模型请求失败，可重试。', retryable: true });
+    this.emit({ type: 'error', code, message: this.blocked ? '模型凭据未配置。请检查当前 Chat Provider 的凭据设置后重试。'
+      : '本轮模型请求失败，可重试。', retryable: true });
   }
 
   async cancel(): Promise<void> {

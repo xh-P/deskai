@@ -17,17 +17,22 @@ export class FixtureChatPort implements DialoguePort {
     const completed = new Promise<ChatSettlement>(resolve => { finish = resolve; });
     const active = { finish, sessionId, timer: undefined as ReturnType<typeof setTimeout> | undefined };
     this.active = active;
-    const header = (action: string, reason: string, expectsReply = false) => JSON.stringify({ v: 1, action, reason, expectsReply }) + '\n';
-    let text = header('SPEAK', 'direct_request', true) + '已连接。这段回复只用于本地界面验证。要继续吗？';
-    if (input.text === 'M2: wait') text = header('WAIT', 'unfinished');
-    if (input.text === 'M2: silent') text = header('SILENT', 'closing');
-    if (input.text === 'M2: short') text = header('SPEAK', 'answer_to_question') + '继续。';
-    if (input.text === 'M2: malformed') text = ++this.malformedCount === 1 ? '缺少协议头的模拟输出' : header('SPEAK', 'direct_request') + '重试成功。';
-    if (input.text === 'M2: long') text = header('SPEAK', 'direct_request') + '这是一段可取消的模拟回复。'.repeat(30);
+    let text = '已连接。这段回复只用于本地界面验证。要继续吗？';
+    if (input.text === 'M2: short') text = '继续。';
+    const failOnce = input.text === 'M2: malformed' && ++this.malformedCount === 1;
+    if (input.text === 'M2: malformed') text = '重试成功。';
+    if (input.text === 'M2: long') text = '这是一段可取消的模拟回复。'.repeat(30);
     emit({ type: 'attempt-start', attemptId, revision: 1 });
     let offset = 0, index = 0;
     const step = () => {
       if (this.active !== active) return;
+      if (failOnce) {
+        emit({ type: 'error', code: 'CHAT_FIXTURE_FAILURE' });
+        emit({ type: 'attempt-end', attemptId, outcome: 'abandoned' });
+        this.active = undefined;
+        finish({ sessionId, status: 'failed', code: 'CHAT_FIXTURE_FAILURE' });
+        return;
+      }
       const piece = text.slice(offset, offset + 9);
       emit({ type: 'text', attemptId, index, revision: index + 2, text: piece });
       offset += piece.length; index++;
