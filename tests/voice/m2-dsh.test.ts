@@ -101,6 +101,28 @@ test('cancel calls native RPC and waits for durable turn/end', async () => {
   assert.deepEqual(await accepted.completed, { sessionId: 'session-1', status: 'cancelled' });
 });
 
+test('new relationship presets route in one native request and ordinary modes keep their original presets', async () => {
+  for (const [personaId, relationshipMode, expected] of [
+    ['nagato-mainline-post-disappearance', 'friend', 'deskai2-voice-nagato-mainline-friend'],
+    ['nagato-mainline-post-disappearance', 'kyon', 'deskai2-voice-nagato-mainline-kyon'],
+    ['assistant-neutral', 'kyon', 'deskai2-voice-m2-neutral'],
+    ['nagato-normal-light', 'kyon', 'deskai2-voice-m2-nagato'],
+  ] as const) {
+    const { host, calls, send } = fixture();
+    const chat = new LocalDshChat(host, 'E:/workspace/deskai2');
+    const accepted = await chat.runTurn({ text: '你好', personaId, relationshipMode }, () => {});
+    assert.equal(calls[0].request.agentPreset, expected);
+    assert.equal(calls.filter(c => c.endpoint === 'session/prompt').length, 1);
+    send({ type: 'event', event: { seq: 5, type: 'turn/end' } });
+    await accepted.completed;
+  }
+  const { host, calls } = fixture();
+  const chat = new LocalDshChat(host, 'E:/workspace/deskai2');
+  await assert.rejects(chat.runTurn({ text: '你好', personaId: '../evil' as any }, () => {}), /INVALID_PERSONA/u);
+  await assert.rejects(chat.runTurn({ text: '你好', relationshipMode: 'lover' as any }, () => {}), /INVALID_RELATIONSHIP/u);
+  assert.equal(calls.length, 0);
+});
+
 test('reservation blocks parallel create and cancel during create prevents prompt', async () => {
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });

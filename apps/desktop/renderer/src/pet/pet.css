@@ -1,0 +1,134 @@
+:root:has(.pet-root), body:has(.pet-root), #root:has(.pet-root) {
+  width: 100%;
+  height: 100%;
+  min-width: 0 !important;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: transparent !important;
+}
+
+.pet-root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.pet-figure {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.pet-body {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transform-origin: 50% 100%;
+  touch-action: none;
+  animation: pet-breathe 5.7s ease-in-out infinite;
+  cursor: grab;
+}
+
+.pet-body:active { cursor: grabbing; }
+.pet-root:not(.pet-ready) .pet-body { animation-play-state: paused; }
+.pet-listening .pet-body { animation: pet-listen 5.1s ease-in-out infinite; }
+.pet-thinking .pet-body { animation: pet-think 6.6s ease-in-out infinite; }
+.pet-recognizing .pet-body { animation: pet-recognize 4.2s ease-in-out infinite; }
+.pet-attention .pet-body { animation: pet-attend .9s ease-in-out 1; }
+
+.pet-subtitle {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: 3px;
+  max-height: 82px;
+  overflow: hidden;
+  padding: 6px 9px;
+  border-radius: 10px;
+  background: rgba(24, 31, 42, .84);
+  color: #f3f5f9;
+  text-align: center;
+  font: 500 12px/1.36 "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .45);
+}
+
+.pet-status {
+  position: absolute;
+  top: 19px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: max-content;
+  padding: 5px 11px;
+  border: 1px solid rgba(94, 113, 137, .28);
+  border-radius: 999px;
+  background: rgba(24, 31, 42, .72);
+  color: #e5eaf0;
+  font: 500 12px/1.4 "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  letter-spacing: .04em;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.pet-status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #b2bed1;
+}
+
+.pet-status-silent .pet-status-dot { background: #9aa6b6; }
+.pet-status-paused .pet-status-dot { background: #ddb47b; }
+.pet-status-error .pet-status-dot { background: #e39c9c; }
+
+.pet-error {
+  position: absolute;
+  inset: auto 4px 4px;
+  border-radius: 8px;
+  padding: 6px;
+  color: #fff;
+  background: rgba(94, 34, 40, .94);
+  font: 11px/1.3 "Microsoft YaHei UI", sans-serif;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
+.pet-reduced .pet-body { animation: none !important; transform: none !important; }
+
+@keyframes pet-breathe {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(1.003); }
+}
+
+@keyframes pet-attend {
+  0%, 100% { transform: rotate(0); }
+  38% { transform: rotate(.55deg); }
+  72% { transform: rotate(-.18deg); }
+}
+
+@keyframes pet-think {
+  0%, 100% { transform: rotate(0) scaleY(1); }
+  50% { transform: rotate(.38deg) scaleY(1.002); }
+}
+
+@keyframes pet-listen {
+  0%, 100% { transform: rotate(0) scaleY(1); }
+  50% { transform: rotate(-.16deg) scaleY(1.003); }
+}
+
+@keyframes pet-recognize {
+  0%, 100% { transform: rotate(0) scaleY(1); }
+  50% { transform: rotate(-.26deg) scaleY(1.004); }
+}

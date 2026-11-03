@@ -22,3 +22,7 @@ tests/voice/fixtures/*.wav
 *.pem
 *.key
 training/
+
+# Local agent settings and recoverable historical artifacts
+.codex/
+archive/

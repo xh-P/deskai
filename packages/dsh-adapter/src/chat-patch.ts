@@ -3,6 +3,7 @@ import path from 'node:path';
 import { homedir } from 'node:os';
 import { parseDocument } from 'yaml';
 import { buildSystemPrompt, validatePersona } from '../../voice-core/src/prompts.ts';
+import { PERSONA_IDS, personaPreset, type RelationshipMode } from '../../voice-core/src/persona-catalog.ts';
 
 export type SavedModelSelection = { provider: string; model: string; reasoningEffort?: string };
 /** YAML is data only. Select one known plugin; arbitrary config never enters our overlay. */
@@ -33,19 +34,19 @@ async function savedModelSelection(): Promise<SavedModelSelection | undefined> {
 
 /** Generated overlay is passed to the owned dsh Host; source persona cards remain unchanged. */
 export async function prepareChatPatch(root: string): Promise<string> {
-  const definitions = [
-    ['nagato-normal-light', 'deskai2-voice-m2-nagato'],
-    ['assistant-neutral', 'deskai2-voice-m2-neutral']
-  ] as const;
-  const entries: object[] = await Promise.all(definitions.map(async ([cardId, presetId]) => {
+  const entries: object[] = (await Promise.all(PERSONA_IDS.map(async cardId => {
     const card = validatePersona(JSON.parse(await readFile(path.join(root, 'config/personas', `${cardId}.json`), 'utf8')));
     if (card.id !== cardId) throw new Error('CHAT_PERSONA_ID_MISMATCH');
-    const prompt = buildSystemPrompt(card);
-    return { insert: [{ id: `preset-${presetId}`, name: '@deepseek-ai/dsh-agent-preset', config: {
-      id: presetId, name: `DeskAI2 ${card.displayName} voice chat`, plugins: [{ id: 'persona', name: '@deepseek-ai/dsh-persona',
-        config: { complete: true, includeRuntimeContext: false, prefix: prompt.text } }]
-    } }] };
-  }));
+    const modes: RelationshipMode[] = card.roleplay ? ['friend', 'kyon'] : ['friend'];
+    return modes.map(mode => {
+      const presetId = personaPreset(cardId, mode);
+      const prompt = buildSystemPrompt(card, [], mode);
+      return { insert: [{ id: `preset-${presetId}`, name: '@deepseek-ai/dsh-agent-preset', config: {
+        id: presetId, name: `DeskAI2 ${card.displayName}${card.roleplay ? ` · ${card.roleplay.relationships[mode].displayName}` : ''} voice chat`, plugins: [{ id: 'persona', name: '@deepseek-ai/dsh-persona',
+          config: { complete: true, includeRuntimeContext: false, prefix: prompt.text } }]
+      } }] };
+    });
+  }))).flat();
   const selection = await savedModelSelection();
   if (selection) entries.unshift({ id: 'agent-default-model', config: selection });
   const out = path.join(root, '.cache/voice/dsh-m2.patch.yml');

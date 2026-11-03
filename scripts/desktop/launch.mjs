@@ -5,13 +5,14 @@ import { buildDesktop, root } from './build.mjs';
 
 const dialogueSmoke = process.argv.includes('--dialogue-smoke');
 const ttsSmoke = process.argv.includes('--tts-smoke');
-const smoke = process.argv.includes('--smoke') || dialogueSmoke || ttsSmoke;
+const petSmoke = process.argv.includes('--pet-smoke');
+const smoke = process.argv.includes('--smoke') || dialogueSmoke || ttsSmoke || petSmoke;
 const electronExe = path.join(root, 'node_modules/electron/dist/electron.exe');
 try { await access(electronExe); }
 catch { throw new Error('Electron 二进制未安装。请先运行 npm exec --no -- install-electron。'); }
 await buildDesktop();
 const args = [path.join(root, '.cache/desktop-main/apps/desktop/src/main.js')];
-if (smoke && !dialogueSmoke) {
+if (smoke && !dialogueSmoke && !petSmoke) {
   const source = path.join(root, 'outputs/nagato_normal_v5_bilingual_candidates/20261025-154215-bilingual-candidates/zh_v2_normal.wav');
   const target = path.join(root, '.cache/desktop-smoke/input.wav');
   await mkdir(path.dirname(target), { recursive: true });
@@ -25,7 +26,8 @@ if (smoke && !dialogueSmoke) {
   });
   args.push(`--use-file-for-fake-audio-capture=${target}`);
 }
-if (smoke) args.push('--smoke', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required', '--mute-audio');
+if (smoke && !petSmoke) args.push('--smoke', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required', '--mute-audio');
+if (petSmoke) args.push('--pet-smoke', '--mute-audio');
 if (dialogueSmoke) args.push('--dialogue-smoke');
 if (ttsSmoke) args.push('--tts-smoke');
 if (ttsSmoke && process.argv.includes('--real-model')) args.push('--real-model');
@@ -35,6 +37,6 @@ const child = spawn(electronExe, args, { cwd: root, env, stdio: 'inherit', windo
 let timer;
 if (smoke) timer = setTimeout(() => {
   if (child.pid) spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-}, ttsSmoke ? 300_000 : 180_000);
+}, ttsSmoke ? 300_000 : petSmoke ? 90_000 : 180_000);
 child.once('error', error => { if (timer) clearTimeout(timer); console.error(error.message); process.exitCode = 1; });
 child.once('exit', code => { if (timer) clearTimeout(timer); process.exitCode = code ?? 1; });

@@ -1,13 +1,14 @@
 import { access, readFile, writeFile, rename, mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { isPersonaId, isRelationshipMode, type ChatPersonaId, type RelationshipMode } from '../../../packages/voice-core/src/persona-catalog.ts';
 
 export type DesktopPreferences = {
-  personaId: 'nagato-normal-light' | 'assistant-neutral'; replyLanguage: 'auto' | 'zh' | 'ja' | 'en';
+  personaId: ChatPersonaId; relationshipMode: RelationshipMode; replyLanguage: 'auto' | 'zh' | 'ja' | 'en';
   voiceId: string; referenceId: string; inputDeviceId: string; outputDeviceId: string;
   volume: number; speed: number; closeToTray: boolean;
 };
 export const defaultPreferences: DesktopPreferences = {
-  personaId: 'nagato-normal-light', replyLanguage: 'auto', voiceId: 'nagato-normal-v2', referenceId: '',
+  personaId: 'nagato-normal-light', relationshipMode: 'friend', replyLanguage: 'auto', voiceId: 'nagato-normal-v2', referenceId: '',
   inputDeviceId: '', outputDeviceId: '', volume: 0.8, speed: 1, closeToTray: true,
 };
 /** Only supported UI values are persisted; no arbitrary paths, prompts or credentials. */
@@ -18,7 +19,9 @@ export function mergePreferences(previous: DesktopPreferences, value: unknown): 
   for (const [key, item] of Object.entries(patch)) {
     if (!(key in defaultPreferences)) throw new Error('INVALID_PREFERENCES');
     if (key === 'personaId') {
-      if (item !== 'nagato-normal-light' && item !== 'assistant-neutral') throw new Error('INVALID_PERSONA');
+      if (!isPersonaId(item)) throw new Error('INVALID_PERSONA');
+    } else if (key === 'relationshipMode') {
+      if (!isRelationshipMode(item)) throw new Error('INVALID_RELATIONSHIP');
     } else if (key === 'replyLanguage') {
       if (!['auto', 'zh', 'ja', 'en'].includes(String(item))) throw new Error('INVALID_LANGUAGE');
     } else if (key === 'volume' || key === 'speed') {

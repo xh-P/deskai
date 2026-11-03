@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type { LocalDshSpeech } from './speech.ts';
+import { personaPreset, type ChatPersonaId, type RelationshipMode } from '../../voice-core/src/persona-catalog.ts';
 
-export type ChatPersonaId = 'nagato-normal-light' | 'assistant-neutral';
+export type { ChatPersonaId, RelationshipMode } from '../../voice-core/src/persona-catalog.ts';
 export interface ChatTurnInput {
   requestId?: string;
   text: string;
   personaId?: ChatPersonaId;
+  relationshipMode?: RelationshipMode;
   visibleHistory?: readonly unknown[];
   deliveryState?: unknown;
   mode?: 'voice' | 'text';
@@ -98,7 +100,7 @@ export class LocalDshChat {
   async runTurn(input: ChatTurnInput, onEvent: (event: ChatEvent) => void): Promise<ChatAccepted> {
     if (this.active) throw new Error('CHAT_TURN_BUSY');
     const content = boundedText(input);
-    const preset = input.personaId === 'assistant-neutral' ? 'deskai2-voice-m2-neutral' : 'deskai2-voice-m2-nagato';
+    const preset = personaPreset(input.personaId, input.relationshipMode);
     let finish!: (value: ChatSettlement) => void;
     const completed = new Promise<ChatSettlement>(resolve => { finish = resolve; });
     const active: ActiveTurn = { sessionId: '', completed, cancelRequested: false, promptAccepted: false, promptSubmitted: false };

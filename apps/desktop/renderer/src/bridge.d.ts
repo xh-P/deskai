@@ -1,9 +1,11 @@
 import type { DialogueEvent } from '../../../../packages/voice-core/src/dialogue.ts'
 import type { VoiceDiagnostics } from '../../../../packages/voice-core/src/diagnostics.ts'
+import type { PetGeometry, PetPreferencePatch, PetSnapshot } from '../../../../packages/desktop-pet/src/types.ts'
 
-export type PersonaId = 'nagato-normal-light' | 'assistant-neutral'
+import type { ChatPersonaId, RelationshipMode } from '../../../../packages/voice-core/src/persona-catalog.ts'
+export type PersonaId = ChatPersonaId
 export type ReplyLanguage = 'auto' | 'zh' | 'ja' | 'en'
-export interface Preferences { personaId: PersonaId; replyLanguage: ReplyLanguage; voiceId: string; referenceId: string;
+export interface Preferences { personaId: PersonaId; relationshipMode: RelationshipMode; replyLanguage: ReplyLanguage; voiceId: string; referenceId: string;
   inputDeviceId: string; outputDeviceId: string; volume: number; speed: number; closeToTray: boolean }
 
 export interface RuntimeInfo {
@@ -104,6 +106,9 @@ export interface DialogueSmokeReport {
 
 export interface DeskaiBridge {
   getRuntime(): Promise<RuntimeInfo>
+  getPetSnapshot(): Promise<PetSnapshot>
+  updatePetPreferences(input: PetPreferencePatch): Promise<PetSnapshot>
+  onPetSnapshot(listener: (snapshot: PetSnapshot) => void): () => void
   openConversation(): Promise<SessionStart>
   startSession(): Promise<SessionStart>
   stopSession(): Promise<void>
@@ -125,5 +130,13 @@ export interface DeskaiBridge {
 declare global {
   interface Window {
     deskai: DeskaiBridge
+    deskPet: {
+      getSnapshot(): Promise<PetSnapshot>
+      onSnapshot(listener: (snapshot: PetSnapshot) => void): () => void
+      setOpaqueHit(opaque: boolean): void
+      drag(phase: 'start' | 'move' | 'end', pointerId: number): void
+      showContextMenu(): void
+      reportGeometry(geometry: PetGeometry): void
+    }
   }
 }

@@ -1,0 +1,74 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { PetActivity } from '../../packages/desktop-pet/src/projection.ts';
+import { defaultPetPreferences, mergePetPreferences } from '../../apps/desktop/src/pet-settings.ts';
+
+test('pet follows real input and model decisions without inventing a reply', () => {
+  const activity = new PetActivity();
+  const state = () => activity.snapshot(defaultPetPreferences);
+  assert.equal(state().state, 'off');
+  activity.startSession('session-1', true);
+  assert.equal(state().state, 'listening');
+  activity.input('TRANSCRIBING');
+  assert.equal(state().state, 'recognizing');
+  activity.dialogue({ type: 'model-state', state: 'generating' });
+  assert.equal(state().state, 'thinking');
+  activity.dialogue({ type: 'decision', turnId: 't1', generationId: 1, action: 'WAIT', local: false });
+  activity.dialogue({ type: 'model-state', state: 'waiting' });
+  assert.equal(state().state, 'waiting');
+  assert.equal(state().subtitle, '');
+  activity.dialogue({ type: 'decision', turnId: 't2', generationId: 2, action: 'SILENT', local: false });
+  activity.dialogue({ type: 'model-state', state: 'silent' });
+  assert.equal(state().state, 'silent');
+  assert.equal(state().subtitle, '');
+  activity.stopSession();
+  assert.equal(state().state, 'off');
+  activity.startSession('session-2', true);
+  activity.fail();
+  activity.stopSession(true);
+  assert.equal(state().state, 'error');
+  activity.startSession('session-3', true);
+  assert.equal(state().state, 'listening');
+});
+
+test('mouth and subtitles require a matching playback receipt; clear rejects stale generations', () => {
+  const activity = new PetActivity();
+  const state = () => activity.snapshot(defaultPetPreferences);
+  activity.startSession('session-1', true);
+  activity.dialogue({ type: 'model-state', state: 'generating' });
+  activity.spoken({ generationId: 1, text: '真实句子', completed: false });
+  assert.notEqual(state().state, 'speaking');
+  activity.playback({ sessionId: 'other-session', generationId: 1, playing: true, paused: false });
+  activity.spoken({ generationId: 1, text: '真实句子', completed: false });
+  assert.notEqual(state().state, 'speaking');
+  activity.playback({ sessionId: 'session-1', generationId: 1, playing: true, paused: false });
+  activity.spoken({ generationId: 1, text: '真实句子', completed: false });
+  assert.equal(state().state, 'speaking');
+  assert.equal(state().subtitle, '真实句子');
+  activity.output('pause', 1);
+  assert.equal(state().state, 'paused');
+  assert.equal(state().subtitle, '');
+  activity.output('resume', 1);
+  activity.spoken({ generationId: 1, text: '旧回执', completed: false });
+  assert.notEqual(state().state, 'speaking');
+  activity.output('clear', 2);
+  activity.playback({ sessionId: 'session-1', generationId: 1, playing: true, paused: false });
+  activity.spoken({ generationId: 1, text: '已取消内容', completed: false });
+  assert.notEqual(state().state, 'speaking');
+  assert.equal(state().subtitle, '');
+  activity.playback({ sessionId: 'session-1', generationId: 2, playing: true, paused: false });
+  activity.spoken({ generationId: 2, text: '新回执', completed: false });
+  assert.equal(state().subtitle, '新回执');
+  activity.stopSession();
+  activity.playback({ sessionId: 'session-1', generationId: 2, playing: true, paused: false });
+  assert.equal(state().state, 'off');
+});
+
+test('pet appearance preferences remain separate and validate supported values', () => {
+  const update = mergePetPreferences(defaultPetPreferences, { variant: 'witch-normal', size: 300, visible: false });
+  assert.equal(update.variant, 'witch-normal');
+  assert.equal(update.size, 300);
+  assert.equal(update.visible, false);
+  assert.throws(() => mergePetPreferences(update, { size: 500 }), /INVALID_PET_SIZE/);
+  assert.throws(() => mergePetPreferences(update, { voiceId: 'other' }), /INVALID_PET_PREFERENCES/);
+});

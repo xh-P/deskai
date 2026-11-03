@@ -6,6 +6,13 @@ contextBridge.exposeInMainWorld('deskai', Object.freeze({
   openConversation: () => ipcRenderer.invoke('deskai:open-conversation'),
   sendText: (input: unknown) => ipcRenderer.invoke('deskai:send-text', input),
   updatePreferences: (preferences: unknown) => ipcRenderer.invoke('deskai:preferences', preferences),
+  getPetSnapshot: () => ipcRenderer.invoke('deskai:pet-snapshot'),
+  updatePetPreferences: (preferences: unknown) => ipcRenderer.invoke('deskai:pet-preferences', preferences),
+  onPetSnapshot: (callback: (snapshot: unknown) => void) => {
+    const listener = (_: unknown, snapshot: unknown) => callback(snapshot);
+    ipcRenderer.on('deskai:pet-snapshot', listener);
+    return () => ipcRenderer.removeListener('deskai:pet-snapshot', listener);
+  },
   cancelTurn: () => ipcRenderer.invoke('deskai:cancel-turn'),
   retryTurn: () => ipcRenderer.invoke('deskai:retry-turn'),
   acknowledgeDisplay: (report: unknown) => ipcRenderer.send('deskai:displayed', report),

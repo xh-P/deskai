@@ -44,6 +44,18 @@ try {
   process.env.DESKAI_ASSET_ROOT = path.resolve(directory, config.assetRoot);
   process.env.DESKAI_NODE_EXECUTABLE = path.join(directory, 'node.exe');
   import('./.cache/desktop-main/apps/desktop/src/main.js').catch(error => {
+    if (process.argv.includes('--pet-smoke')) {
+      try {
+        const output = path.join(process.env.DESKAI_ASSET_ROOT, 'outputs/desktop-pet/validation');
+        fs.mkdirSync(output, { recursive: true });
+        fs.writeFileSync(path.join(output, 'app-pet-bootstrap-error.json'), JSON.stringify({
+          message: String(error?.message ?? error), stack: String(error?.stack ?? '')
+        }, null, 2));
+      } catch { /* Keep the original startup error as the exit reason. */ }
+      console.error('DeskAI pet smoke bootstrap failed:', error);
+      app.exit(1);
+      return;
+    }
     app.whenReady().then(() => { dialog.showErrorBox('DeskAI 启动失败', String(error.message).slice(0, 500)); app.exit(1); });
   });
 } catch (error) {

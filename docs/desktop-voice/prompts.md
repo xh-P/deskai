@@ -83,6 +83,20 @@ SPEAK 后换行输出可以直接朗读的正文。WAIT 和 SILENT 后不输出�
 
 另外提供 `assistant-neutral` 普通助手卡。声音切换默认只改 voiceId；如用户主动勾选“声音与人格联动”，才使用 preferredVoiceId 映射反向选择相应人格，且不能覆盖用户自定义卡。切换人格后展示当前名称及生效边界。
 
+## 已接入：主线有希与两种关系（2026-10-30）
+
+桌面“人格 / 角色”新增 `nagato-mainline-post-disappearance`（长门有希 · 主线消失后，试验性），选择后显示“关系模式”：朋友／用户扮演阿虚。原默认 `nagato-normal-light` 与普通助手继续可用；不会自动改选角色，不联动声音或语言。旧偏好文件缺少 `relationshipMode` 时仅在内存补 `friend`，读取不重写文件；用户主动调整设置时才正常保存。
+
+时间锚点为《消失》结束、12月24日文艺部室圣诞聚会之后，排除其后的冬合宿、新年等剧情。背景分别注明[KADOKAWA官方年表](https://promo.kadokawa.co.jp/sneakerbunko/haruhi/chronology/)的事件概要，和用户提供资源站的第三方中文 EPUB《忧郁》《消失》已读片段；后者在[小说资料](./character-research/nagato-novel-sources.md)记录卷章、XHTML和1基段落，译者、出版来源与授权尚未确认，不冒充官方日文原文或纸书页码。卡片只概括具体可观察行动，明确区分阿虚的表达与长门的内心。[动画资料](./character-research/nagato-anime-sources.md)尚未逐场核验，作品取向仍为动画优先，风格和关系互动为试验性设计。没有从训练音频机器转录推定剧情事实。
+
+角色卡 v1 增加 `mode: character-roleplay` 和严格白名单 `roleplay`：角色、时间、证据状态、来源、`verifiedBackground`、`unknowns`、`realityBoundary`、`relationships.friend/kyon`。背景逐项引用官方概要或中文译本来源 ID；中文译本事实必须附 `locator` 定位，单纯研究笔记不能充当已核背景来源。拒绝任意 system/tool/script 字段及未知关系枚举。示例可标注 `relationshipMode`；生成提示词仅带所选关系及其示例，不混入另一种关系。所有示例均为新写的产品表达，不是原作引文。
+
+朋友模式保留现实用户的独立身份，不继承阿虚的共同经历；阿虚模式是明确的虚构扮演，可使用所列原作事件为共同背景，仍不默认恋人。角色背景、用户补充的设定、实际会话经历分开；未核细节保留不确定，不自动跨会话推断关系或记忆。对话自然表达，边界仅在相关情境需要时说明。现实能力、语言与 SPEAK/WAIT/SILENT 协议继续优先于人设。
+
+应用仍按每个接纳轮次投影到新的 dsh 会话，一次请求决定回应并生成正文。主线朋友／阿虚各用独立 preset，轻量／普通助手保持原 preset。切人格或主线关系会取消当前输出、使排队旧输入和旧重试失效，并清空后续模型的对话投影；界面旧记录与交付账本保留，但不带入新身份上下文。语言调整不清空该投影。没有自动生成摘要或额外判断调用；当前未提供跨角色保留的已确认记忆摘要。诊断保留 `promptVersion`、`personaId`，主线附 `relationshipMode`；卡 revision 在运行时目录与提示词中可查。
+
+本轮验证：`npm run desktop:test` 81/81，通过关系路由、来源 schema、旧配置兼容、模式隔离与取消／重试回归；`npm run desktop:build` 通过主进程／界面 TypeScript 和 Vite；最终 `npm run m2:smoke` 再次构建并通过模拟模型 Electron 回放，含两关系控件与设置独立性。报告 `outputs/desktop-validation/m2/desktop-smoke-1793307384837.json`。这些不证明真实模型角色表现、物理设备/AEC 或主观听感；本轮未执行真实模型或 GPU 推理。
+
 ## 借鉴开源角色卡，避免直接照搬模板
 
 可借鉴 SillyTavern 等的 description/personality/scenario/example messages 分区，但首版只导入白名单字段。忽略外来 system_prompt、post_history_instructions、任意脚本/宏、自动工具指令等高权限字段。导入先预览、验证长度、展示来源，不执行内容。此处只是接口预留，首版不要求完整兼容所有卡格式。

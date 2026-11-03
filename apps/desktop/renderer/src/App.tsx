@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { FrameVAD } from './frame-vad'
 import type { DeskaiEvent, DialogueSmokeReport, PersonaId, ReplyLanguage, RuntimeInfo, SessionStart, SmokeReport, Preferences } from './bridge'
 import type { DialogueEvent } from '../../../../packages/voice-core/src/dialogue.ts'
+import type { PetPreferencePatch, PetSnapshot } from '../../../../packages/desktop-pet/src/types.ts'
 import { PcmPlayer } from './player'
 import './style.css'
 
@@ -36,6 +37,7 @@ export default function App() {
   const [modelState, setModelState] = useState('idle')
   const [retryable, setRetryable] = useState(false)
   const [preferences, setPreferences] = useState<RuntimeInfo['preferences'] | null>(null)
+  const [petSnapshot, setPetSnapshot] = useState<PetSnapshot | null>(null)
   const [preferenceNote, setPreferenceNote] = useState('')
   const [ttsState, setTtsState] = useState('尚未准备')
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
@@ -59,6 +61,16 @@ export default function App() {
   const dialogueSmokeStarted = useRef(false)
   const microphoneOpened = useRef(false)
   const lastTranscript = useRef('')
+
+  useEffect(() => {
+    const unsubscribe = window.deskai.onPetSnapshot(setPetSnapshot)
+    void window.deskai.getPetSnapshot().then(setPetSnapshot).catch(() => {})
+    return unsubscribe
+  }, [])
+
+  const changePet = (patch: PetPreferencePatch) => {
+    void window.deskai.updatePetPreferences(patch).then(setPetSnapshot).catch(cause => setError(describeMediaError(cause)))
+  }
 
   const ensureOutput = useCallback(async (opened: SessionStart): Promise<Output> => {
     if (outputRef.current?.sessionId === opened.sessionId) return outputRef.current
@@ -155,7 +167,7 @@ export default function App() {
     dialogueSmokeStarted.current = true
     const checks: DialogueSmokeReport['checks'] = { headerHidden: false, waitSilentNoBubble: false,
       textQuestionDisplayed: false, shortAnswerWorked: false, retryWorked: false, cancelWorked: false,
-      preferencesIndependent: false, noMicrophoneOpened: false }
+      preferencesIndependent: false, roleplaySelectable: false, relationshipSelectable: false, noMicrophoneOpened: false }
     const notes: string[] = []
     try {
       const opened = await window.deskai.openConversation()
@@ -203,8 +215,20 @@ export default function App() {
       await waitDialogue(cancelMark, e => e.type === 'assistant-state' && e.state === 'interrupted')
       checks.cancelWorked = true
       const before = await window.deskai.getRuntime()
+      checks.roleplaySelectable = before.personas.some(persona => persona.id === 'nagato-mainline-post-disappearance')
+      let relationOptionsVisible = true
+      for (const relationshipMode of ['friend', 'kyon'] as const) {
+        const next = await window.deskai.updatePreferences({ personaId: 'nagato-mainline-post-disappearance', relationshipMode })
+        setPreferences(next)
+        await new Promise(resolve => setTimeout(resolve, 100))
+        const selector = document.querySelector<HTMLSelectElement>('select[aria-label="关系模式"]')
+        relationOptionsVisible &&= selector?.value === relationshipMode && selector.options.length === 2
+        relationOptionsVisible &&= next.voiceId === before.preferences.voiceId && next.replyLanguage === before.preferences.replyLanguage
+      }
+      checks.relationshipSelectable = relationOptionsVisible
       await window.deskai.updatePreferences({ personaId: 'assistant-neutral', replyLanguage: 'ja' })
       const after = await window.deskai.getRuntime()
+      setPreferences(after.preferences)
       checks.preferencesIndependent = before.preferences.voiceId === after.preferences.voiceId
         && after.preferences.personaId === 'assistant-neutral' && after.preferences.replyLanguage === 'ja'
       checks.noMicrophoneOpened = !microphoneOpened.current && !captureRef.current
@@ -469,12 +493,13 @@ export default function App() {
     finally { setSendingText(false) }
   }
 
-  const changePreferences = async (personaId: PersonaId, replyLanguage: ReplyLanguage) => {
+  const changePreferences = async (personaId: PersonaId, replyLanguage: ReplyLanguage, relationshipMode = preferences?.relationshipMode ?? 'friend') => {
     setPreferenceNote('正在切换设置…')
     try {
-      const next = await window.deskai.updatePreferences({ personaId, replyLanguage })
+      const identityChanged = personaId !== preferences?.personaId || (personaId === 'nagato-mainline-post-disappearance' && relationshipMode !== preferences?.relationshipMode)
+      const next = await window.deskai.updatePreferences({ personaId, replyLanguage, relationshipMode })
       setPreferences(next)
-      setPreferenceNote('设置已保存；后续回复生效。切换人格不会重写旧会话提示词。')
+      setPreferenceNote(identityChanged ? '已切换人格或关系；后续回复使用新的对话上下文，旧记录仍可查看。声音与语言保持独立。' : '设置已保存；后续回复生效。')
     } catch (cause) { setError(describeMediaError(cause)); setPreferenceNote('') }
   }
 
@@ -515,14 +540,33 @@ export default function App() {
   const selectedVoiceName = selectedVoice?.name ?? '常态有希 · v2'
   const ttsLabel = ({ starting: '正在启动', loading: '正在加载模型', warming: '正在预热', switching: '正在切换声音', ready: '已就绪', error: '出错，可恢复', stopped: '已停止' } as Record<string, string>)[ttsState.split(' · ')[0]] ?? ttsState
   const inputLabel = ({ OFF: '未开启', LISTENING: '等待你说话', CAPTURING: '正在收音', SETTLING: '等待续句', TRANSCRIBING: '正在识别', ACCUMULATING: '等待续句', DECIDING: '正在提交' } as Record<string, string>)[inputState] ?? inputState
+  const petStateLabel = ({ off: '未开始', listening: '倾听', recognizing: '识别', thinking: '思考', speaking: '说话',
+    paused: '暂停', waiting: '等待', silent: '安静', error: '异常' } as Record<string, string>)[petSnapshot?.state ?? 'off']
 
   return <main className="shell">
-    <header><div><h1>DeskAI 语音对话</h1><p>当前声音：{selectedVoiceName}</p></div><span className="stage">桌面预览版</span></header>
+    <header><div><h1>DeskAI 语音对话</h1><p>当前声音：{selectedVoiceName}</p></div><span className="stage">桌面应用 · 桌宠版</span></header>
     <section className="summary" aria-live="polite">
       <div><small>语音服务</small><strong>{serviceState}</strong></div>
       <div><small>麦克风</small><strong>{captureState}</strong></div>
       <div><small>输入状态</small><strong>{inputLabel}</strong></div>
       <div><small>播放</small><strong>{playback}</strong></div>
+    </section>
+    <section className="preferences" aria-label="桌宠设置">
+      <label>桌宠造型<select value={petSnapshot?.variant ?? 'uniform-chibi'} onChange={event => changePet({ variant: event.target.value as PetSnapshot['variant'] })}>
+        <option value="uniform-chibi">校服 · Q 版</option><option value="uniform-normal">校服 · 原作比例</option>
+        <option value="witch-chibi">魔法服 · Q 版</option><option value="witch-normal">魔法服 · 原作比例</option>
+      </select></label>
+      <label>桌宠高度 {petSnapshot?.size ?? 220} px<input aria-label="桌宠高度" type="range" min="120" max="360" step="10" value={petSnapshot?.size ?? 220} onChange={event => changePet({ size: Number(event.target.value) })} /></label>
+      <label>桌宠显示<select value={String(petSnapshot?.visible ?? true)} onChange={event => changePet({ visible: event.target.value === 'true' })}>
+        <option value="true">显示</option><option value="false">隐藏</option>
+      </select></label>
+      <label>桌宠置顶<select value={String(petSnapshot?.alwaysOnTop ?? true)} onChange={event => changePet({ alwaysOnTop: event.target.value === 'true' })}>
+        <option value="true">保持置顶</option><option value="false">普通窗口层级</option>
+      </select></label>
+      <label>桌宠动画<select value={petSnapshot?.motionMode ?? 'gentle'} onChange={event => changePet({ motionMode: event.target.value as PetSnapshot['motionMode'] })}>
+        <option value="gentle">轻微动画</option><option value="system">跟随系统</option>
+      </select></label>
+      <span>桌宠状态：{petStateLabel} · 位置可拖动调整</span>
     </section>
     <section className="preferences" aria-label="对话设置">
       <label>角色声音<select value={preferences?.voiceId ?? 'nagato-normal-v2'} disabled={!voices.length || starting} onChange={event => void changeSetting({ voiceId: event.target.value, referenceId: '' })}>
@@ -531,14 +575,18 @@ export default function App() {
       <label>参考语气<select value={preferences?.referenceId || selectedVoice?.defaultReferenceId || ''} disabled={!selectedVoice || starting} onChange={event => void changeSetting({ referenceId: event.target.value })}>
         {(selectedVoice?.references ?? []).map(ref => <option key={ref.id} value={ref.id}>{ref.name}</option>)}
       </select></label>
-      <label>人格风格<select value={preferences?.personaId ?? 'nagato-normal-light'} onChange={event => void changePreferences(event.target.value as PersonaId, preferences?.replyLanguage ?? 'auto')}>
+      <label>人格 / 角色<select value={preferences?.personaId ?? 'nagato-normal-light'} onChange={event => void changePreferences(event.target.value as PersonaId, preferences?.replyLanguage ?? 'auto')}>
         {(runtime?.personas ?? [{ id: 'nagato-normal-light' as PersonaId, displayName: '常态有希 · 轻量风格', revision: 1 }, { id: 'assistant-neutral' as PersonaId, displayName: '普通助手', revision: 1 }]).map(persona => <option key={persona.id} value={persona.id}>{persona.displayName}</option>)}
       </select></label>
+      {preferences?.personaId === 'nagato-mainline-post-disappearance' && <label>关系模式<select aria-label="关系模式" value={preferences.relationshipMode ?? 'friend'} onChange={event => void changePreferences(preferences.personaId, preferences.replyLanguage, event.target.value as Preferences['relationshipMode'])}>
+        <option value="friend">朋友 · 独立用户</option><option value="kyon">阿虚 · 用户扮演</option>
+      </select></label>}
       <label>回复语言<select value={preferences?.replyLanguage ?? 'auto'} onChange={event => void changePreferences(preferences?.personaId ?? 'nagato-normal-light', event.target.value as ReplyLanguage)}>
         <option value="auto">自动跟随</option><option value="zh">中文</option><option value="ja">日语</option><option value="en">英语</option>
       </select></label>
       <span>模型：{modelState === 'waiting' ? '等待续句' : modelState === 'silent' ? '本轮保持安静' : modelState === 'generating' ? '正在回复' : modelState === 'cancelling' ? '正在停止' : modelState === 'error' ? '回复出错' : '空闲'}</span>
     </section>
+    {preferences?.personaId === 'nagato-mainline-post-disappearance' && <p className="hint">主线常态有希，《消失》结束后。角色表达仍待正片校验；朋友模式保留你的独立身份，阿虚模式使用虚构共同背景，均不默认恋爱关系。声音与回复语言分别设置。</p>}
     {preferenceNote && <p className="hint">{preferenceNote}</p>}
     <details className="settings"><summary>声音与设备设置 · 合成服务：{ttsLabel}</summary>
       <div className="preferences">

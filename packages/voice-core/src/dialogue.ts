@@ -2,10 +2,10 @@ import { DecisionStream, DeliveryLedger, PROMPT_VERSION } from './m2.ts';
 import type { DecisionHeader, DeliveryMode, Persona, ReplyLanguage } from './m2.ts';
 import { localDecision } from './policy.ts';
 import { cleanSpeech } from './sentences.ts';
-import type { ChatAccepted, ChatEvent, ChatPersonaId, ChatSettlement, ChatTurnInput } from '../../dsh-adapter/src/session.ts';
+import type { ChatAccepted, ChatEvent, ChatPersonaId, ChatSettlement, ChatTurnInput, RelationshipMode } from '../../dsh-adapter/src/session.ts';
 
 export type DialoguePort = { runTurn(input: ChatTurnInput, event: (event: ChatEvent) => void): Promise<ChatAccepted>; cancel(): Promise<ChatSettlement | undefined> };
-export type DialoguePreferences = { personaId: ChatPersonaId; replyLanguage: ReplyLanguage; voiceId: string };
+export type DialoguePreferences = { personaId: ChatPersonaId; relationshipMode?: RelationshipMode; replyLanguage: ReplyLanguage; voiceId: string };
 export type DialogueInput = { text: string; source: DeliveryMode; continuationOf?: number; utteranceIds?: number[];
   isEligible?: () => boolean; onAccepted?: () => void; noSpeech?: boolean; acousticEcho?: boolean; retryOf?: string };
 export type DialogueEvent =
@@ -37,6 +37,7 @@ export class DialogueController {
   private queue: Promise<unknown> = Promise.resolve();
   private queued = 0;
   private userHistory: UserHistory[] = [];
+  private contextStartTurn = 0;
   private failedInput?: DialogueInput;
   private blocked?: string;
   private closed = false;
@@ -51,7 +52,8 @@ export class DialogueController {
 
   get isGenerating(): boolean { return !!this.active && !this.active.finished && !this.active.canceled && !this.active.failure; }
   get generationId(): number { return this.generation; }
-  get stats() { return { ...this.counts, promptVersion: PROMPT_VERSION, personaId: this.preferences.personaId }; }
+  get stats() { return { ...this.counts, promptVersion: PROMPT_VERSION, personaId: this.preferences.personaId,
+    relationshipMode: this.preferences.personaId === 'nagato-mainline-post-disappearance' ? this.preferences.relationshipMode ?? 'friend' : undefined }; }
   expectsReply(now = Date.now()): boolean {
     this.ledger.expirePendingQuestion(now, 120000);
     return this.ledger.getPendingQuestion()?.status === 'awaiting';
@@ -99,7 +101,7 @@ export class DialogueController {
       try {
         this.counts.modelRequests++;
         const accepted = await this.port.runTurn({ requestId: `deskai-${epoch}-${this.serial}-${this.generation}`,
-          text: input.text, personaId: this.preferences.personaId, mode: input.source, replyLanguage: this.preferences.replyLanguage,
+          text: input.text, personaId: this.preferences.personaId, relationshipMode: this.preferences.relationshipMode ?? 'friend', mode: input.source, replyLanguage: this.preferences.replyLanguage,
           visibleHistory: projection.history, deliveryState: { attempts: projection.attempts,
             pendingQuestion: question, continuationOf: input.continuationOf,
             submittedUtteranceIds: input.utteranceIds ?? [], promptVersion: PROMPT_VERSION } }, event => this.onModelEvent(state, event));
@@ -244,7 +246,16 @@ export class DialogueController {
   }
 
   async updatePreferences(preferences: DialoguePreferences): Promise<void> {
+    const identityChanged = preferences.personaId !== this.preferences.personaId ||
+      (preferences.personaId === 'nagato-mainline-post-disappearance' && (preferences.relationshipMode ?? 'friend') !== (this.preferences.relationshipMode ?? 'friend'));
+    // Invalidate queued input before waiting for cancellation to settle.
+    if (identityChanged) this.epoch++;
     await this.cancel();
+    if (identityChanged) {
+      this.userHistory = [];
+      this.contextStartTurn = this.serial;
+      this.failedInput = undefined;
+    }
     this.preferences = { ...preferences };
     this.clearWait();
     this.ledger.markQuestionResolved();
@@ -277,7 +288,7 @@ export class DialogueController {
 
   projectHistory(): { history: unknown[]; attempts: unknown[] } {
     // Never include unplayed/generated-only content in the next model request.
-    const attempts = this.ledger.snapshot();
+    const attempts = this.ledger.snapshot().filter(attempt => Number(attempt.turnId.replace(/^turn-/u, '')) > this.contextStartTurn);
     const history: unknown[] = [];
     for (const user of this.userHistory.slice(-10)) {
       history.push(user);

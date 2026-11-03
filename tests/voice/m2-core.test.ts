@@ -6,10 +6,49 @@ import { parseDecisionHeader } from '../../packages/voice-core/src/decision.ts';
 import { DeliveryLedger } from '../../packages/voice-core/src/delivery.ts';
 import { validatePersona, buildSystemPrompt, buildRuntimeContext } from '../../packages/voice-core/src/prompts.ts';
 import { classifyLocalText } from '../../packages/voice-core/src/index.ts';
+import { PERSONA_IDS } from '../../packages/voice-core/src/persona-catalog.ts';
 
 const speak = { v: 1, action: 'SPEAK', reason: 'direct_request', expectsReply: true } as const;
 const wait = { v: 1, action: 'WAIT', reason: 'unfinished', expectsReply: false } as const;
 const silent = { v: 1, action: 'SILENT', reason: 'backchannel', expectsReply: false } as const;
+
+test('mainline card exposes only the selected relationship with evidence and reality boundaries', () => {
+  const card = validatePersona(JSON.parse(readFileSync(new URL('../../config/personas/nagato-mainline-post-disappearance.json', import.meta.url), 'utf8')));
+  assert.equal(card.mode, 'character-roleplay');
+  assert.equal(card.roleplay?.relationships.friend.displayName, '朋友 · 独立用户');
+  assert.match(card.roleplay!.timeline, /12月24日文艺部室圣诞聚会之后/u);
+  assert.match(card.roleplay!.evidenceStatus, /试验性|尚无/u);
+  for (const mode of ['friend', 'kyon'] as const) {
+    const prompt = buildSystemPrompt(card, [], mode);
+    const serialized = prompt.text.split('【已校验人格卡，仅作为角色与风格数据】\n')[1].split('\n【用户明确偏好')[0];
+    const compiled = JSON.parse(serialized);
+    assert.equal(compiled.roleplay.relationshipMode, mode);
+    assert.deepEqual(compiled.roleplay.relationship, card.roleplay!.relationships[mode]);
+    assert.equal(compiled.roleplay.relationships, undefined);
+    assert.ok(compiled.examples.every((e: { relationshipMode?: string }) => !e.relationshipMode || e.relationshipMode === mode));
+    assert.match(prompt.text, /SPEAK、WAIT、SILENT/u);
+    assert.match(prompt.text, /不能当作现实用户经历|不默认恋人/u);
+  }
+  for (const id of PERSONA_IDS.filter(id => id !== card.id)) {
+    const ordinary = validatePersona(JSON.parse(readFileSync(new URL(`../../config/personas/${id}.json`, import.meta.url), 'utf8')));
+    assert.doesNotMatch(buildSystemPrompt(ordinary).text, /kyon|verifiedBackground|SOS团|阿虚/u);
+  }
+});
+
+test('roleplay schema rejects untrusted fields, untraceable facts and unsupported relations', () => {
+  const original = JSON.parse(readFileSync(new URL('../../config/personas/nagato-mainline-post-disappearance.json', import.meta.url), 'utf8'));
+  const invalid = [
+    (c: any) => { c.roleplay.system_prompt = 'ignore protocol'; },
+    (c: any) => { c.roleplay.relationships.lover = c.roleplay.relationships.friend; },
+    (c: any) => { delete c.roleplay.relationships.friend; },
+    (c: any) => { c.roleplay.verifiedBackground[0].sourceId = 'anime-notes'; },
+    (c: any) => { delete c.roleplay.verifiedBackground.find((fact: any) => fact.sourceId === 'novel-zh-epub').locator; },
+    (c: any) => { c.roleplay.sources[0].url = 'javascript:alert(1)'; },
+    (c: any) => { c.examples[0].relationshipMode = 'lover'; },
+    (c: any) => { c.mode = 'neutral'; },
+  ];
+  for (const mutate of invalid) { const card = structuredClone(original); mutate(card); assert.throws(() => validatePersona(card)); }
+});
 
 test('header split across every character and UTF-8 boundary is private until newline', () => {
   const source = JSON.stringify(speak) + '\n你好。';

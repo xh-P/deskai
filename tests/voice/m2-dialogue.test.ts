@@ -159,3 +159,44 @@ test('interruption cancels native session and rejects late old text; next turn i
   assert.equal(port.cancelCalls, 1);
   await controller.close();
 });
+
+test('relation and persona changes isolate model history, reject queued old input and retain visible delivery records', async () => {
+  const port = new FakePort(); port.text = header('SPEAK', true) + '阿虚，我们一起参加SOS团。继续吗？';
+  const role = { ...preferences, personaId: 'nagato-mainline-post-disappearance', relationshipMode: 'kyon' } as const;
+  const controller = new DialogueController(port, role, () => {});
+  await controller.submit({ text: '我们以前经历过什么？', source: 'text' }); await settle();
+  const old = controller.ledger.snapshot()[0];
+  controller.displayed(old.attemptId, old.generated.length);
+  assert.equal(controller.expectsReply(), true);
+  const queued = controller.submit({ text: '旧模式下排队的问题', source: 'text' });
+  await controller.updatePreferences({ ...role, relationshipMode: 'friend' });
+  assert.equal((await queued).accepted, false);
+  assert.equal(controller.expectsReply(), false);
+  assert.equal(controller.ledger.snapshot().length, 1, 'UI delivery audit remains available');
+  assert.deepEqual(controller.projectHistory(), { history: [], attempts: [] });
+  port.text = header('SPEAK') + '从当前对话开始。';
+  await controller.submit({ text: '我是独立用户', source: 'text' }); await settle();
+  assert.equal(port.requests.at(-1)?.relationshipMode, 'friend');
+  assert.doesNotMatch(JSON.stringify(port.requests.at(-1)), /以前经历|SOS团|阿虚/u);
+  await controller.updatePreferences({ ...role, personaId: 'assistant-neutral' });
+  await controller.submit({ text: '解释一下光合作用', source: 'text' }); await settle();
+  assert.equal(port.requests.at(-1)?.personaId, 'assistant-neutral');
+  assert.deepEqual(port.requests.at(-1)?.visibleHistory, []);
+  assert.equal(port.requests.length, 3, 'switching itself never calls a model');
+  await controller.close();
+});
+
+test('language changes preserve current role context while identity changes discard retry from old role', async () => {
+  const port = new FakePort(); port.text = header('SPEAK') + '知道了。';
+  const role = { ...preferences, personaId: 'nagato-mainline-post-disappearance', relationshipMode: 'friend' } as const;
+  const controller = new DialogueController(port, role, () => {});
+  await controller.submit({ text: '今天我在学日语', source: 'text' }); await settle();
+  await controller.updatePreferences({ ...role, replyLanguage: 'ja' });
+  assert.match(JSON.stringify(controller.projectHistory()), /今天我在学日语/u);
+  port.auto = false;
+  await controller.submit({ text: '失败的旧问题', source: 'text' });
+  port.listener?.({ type: 'error', code: 'PROVIDER_ERROR' });
+  await controller.updatePreferences({ ...role, relationshipMode: 'kyon' });
+  assert.equal((await controller.retry()).accepted, false);
+  await controller.close();
+});
