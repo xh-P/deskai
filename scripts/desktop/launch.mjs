@@ -33,7 +33,8 @@ if (ttsSmoke) args.push('--tts-smoke');
 if (ttsSmoke && process.argv.includes('--real-model')) args.push('--real-model');
 const env = { ...process.env, DESKAI_PROJECT_ROOT: root, DESKAI_NODE_EXECUTABLE: process.execPath };
 delete env.ELECTRON_RUN_AS_NODE;
-const child = spawn(electronExe, args, { cwd: root, env, stdio: 'inherit', windowsHide: true });
+// Windows applies this flag to Electron's GUI too; only smoke runs are hidden.
+const child = spawn(electronExe, args, { cwd: root, env, stdio: 'inherit', windowsHide: smoke });
 let timer;
 if (smoke) timer = setTimeout(() => {
   if (child.pid) spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
