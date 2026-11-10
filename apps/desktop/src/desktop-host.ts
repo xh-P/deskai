@@ -67,9 +67,22 @@ export class DesktopHost {
     if (!task) throw new Error('WORK_TASK_NOT_FOUND');
     this.selectedTaskId = task.id; this.selectedProjectId = task.projectId; this.changed();
   }
+  private capabilities() {
+    const project = this.work.snapshot().projects.find(project => project.id === this.selectedProjectId);
+    return {
+      work: { executor: 'dsh', delegation: '通过 Host 委派执行任务，支持提交、查询、补充、取消、重试、继续和回答任务问题。',
+        permission: '默认开启自动审查；权限请求需在原生会话中处理。',
+        readiness: '执行器配置存在不代表原生运行环境已经就绪；以实际执行回执和状态为准。' },
+      selectedProject: project ? { id: project.id, name: project.name, path: project.path } : null,
+      applications: this.apps.listSessions().filter(app => app.status === 'connected')
+        .map(({ id, manifest }) => ({ id, title: manifest.title, actions: manifest.actions }))
+    };
+  }
+  dialogueContext(receipt: unknown) { return { capabilities: this.capabilities(), receipt }; }
   planningContext() {
     const state = this.work.snapshot();
-    return { selectedProjectId: this.selectedProjectId, selectedTaskId: this.selectedTaskId, selectedAppId: this.selectedAppId,
+    const { work, selectedProject } = this.capabilities();
+    return { capabilities: { work, selectedProject }, selectedProjectId: this.selectedProjectId, selectedTaskId: this.selectedTaskId, selectedAppId: this.selectedAppId,
       projects: state.projects.map(({ id, name, path }) => ({ id, name, path })),
       tasks: state.tasks.slice(-20).map(task => ({ id: task.id, title: task.title, status: task.status, projectId: task.projectId,
         latest: state.attempts.find(a => a.id === task.attemptIds.at(-1))?.summary?.slice(0, 600) })),

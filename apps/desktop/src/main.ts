@@ -335,7 +335,10 @@ function flushHostNotices() {
 async function submitCoordinated(input: DialogueInput): Promise<{ accepted: boolean }> {
   const current = dialogue, currentSession = sessionId;
   if (!current || !currentSession) return { accepted: false };
-  if (smokeMode || !planner) return current.submit(input);
+  if (smokeMode || !planner) {
+    const host = await getDesktopHost();
+    return current.submit({ ...input, hostContext: host.dialogueContext({ kind: 'chat' }) });
+  }
   if (planning) throw new Error('COORDINATOR_BUSY');
   planning = true;
   const revision = ++planningRevision;
@@ -350,7 +353,7 @@ async function submitCoordinated(input: DialogueInput): Promise<{ accepted: bool
     committed = decision.intent !== 'chat';
     if (committed) input.onAccepted?.();
     if (revision !== planningRevision || current !== dialogue || currentSession !== sessionId) return { accepted: committed };
-    const result = await current.submit({ ...input, ...(committed ? { onAccepted: undefined, isEligible: undefined } : {}), hostContext: facts });
+    const result = await current.submit({ ...input, ...(committed ? { onAccepted: undefined, isEligible: undefined } : {}), hostContext: host.dialogueContext(facts) });
     return { accepted: committed || result.accepted };
   } catch (error) {
     if (revision !== planningRevision) return { accepted: committed };
