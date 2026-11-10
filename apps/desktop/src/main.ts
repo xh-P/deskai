@@ -67,7 +67,6 @@ let controller: InputController | undefined;
 let sessionId = '';
 let captureArmed = false;
 let sessionEpoch = 0;
-let outputGeneration = 0;
 let shutdown = false;
 let smokeCompleted = false;
 let preparingService: LocalDshSpeech | undefined;
@@ -124,17 +123,7 @@ function stopCurrentReply() {
   if (!sessionId || !(planning || dialogue?.isGenerating || outputBusy || outputActive || outputPaused)) return;
   planningRevision++;
   void planner?.cancel().catch(() => {});
-  const currentSession = sessionId;
-  const cancellation = dialogue?.cancel();
-  if (currentSession && currentSession === sessionId) {
-    outputGeneration = Math.max(outputGeneration + 1, dialogue?.generationId ?? 0);
-    if (voiceOutput) voiceOutput.command('clear', outputGeneration);
-    else send({ type: 'output-command', sessionId, command: 'clear', generationId: outputGeneration });
-    petActivity.output('clear', outputGeneration);
-    outputActive = outputPaused = outputBusy = false;
-    refreshOutput(); syncPet();
-  }
-  void cancellation?.catch(() => {});
+  void dialogue?.cancelOutput().catch(() => {});
 }
 function updateTray() {
   if (!tray || tray.isDestroyed()) return;
@@ -153,7 +142,7 @@ function trusted(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) {
   if (event.sender !== window?.webContents || event.senderFrame?.url !== page) throw new Error('UNTRUSTED_RENDERER');
 }
 function refreshOutput() {
-  controller?.setOutput({ generationId: Math.max(outputGeneration, dialogue?.generationId ?? 0),
+  controller?.setOutput({ generationId: dialogue?.generationId ?? 0,
     playing: outputActive || outputPaused || outputBusy || dialogue?.isGenerating === true, expectsReply: dialogue?.expectsReply() ?? false });
 }
 function updateTtsStatus(update: TtsStatus) {
@@ -243,9 +232,8 @@ function dialogueEvent(event: DialogueEvent) {
   }
   if (event.type === 'output-clear') {
     outputTimeline.record('output-cleared', { sessionId, generationId: event.generationId });
-    outputGeneration = Math.max(outputGeneration, event.generationId);
-    outputActive = outputPaused = false;
-    send({ type: 'output-command', sessionId, generationId: outputGeneration, command: 'clear' });
+    outputActive = outputPaused = outputBusy = false;
+    if (!voiceOutput) send({ type: 'output-command', sessionId, generationId: event.generationId, command: 'clear' });
   }
   voiceOutput?.handle(event);
   if (!voiceOutput && event.type === 'assistant-delta' && event.source === 'voice') dialogue?.speechFallback(event.attemptId);
@@ -280,11 +268,11 @@ async function stopSession(retainPetError = false) {
   const oldDialogue = dialogue;
   const oldOutput = voiceOutput;
   const oldSpeechRuntime = speechRuntime;
+  void oldDialogue?.cancelOutput().catch(() => {});
   speechRuntime = undefined;
   voiceOutput = undefined;
   outputBusy = false;
   dialogue = undefined;
-  if (sessionId) send({ type: 'output-command', sessionId, command: 'clear', generationId: ++outputGeneration });
   sessionId = '';
   outputActive = false;
   outputPaused = false;
@@ -473,7 +461,6 @@ async function openConversation() {
   metrics.sessionStarts++;
   metrics.inputTimeline = [];
   outputTimeline.clear();
-  outputGeneration = 0;
 
   dialogue = new DialogueController(chatPort, preferences, dialogueEvent);
   attachOutput();
@@ -513,13 +500,15 @@ async function openConversation() {
     onInterruption: event => {
       metrics.interruptions.push({ type: event.type, at: performance.now() });
       if (metrics.interruptions.length > 100) metrics.interruptions.shift();
-      const command = event.type === 'candidate' ? 'pause' : event.type === 'resume' ? 'resume' : 'clear';
-      if (event.type === 'confirmed') outputGeneration = Math.max(outputGeneration, event.generationId + 1);
-      if (voiceOutput) voiceOutput.command(command, event.type === 'confirmed' ? outputGeneration : event.generationId);
-      else send({ type: 'output-command', sessionId, generationId: event.type === 'confirmed' ? outputGeneration : event.generationId, command });
-      petActivity.output(command, event.type === 'confirmed' ? outputGeneration : event.generationId); syncPet();
-      if (event.type === 'confirmed') { outputPaused = false; void dialogue?.cancel().catch(() => {}); }
-      else outputPaused = event.type === 'candidate';
+      if (event.type === 'confirmed') {
+        void dialogue?.cancelOutput().catch(() => {});
+        return;
+      }
+      const command = event.type === 'candidate' ? 'pause' : 'resume';
+      if (voiceOutput) voiceOutput.command(command, event.generationId);
+      else send({ type: 'output-command', sessionId, generationId: event.generationId, command });
+      petActivity.output(command, event.generationId); syncPet();
+      outputPaused = event.type === 'candidate';
     },
     onBoundary: event => {
       if (event.type === 'discarded' || event.type === 'overflow') for (const id of event.utteranceIds) inputRoutes.delete(id);
@@ -631,7 +620,7 @@ ipcMain.handle('deskai:send-text', async (event, value: unknown) => {
   if (!data || data.sessionId !== sessionId || !dialogue || typeof data.text !== 'string' || data.text.length > 4000) throw new Error('INVALID_TEXT_INPUT');
   return submitCoordinated({ text: data.text, source: captureArmed ? 'voice' : 'text' });
 });
-ipcMain.handle('deskai:cancel-turn', async event => { trusted(event); planningRevision++; await planner?.cancel(); await dialogue?.cancel(); refreshOutput(); });
+ipcMain.handle('deskai:cancel-turn', async event => { trusted(event); planningRevision++; await planner?.cancel(); await dialogue?.cancelOutput(); refreshOutput(); });
 ipcMain.handle('deskai:retry-turn', async event => { trusted(event); return dialogue?.retry() ?? { accepted: false }; });
 ipcMain.on('deskai:displayed', (event, value: unknown) => {
   trusted(event);
@@ -645,8 +634,7 @@ ipcMain.handle('deskai:preferences', async (event, value: unknown) => {
   const work = preferenceWrite.then(async () => {
     const next = mergePreferences(preferences, value);
     if (next.voiceId !== preferences.voiceId || next.referenceId !== preferences.referenceId) {
-      await dialogue?.cancel();
-      voiceOutput?.command('clear', dialogue?.generationId ?? ++outputGeneration);
+      await dialogue?.cancelOutput();
       await prepareTts();
       if (!tts) throw new Error('TTS_NOT_READY');
       const voice = tts.registry().find(row => row.id === next.voiceId);
@@ -673,7 +661,7 @@ ipcMain.handle('deskai:retry-speech', async event => {
   trusted(event);
   if (recoveringTts) return recoveringTts;
   const work = (async () => {
-    await dialogue?.cancel();
+    await dialogue?.cancelOutput();
     await voiceOutput?.close(); voiceOutput = undefined;
     const pending = ttsPreparing, old = tts; tts = undefined;
     await old?.dispose(); await pending?.catch(() => {});
@@ -711,8 +699,7 @@ ipcMain.on('deskai:playback', (event, report: unknown) => {
   trusted(event);
   if (!report || typeof report !== 'object') return;
   const value = report as { sessionId: string; generationId: number; playing: boolean; paused: boolean };
-  if (value.sessionId !== sessionId || !Number.isSafeInteger(value.generationId) || value.generationId < outputGeneration) return;
-  outputGeneration = value.generationId;
+  if (value.sessionId !== sessionId || !Number.isSafeInteger(value.generationId) || value.generationId !== dialogue?.generationId) return;
   outputActive = value.playing === true;
   outputPaused = value.paused === true;
   petActivity.playback(value);

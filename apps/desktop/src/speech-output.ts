@@ -164,6 +164,7 @@ export class SpeechOutput {
     this.generation = generationId; this.attempt = undefined; this.segments = []; this.awaiting = undefined;
     this.paused = false; this.queuedSeconds = 0;
     this.options.emit({ type: 'output-command', sessionId: this.options.sessionId, command: 'clear', generationId });
+    this.state('idle');
   }
   private fail(code: string): void {
     const attemptId = this.attempt?.attemptId;
@@ -176,5 +177,5 @@ export class SpeechOutput {
   private state(state: Extract<SpeechOutputEvent, { type: 'speech-state' }>['state'], code?: string): void {
     this.options.emit({ type: 'speech-state', sessionId: this.options.sessionId, state, ...(code ? { code } : {}) });
   }
-  async close(): Promise<void> { this.clear(this.generation + 1); this.closed = true; await this.options.port.cancel(); }
+  async close(): Promise<void> { this.clear(this.generation); this.closed = true; await this.options.port.cancel(); }
 }

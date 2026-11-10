@@ -12,7 +12,7 @@
     "desktop:dev": "node scripts/desktop/launch.mjs",
     "desktop:build": "node scripts/desktop/build.mjs",
     "desktop:package": "node scripts/desktop/package.mjs",
-    "desktop:test": "node --experimental-strip-types --test tests/voice/core.test.ts tests/voice/renderer-player.mjs tests/voice/renderer-vad.test.ts tests/voice/m2-core.test.ts tests/voice/m2-dialogue.test.ts tests/voice/m2-dsh.test.ts tests/voice/m3-output.test.ts tests/voice/m3-tts.test.ts tests/voice/m4-settings.test.ts tests/voice/m4-model-route.test.ts tests/voice/pet-projection.test.ts tests/voice/pet-motion.test.ts tests/voice/input-runtime.test.ts tests/voice/chat-runtime.test.ts tests/voice/work-host.test.ts tests/voice/work-provider.test.ts tests/voice/coordination.test.ts tests/app-core/app-core.test.mjs",
+    "desktop:test": "node --experimental-strip-types --test tests/voice/core.test.ts tests/voice/interruption-generation.test.ts tests/voice/renderer-player.mjs tests/voice/renderer-vad.test.ts tests/voice/m2-core.test.ts tests/voice/m2-dialogue.test.ts tests/voice/m2-dsh.test.ts tests/voice/m3-output.test.ts tests/voice/m3-tts.test.ts tests/voice/m4-settings.test.ts tests/voice/m4-model-route.test.ts tests/voice/pet-projection.test.ts tests/voice/pet-motion.test.ts tests/voice/input-runtime.test.ts tests/voice/chat-runtime.test.ts tests/voice/work-host.test.ts tests/voice/work-provider.test.ts tests/voice/coordination.test.ts tests/app-core/app-core.test.mjs",
     "desktop:pet-smoke": "node scripts/desktop/launch.mjs --pet-smoke",
     "desktop:smoke": "node scripts/desktop/audio-smoke.mjs",
     "m0:speech": "node scripts/m0/dsh-session-probe.mjs --speech-only",

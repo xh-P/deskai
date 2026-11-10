@@ -159,7 +159,6 @@ export class InputController {
   }
 
   setOutput(output: { generationId: number; playing: boolean; expectsReply: boolean }): void {
-    if (output.generationId !== this.output.generationId) this.interrupt = 'none';
     this.output = { ...output };
   }
 
@@ -200,6 +199,7 @@ export class InputController {
     const tail = this.endpoint.reopen(sampleStart, this.lastSpeechEnd, this.preRollLength,
       segment => this.readyRevision < 0 && this.pending.has(segment.utteranceId));
     this.revokeReady('new onset');
+    this.interrupt = 'none';
     this.revision++;
     this.continuationForRevision = this.lastSubmittedUtterance && sampleStart - this.lastSpeechEnd <= UNFINISHED_WAIT
       ? this.lastSubmittedUtterance : 0;
