@@ -3,6 +3,7 @@
 当前入口是源码开发模式：`npm run desktop:dev`。本轮继续优化，不生成安装包或目录包。
 
 - [当前方向](./current-direction.md)：有效要求与已撤销约束。
+- [后续优化任务清单](./optimization-backlog.md)：九个方向的可执行任务、依赖与验收条件。
 - [本轮架构、结果与待答复](./host-architecture-20261110.md)：AI 委派 dsh、持久工作控制、产物与应用协作。
 - [AEC 专项核对](./aec-study-20261104.md)：上游源码差异、参考时序与近端误抑制的实验证据。
 - [Amadeus 对照基准](./amadeus-vs-deskai2.md)：迁移前比较，不当作当前代码清单。
