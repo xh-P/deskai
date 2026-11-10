@@ -29,4 +29,5 @@ training/
 
 # Local agent settings and recoverable historical artifacts
 .codex/
+.codex-remote-attachments/
 archive/

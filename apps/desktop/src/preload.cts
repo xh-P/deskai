@@ -2,6 +2,17 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('deskai', Object.freeze({
   getRuntime: () => ipcRenderer.invoke('deskai:runtime'),
+  getHostSnapshot: () => ipcRenderer.invoke('deskai:host-snapshot'),
+  selectHost: (selection: unknown) => ipcRenderer.invoke('deskai:host-select', selection),
+  workCommand: (command: unknown) => ipcRenderer.invoke('deskai:work-command', command),
+  openArtifact: (id: string, interact: boolean) => ipcRenderer.invoke('deskai:artifact-open', id, interact),
+  appAction: (input: unknown) => ipcRenderer.invoke('deskai:app-action', input),
+  closeApp: (id: string) => ipcRenderer.invoke('deskai:app-close', id),
+  onHostSnapshot: (callback: (snapshot: unknown) => void) => {
+    const listener = (_: unknown, snapshot: unknown) => callback(snapshot);
+    ipcRenderer.on('deskai:host-snapshot', listener);
+    return () => ipcRenderer.removeListener('deskai:host-snapshot', listener);
+  },
   openWork: () => ipcRenderer.invoke('deskai:work-open'),
   getWorkStatus: () => ipcRenderer.invoke('deskai:work-status'),
   onWorkStatus: (callback: (status: unknown) => void) => {

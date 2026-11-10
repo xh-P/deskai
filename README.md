@@ -10,7 +10,7 @@ Windows 桌面语音与任务工作台，当前持续迭代源码，不制作新
 
 语音使用 SenseVoice 唤醒 → Qwen3-ASR 对话识别 → 可配置 Chat → GPT-SoVITS v2 原生流式合成。Qwen 默认保持驻留。人格、声音和语言独立；桌宠沿用现有实现。
 
-本轮新增中日文唤醒设置、回声处理档位和原生 Harness Work 入口。Work 的工具执行、权限和会话由 Harness 管理，不由桌面端另造执行器。实现与验证状态见[本轮记录](./docs/desktop-voice/iteration-20261104.md)。
+对话现可由 AI 委派 dsh 执行后台任务。Host 管理项目、任务、执行状态与产物；应用可通过受控会话声明状态和动作，让角色继续协作。dsh 默认启用原生自动审查。实现、验收入口和限制见[本轮架构与临时汇报](./docs/desktop-voice/host-architecture-20261110.md)。
 
 ## 配置与资源
 
@@ -25,7 +25,7 @@ Windows 桌面语音与任务工作台，当前持续迭代源码，不制作新
 
 - [当前方向](./docs/desktop-voice/current-direction.md)
 - [当前文档与历史索引](./docs/desktop-voice/README.md)
-- [本轮架构、结果及待答复](./docs/desktop-voice/iteration-20261104.md)
+- [本轮架构、结果及待答复](./docs/desktop-voice/host-architecture-20261110.md)
 - [Amadeus 对照基准](./docs/desktop-voice/amadeus-vs-deskai2.md)
 
 自动检查不能替代实际设备上的唤醒、外放双讲、误打断和音质验收。历史目录包不包含本轮源码变化，请使用开发入口验收。

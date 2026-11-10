@@ -22,11 +22,11 @@ const current = candidates.filter(item => !previous.has(item.name) || item.info.
 if (!current) throw new Error('本次 M2 smoke 未生成新报告；不能读取旧报告冒充通过。')
 const path = join(reportDirectory, current.name)
 const report = JSON.parse(await readFile(path, 'utf8'))
-const required = ['headerHidden', 'waitSilentNoBubble', 'textQuestionDisplayed', 'shortAnswerWorked',
-  'retryWorked', 'cancelWorked', 'preferencesIndependent', 'roleplaySelectable', 'relationshipSelectable', 'noMicrophoneOpened']
+const required = ['directTextDisplayed', 'localQuietNoBubble', 'textQuestionDisplayed', 'shortAnswerWorked',
+  'retryWorked', 'cancelWorked', 'preferencesIndependent', 'roleplaySelectable', 'relationshipSelectable', 'noMicrophoneOpened', 'hostPanelsReady']
 const failed = required.filter(key => report.checks?.[key] !== true)
 if (exitCode !== 0 || report.simulated !== true || report.passed !== true || report.microphoneFrames !== 0 ||
-    report.requests?.length !== 7 || failed.length) {
+    report.requests?.length !== 5 || failed.length) {
   throw new Error(`M2 本地界面回放未通过：退出码 ${exitCode}，未达项 ${failed.join(', ') || '无'}。报告：${path}`)
 }
 console.log(`M2 本地界面回放通过（模拟模型，未验证真实设备）：${path}`)

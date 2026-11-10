@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { parseDocument } from 'yaml';
 import { buildSystemPrompt, validatePersona } from '../../voice-core/src/prompts.ts';
 import { PERSONA_IDS, personaPreset, type RelationshipMode } from '../../voice-core/src/persona-catalog.ts';
+import { COORDINATOR_PRESET, COORDINATOR_PROMPT } from '../../voice-core/src/coordination.ts';
 
 export type SavedModelSelection = { provider: string; model: string; reasoningEffort?: string };
 /** YAML is data only. Select one known plugin; arbitrary config never enters our overlay. */
@@ -47,6 +48,10 @@ export async function prepareChatPatch(root: string): Promise<string> {
       } }] };
     });
   }))).flat();
+  entries.push({ insert: [{ id: `preset-${COORDINATOR_PRESET}`, name: '@deepseek-ai/dsh-agent-preset', config: {
+    id: COORDINATOR_PRESET, name: 'DeskAI Host coordination', plugins: [{ id: 'persona', name: '@deepseek-ai/dsh-persona',
+      config: { complete: true, includeRuntimeContext: false, prefix: COORDINATOR_PROMPT } }]
+  } }] });
   const selection = await savedModelSelection();
   if (selection) entries.unshift({ id: 'agent-default-model', config: selection });
   const out = path.join(root, '.cache/voice/dsh-m2.patch.yml');

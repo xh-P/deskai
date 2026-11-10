@@ -6,7 +6,7 @@ import type { ChatAccepted, ChatEvent, ChatPersonaId, ChatSettlement, ChatTurnIn
 
 export type DialoguePort = { runTurn(input: ChatTurnInput, event: (event: ChatEvent) => void): Promise<ChatAccepted>; cancel(): Promise<ChatSettlement | undefined> };
 export type DialoguePreferences = { personaId: ChatPersonaId; relationshipMode?: RelationshipMode; replyLanguage: ReplyLanguage; voiceId: string };
-export type DialogueInput = { text: string; source: DeliveryMode; continuationOf?: number; utteranceIds?: number[];
+export type DialogueInput = { text: string; source: DeliveryMode; continuationOf?: number; utteranceIds?: number[]; hostContext?: unknown;
   isEligible?: () => boolean; onAccepted?: () => void; noSpeech?: boolean; acousticEcho?: boolean; retryOf?: string };
 export type DialogueEvent =
   | { type: 'user'; turnId: string; text: string; source: DeliveryMode }
@@ -101,7 +101,7 @@ export class DialogueController {
       try {
         this.counts.modelRequests++;
         const accepted = await this.port.runTurn({ requestId: `deskai-${epoch}-${this.serial}-${this.generation}`,
-          text: input.text, personaId: this.preferences.personaId, relationshipMode: this.preferences.relationshipMode ?? 'friend', mode: input.source, replyLanguage: this.preferences.replyLanguage,
+          text: input.text, hostContext: input.hostContext, personaId: this.preferences.personaId, relationshipMode: this.preferences.relationshipMode ?? 'friend', mode: input.source, replyLanguage: this.preferences.replyLanguage,
           visibleHistory: projection.history, deliveryState: { attempts: projection.attempts,
             pendingQuestion: question, continuationOf: input.continuationOf,
             submittedUtteranceIds: input.utteranceIds ?? [], promptVersion: PROMPT_VERSION } }, event => this.onModelEvent(state, event));
@@ -130,6 +130,18 @@ export class DialogueController {
     }).finally(() => { this.queued--; });
     this.queue = work.catch(() => {});
     return work;
+  }
+
+  /** Speak an accepted Host fact without turning it into a synthetic user request. */
+  announce(text: string, source: DeliveryMode): void {
+    if (this.closed || this.isGenerating || !text.trim()) return;
+    const turnId = `notice-${++this.serial}`, attemptId = `${turnId}-delivery`, generation = ++this.generation;
+    this.ledger.startAttempt(attemptId, turnId, { v: 1, action: 'SPEAK', reason: 'direct_request', expectsReply: false }, source);
+    this.ledger.appendGenerated(attemptId, text);
+    if (source === 'voice') this.outputAttempt = { id: turnId, epoch: this.epoch, generation,
+      input: { text: '', source }, accepted: true, canceled: false, attempts: [attemptId], attemptId, finished: true };
+    this.emit({ type: 'assistant-delta', turnId, attemptId, generationId: generation, source, text });
+    this.emit({ type: 'assistant-state', turnId, attemptId, generationId: generation, state: 'complete' });
   }
 
   private onModelEvent(state: Active, event: ChatEvent): void {

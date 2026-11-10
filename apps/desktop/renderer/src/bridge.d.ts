@@ -1,4 +1,6 @@
 import type { DialogueEvent } from '../../../../packages/voice-core/src/dialogue.ts'
+import type { DesktopHostSnapshot } from '../../src/desktop-host.ts'
+import type { WorkUiCommand } from '../../../../packages/work-core/src/types.ts'
 import type { VoiceDiagnostics } from '../../../../packages/voice-core/src/diagnostics.ts'
 import type { PetGeometry, PetPreferencePatch, PetSnapshot } from '../../../../packages/desktop-pet/src/types.ts'
 import type { AecMode } from '../../../../packages/voice-core/src/aec-mode.ts'
@@ -69,6 +71,8 @@ export interface PlaybackReport {
 }
 
 export type DeskaiEvent =
+  | { type: 'host-notice'; text: string }
+  | { type: 'coordination-state'; state: 'planning' | 'idle' }
   | { type: 'dialogue'; sessionId: string; event: DialogueEvent }
   | { type: 'session-ended'; sessionId: string; reason: string }
   | { type: 'status'; sessionId?: string; status: string; detail?: string }
@@ -104,12 +108,20 @@ export interface DialogueSmokeReport {
     cancelWorked: boolean
     preferencesIndependent: boolean
     noMicrophoneOpened: boolean
+    hostPanelsReady: boolean
     [key: string]: boolean
   }
   notes: string[]
 }
 
 export interface DeskaiBridge {
+  getHostSnapshot(): Promise<DesktopHostSnapshot>
+  onHostSnapshot(listener: (snapshot: DesktopHostSnapshot) => void): () => void
+  selectHost(selection: { projectId?: string; taskId?: string; appSessionId?: string }): Promise<void>
+  workCommand(command: WorkUiCommand): Promise<unknown>
+  openArtifact(id: string, interact: boolean): Promise<unknown>
+  appAction(input: { sessionId: string; action: string; payload: unknown }): Promise<unknown>
+  closeApp(id: string): Promise<void>
   openWork(): Promise<WorkStatus>
   getWorkStatus(): Promise<WorkStatus>
   onWorkStatus(listener: (status: WorkStatus) => void): () => void

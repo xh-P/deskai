@@ -5,6 +5,9 @@ import type { DialogueEvent } from '../../../../packages/voice-core/src/dialogue
 import type { PetPreferencePatch, PetSnapshot } from '../../../../packages/desktop-pet/src/types.ts'
 import { aecCaptureOptions, DEFAULT_AEC_MODE } from '../../../../packages/voice-core/src/aec-mode.ts'
 import { PcmPlayer } from './player'
+import WorkPanel from './WorkPanel'
+import ApplicationsPanel from './ApplicationsPanel'
+import type { DesktopHostSnapshot } from '../../src/desktop-host.ts'
 import './style.css'
 
 type Entry = { id: number; role: 'user' | 'system' | 'assistant'; text: string; turnId?: string; attemptId?: string;
@@ -23,6 +26,7 @@ function describeMediaError(error: unknown): string {
 }
 
 export default function App() {
+  const [hostSnapshot, setHostSnapshot] = useState<DesktopHostSnapshot | null>(null)
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null)
   const [starting, setStarting] = useState(false)
   const [session, setSession] = useState<SessionStart | null>(null)
@@ -74,6 +78,13 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = window.deskai.onWorkStatus(status => setWorkState(status.state))
     void window.deskai.getWorkStatus().then(status => setWorkState(status.state)).catch(() => {})
+    return unsubscribe
+  }, [])
+
+  useEffect(() => {
+    let receivedUpdate = false
+    const unsubscribe = window.deskai.onHostSnapshot(snapshot => { receivedUpdate = true; setHostSnapshot(snapshot) })
+    void window.deskai.getHostSnapshot().then(snapshot => { if (!receivedUpdate) setHostSnapshot(snapshot) }).catch(cause => setError(describeMediaError(cause)))
     return unsubscribe
   }, [])
 
@@ -176,7 +187,7 @@ export default function App() {
     dialogueSmokeStarted.current = true
     const checks: DialogueSmokeReport['checks'] = { directTextDisplayed: false, localQuietNoBubble: false,
       textQuestionDisplayed: false, shortAnswerWorked: false, retryWorked: false, cancelWorked: false,
-      preferencesIndependent: false, roleplaySelectable: false, relationshipSelectable: false, noMicrophoneOpened: false }
+      preferencesIndependent: false, roleplaySelectable: false, relationshipSelectable: false, noMicrophoneOpened: false, hostPanelsReady: false }
     const notes: string[] = []
     try {
       const opened = await window.deskai.openConversation()
@@ -241,6 +252,11 @@ export default function App() {
       checks.preferencesIndependent = before.preferences.voiceId === after.preferences.voiceId
         && after.preferences.personaId === 'assistant-neutral' && after.preferences.replyLanguage === 'ja'
       checks.noMicrophoneOpened = !microphoneOpened.current && !captureRef.current
+      const host = await window.deskai.getHostSnapshot()
+      for (let i = 0; i < 50 && !document.querySelector('section[aria-label="工作任务"]'); i++)
+        await new Promise(resolve => setTimeout(resolve, 100))
+      checks.hostPanelsReady = host.work.projects.length > 0 && !!document.querySelector('section[aria-label="工作任务"]')
+        && !!document.querySelector('section[aria-label="产物与应用协作"]')
     } catch (cause) { notes.push(describeMediaError(cause)) }
     window.deskai.finishDialogueSmoke({ simulated: true, checks, notes })
   }, [waitDialogue])
@@ -388,6 +404,8 @@ export default function App() {
     const unsubscribe = window.deskai.onEvent((event: DeskaiEvent) => {
       if ('sessionId' in event && event.sessionId && event.sessionId !== currentSession.current) return
       switch (event.type) {
+        case 'host-notice': setServiceState(event.text); break
+        case 'coordination-state': setModelState(event.state); break
         case 'dialogue': handleDialogue(event.event); break
         case 'session-ended': setError(event.reason); void stop(event.reason); break
         case 'status': setServiceState(event.detail ? `${event.status} · ${event.detail}` : event.status); break
@@ -602,7 +620,7 @@ export default function App() {
       <label>回复语言<select value={preferences?.replyLanguage ?? 'auto'} onChange={event => void changePreferences(preferences?.personaId ?? 'nagato-normal-light', event.target.value as ReplyLanguage)}>
         <option value="auto">自动跟随</option><option value="zh">中文</option><option value="ja">日语</option><option value="en">英语</option>
       </select></label>
-      <span>模型：{modelState === 'waiting' ? '等待续句' : modelState === 'silent' ? '本轮保持安静' : modelState === 'generating' ? '正在回复' : modelState === 'cancelling' ? '正在停止' : modelState === 'error' ? '回复出错' : '空闲'}</span>
+      <span>模型：{modelState === 'planning' ? '正在理解任务' : modelState === 'waiting' ? '等待续句' : modelState === 'silent' ? '本轮保持安静' : modelState === 'generating' ? '正在回复' : modelState === 'cancelling' ? '正在停止' : modelState === 'error' ? '回复出错' : '空闲'}</span>
     </section>
     {preferences?.personaId === 'nagato-mainline-post-disappearance' && <p className="hint">主线常态有希，《消失》结束后。角色表达仍待正片校验；朋友模式保留你的独立身份，阿虚模式使用虚构共同背景，均不默认恋爱关系。声音与回复语言分别设置。</p>}
     {preferenceNote && <p className="hint">{preferenceNote}</p>}
@@ -640,7 +658,7 @@ export default function App() {
       <button type="submit" disabled={!textDraft.trim() || sendingText}>发送</button>
     </form>
     <nav className="actions">
-      <button className="secondary" onClick={() => void window.deskai.openWork().then(status => setWorkState(status.state)).catch(cause => setError(describeMediaError(cause)))}>打开任务工作台 · {({ stopped: '未启动', starting: '启动中', ready: '就绪', error: '出错' } as Record<string, string>)[workState] ?? workState}</button>
+      <button className="secondary" onClick={() => void window.deskai.openWork().then(status => setWorkState(status.state)).catch(cause => setError(describeMediaError(cause)))}>打开 dsh 原生工作台 · {({ stopped: '未启动', starting: '启动中', ready: '就绪', error: '出错' } as Record<string, string>)[workState] ?? workState}</button>
       {captureRef.current && <button className="secondary" onClick={() => void pauseCapture()}>暂停麦克风</button>}
       {captureRef.current ? <button onClick={() => void stop()}>结束对话</button>
         : starting ? <button onClick={() => void stop()}>取消准备</button>
@@ -658,5 +676,12 @@ export default function App() {
       <button className="secondary" onClick={() => void window.deskai.getRuntime().then(setRuntime).catch(cause => setError(describeMediaError(cause)))}>刷新语音时序</button>
       <p>仅在内存保留最近各 100 条输入与输出时序，不含录音或对话正文。monotonicMs 使用同一个主进程时钟；playback-enqueued 表示提交给播放器，不代表实际听到声音。</p>
       <pre>{runtime?.voiceDiagnostics ? JSON.stringify(runtime.voiceDiagnostics, null, 2) : '暂无语音时序'}</pre></details>
+    {hostSnapshot && <details className="settings"><summary>项目与后台任务 · 默认自动审查</summary>
+      <WorkPanel snapshot={hostSnapshot.work} selectedProjectId={hostSnapshot.selectedProjectId} selectedTaskId={hostSnapshot.selectedTaskId}
+        onCommand={command => window.deskai.workCommand(command)}
+        onSelectProject={projectId => { void window.deskai.selectHost({ projectId }).catch(cause => setError(describeMediaError(cause))) }}
+        onSelectTask={taskId => { void window.deskai.selectHost({ taskId }).catch(cause => setError(describeMediaError(cause))) }} />
+      <ApplicationsPanel snapshot={hostSnapshot} onError={setError} />
+    </details>}
   </main>
 }

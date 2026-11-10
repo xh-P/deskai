@@ -23,7 +23,8 @@ test('generated local overlay includes separate relationship prompts without mut
     const original = await readFile(path.join(root, 'config/personas/nagato-mainline-post-disappearance.json'), 'utf8');
     const entries = JSON.parse(await readFile(await prepareChatPatch(root), 'utf8'));
     const presets = entries.flatMap((entry: any) => entry.insert ?? []).map((entry: any) => entry.config);
-    assert.equal(presets.length, 4);
+    assert.equal(presets.length, 5);
+    assert.ok(presets.some((preset: any) => preset.id === 'deskai2-host-coordinator'));
     const friend = presets.find((preset: any) => preset.id === 'deskai2-voice-nagato-mainline-friend');
     const kyon = presets.find((preset: any) => preset.id === 'deskai2-voice-nagato-mainline-kyon');
     assert.match(friend.plugins[0].config.prefix, /"relationshipMode":"friend"/u);

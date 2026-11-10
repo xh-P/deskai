@@ -20,6 +20,13 @@ import { PetWindowManager, petPage } from './pet-window.ts';
 import { loadInputRuntimeConfig, SpeechRuntime } from './speech-runtime.ts';
 import { WakeGate } from './wake-gate.ts';
 import { loadWorkOptions, WorkRuntime } from './work-runtime.ts';
+import { DshWorkProvider } from '../../../packages/dsh-adapter/src/work-provider.ts';
+import { DesktopHost } from './desktop-host.ts';
+import { WorkPlanner } from './work-planner.ts';
+import { ArtifactWindows } from './artifact-window.ts';
+import { HostApi } from './host-api.ts';
+import type { DialogueInput } from '../../../packages/voice-core/src/dialogue.ts';
+import type { WorkUiCommand } from '../../../packages/work-core/src/types.ts';
 
 const root = path.resolve(process.env.DESKAI_PROJECT_ROOT ?? process.cwd());
 const assetRoot = path.resolve(process.env.DESKAI_ASSET_ROOT ?? root);
@@ -46,7 +53,15 @@ if (smokeMode) app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-
 
 let window: BrowserWindow | undefined;
 let workRuntime: WorkRuntime | undefined;
-let workOpening: Promise<ReturnType<WorkRuntime['getStatus']>> | undefined;
+let runtimePreparing: Promise<WorkRuntime> | undefined;
+let desktopHost: DesktopHost | undefined;
+let hostPreparing: Promise<DesktopHost> | undefined;
+let planner: WorkPlanner | undefined;
+let planning = false;
+let planningRevision = 0;
+const artifactWindows = new ArtifactWindows();
+const hostApi = new HostApi();
+const pendingNotices: string[] = [];
 let speech: LocalDshSpeech | undefined;
 let controller: InputController | undefined;
 let sessionId = '';
@@ -106,7 +121,9 @@ function send(event: object) { if (window && !window.isDestroyed()) window.webCo
 function syncPet() { if (petWindow) petWindow.setActivity(petActivity.snapshot(petWindow.getPreferences())); }
 function showMainWindow() { window?.show(); window?.focus(); }
 function stopCurrentReply() {
-  if (!sessionId || !(dialogue?.isGenerating || outputBusy || outputActive || outputPaused)) return;
+  if (!sessionId || !(planning || dialogue?.isGenerating || outputBusy || outputActive || outputPaused)) return;
+  planningRevision++;
+  void planner?.cancel().catch(() => {});
   const currentSession = sessionId;
   const cancellation = dialogue?.cancel();
   if (currentSession && currentSession === sessionId) {
@@ -235,6 +252,7 @@ function dialogueEvent(event: DialogueEvent) {
   petActivity.dialogue(event); syncPet();
   send({ type: 'dialogue', sessionId, event });
   refreshOutput();
+  if (event.type === 'model-state' && event.state === 'idle') queueMicrotask(flushHostNotices);
 }
 function status(update: SpeechStatus) {
   const labels: Record<string, string> = { starting: '正在启动 dsh', preparing: '正在准备 SenseVoice',
@@ -257,6 +275,8 @@ async function stopSession(retainPetError = false) {
   petActivity.stopSession(retainPetError); syncPet();
   updateTray();
   controller?.stop();
+  planningRevision++;
+  await planner?.cancel(); planner = undefined;
   const oldDialogue = dialogue;
   const oldOutput = voiceOutput;
   const oldSpeechRuntime = speechRuntime;
@@ -279,19 +299,118 @@ async function stopSession(retainPetError = false) {
   await oldSpeechRuntime?.dispose();
 }
 
-ipcMain.handle('deskai:work-open', event => {
-  trusted(event);
-  return workOpening ??= (async () => {
-    try {
-      if (!workRuntime) workRuntime = new WorkRuntime(root, status => {
-        if (window && !window.isDestroyed()) window.webContents.send('deskai:work-status', status);
-      }, await loadWorkOptions(root));
-      if (shutdown) return { state: 'stopped' as const };
-      return await workRuntime.open();
-    } catch { return { state: 'error' as const, code: 'INVALID_WORK_CONFIG' }; }
-  })().finally(() => { workOpening = undefined; });
-});
+async function getWorkRuntime(): Promise<WorkRuntime> {
+  return runtimePreparing ??= (async () => {
+    workRuntime = new WorkRuntime(root, status => window?.webContents.send('deskai:work-status', status), await loadWorkOptions(root));
+    return workRuntime;
+  })().catch(error => { runtimePreparing = undefined; throw error; });
+}
+async function getDesktopHost(): Promise<DesktopHost> {
+  return hostPreparing ??= (async () => {
+    const runtime = await getWorkRuntime();
+    const options = await loadWorkOptions(root);
+    const hostDirectory = smokeMode ? path.join(root, '.cache/host-smoke', randomUUID()) : path.join(app.getPath('userData'), 'host');
+    const host = await DesktopHost.open(hostDirectory, new DshWorkProvider(runtime, root), options.cwd, event => {
+      const task = desktopHost?.work.snapshot().tasks.find(task => task.id === event.taskId);
+      const data = event.data as { outcome?: string; text?: string; summary?: string };
+      const label = task?.title ?? '后台任务';
+      const state = ({ completed: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断', unknown: '结果尚不确定' } as Record<string,string>)[data.outcome ?? ''] ?? '有更新';
+      const text = event.type === 'settled' ? label + '：' + state + '。' + (data.summary?.slice(0, 240) ?? '') : label + '需要你的答复，请查看任务面板。';
+      pendingNotices.push(text);
+      send({ type: 'host-notice', text });
+      flushHostNotices();
+    });
+    desktopHost = host;
+    host.subscribe(() => { if (window && !window.isDestroyed()) window.webContents.send('deskai:host-snapshot', host.snapshot()); });
+    try { await hostApi.start(hostDirectory, () => host.snapshot(), async input => {
+      const request = input as { type: string; command?: WorkUiCommand; text?: string; sessionId?: string; action?: string; payload?: unknown };
+      if (request.type === 'work' && request.command) return executeWorkCommand(request.command);
+      if (request.type === 'chat' && typeof request.text === 'string' && request.text.length <= 4000) {
+        await openConversation(); return submitCoordinated({ text: request.text, source: 'text' });
+      }
+      if (request.type === 'app-action' && typeof request.sessionId === 'string' && typeof request.action === 'string')
+        return host.apps.invokeAction(request.sessionId, request.action, request.payload);
+      throw new Error('UNKNOWN_HOST_COMMAND');
+    }); } catch (error) {
+      desktopHost = undefined;
+      await host.close();
+      throw error;
+    }
+    if (shutdown) { await host.close(); await hostApi.close(); }
+    return host;
+  })().catch(error => { hostPreparing = undefined; throw error; });
+}
+function flushHostNotices() {
+  if (shutdown || !dialogue || planning || voiceSubmitting || dialogue.isGenerating || outputActive || outputBusy || outputPaused || !pendingNotices.length) return;
+  dialogue.announce(pendingNotices.splice(0).join('\n').slice(0, 1800), captureArmed ? 'voice' : 'text');
+}
+async function submitCoordinated(input: DialogueInput): Promise<{ accepted: boolean }> {
+  const current = dialogue, currentSession = sessionId;
+  if (!current || !currentSession) return { accepted: false };
+  if (smokeMode || !planner) return current.submit(input);
+  if (planning) throw new Error('COORDINATOR_BUSY');
+  planning = true;
+  const revision = ++planningRevision;
+  send({ type: 'coordination-state', state: 'planning' });
+  let committed = false;
+  try {
+    const host = await getDesktopHost();
+    if (revision !== planningRevision || current !== dialogue || currentSession !== sessionId) return { accepted: false };
+    const decision = await planner.plan(input.text, host.planningContext());
+    if (revision !== planningRevision || current !== dialogue || currentSession !== sessionId || input.isEligible?.() === false) return { accepted: false };
+    const facts = await host.execute(decision);
+    committed = decision.intent !== 'chat';
+    if (committed) input.onAccepted?.();
+    if (revision !== planningRevision || current !== dialogue || currentSession !== sessionId) return { accepted: committed };
+    const result = await current.submit({ ...input, ...(committed ? { onAccepted: undefined, isEligible: undefined } : {}), hostContext: facts });
+    return { accepted: committed || result.accepted };
+  } catch (error) {
+    if (revision !== planningRevision) return { accepted: committed };
+    send({ type: 'error', code: 'COORDINATION_FAILED', message: '任务协调失败：' + (error instanceof Error ? error.message : String(error)) });
+    return { accepted: committed };
+  } finally { planning = false; send({ type: 'coordination-state', state: 'idle' }); flushHostNotices(); }
+}
+ipcMain.handle('deskai:work-open', async event => { trusted(event); return (await getWorkRuntime()).open(); });
 ipcMain.handle('deskai:work-status', event => { trusted(event); return workRuntime?.getStatus() ?? { state: 'stopped' }; });
+ipcMain.handle('deskai:host-snapshot', async event => { trusted(event); return (await getDesktopHost()).snapshot(); });
+ipcMain.handle('deskai:host-select', async (event, selection: { projectId?: string; taskId?: string; appSessionId?: string }) => {
+  trusted(event); const host = await getDesktopHost();
+  if (selection.appSessionId) host.selectApp(selection.appSessionId);
+  else if (selection.taskId) host.selectTask(selection.taskId); else if (selection.projectId) host.selectProject(selection.projectId);
+});
+async function executeWorkCommand(command: WorkUiCommand) {
+  const host = await getDesktopHost();
+  switch (command.type) {
+    case 'project-create': {
+      await mkdir(path.resolve(command.path), { recursive: true });
+      const project = host.work.createProject(command); host.selectProject(project.id); return project;
+    }
+    case 'draft-save': return host.work.saveDraft(command);
+    case 'submit': { const task = host.work.submit(command); host.selectTask(task.id); return task; }
+    case 'append': return host.work.append(command.taskId, command.prompt);
+    case 'continue': return host.work.continue(command.taskId, command.prompt);
+    case 'retry': return host.work.retry(command.taskId);
+    case 'cancel': return host.work.cancel(command.taskId);
+    case 'reply': return host.work.reply(command.taskId, command.requestId, command.response);
+    case 'native-open': {
+      const state = host.work.snapshot(); const task = state.tasks.find(t => t.id === command.taskId);
+      const nativeId = state.attempts.find(a => a.id === task?.attemptIds.at(-1))?.providerSessionId;
+      if (!nativeId) throw new Error('WORK_SESSION_UNAVAILABLE');
+      const status = await (await getWorkRuntime()).showSession(nativeId);
+      if (status.state !== 'ready') throw new Error(status.code ?? 'WORK_SESSION_UI_UNAVAILABLE');
+      return status;
+    }
+    default: throw new Error('UNKNOWN_WORK_COMMAND');
+  }
+}
+ipcMain.handle('deskai:work-command', (event, command: WorkUiCommand) => { trusted(event); return executeWorkCommand(command); });
+ipcMain.handle('deskai:artifact-open', async (event, id: string, interact: boolean) => {
+  trusted(event); return artifactWindows.open(await getDesktopHost(), id, interact === true);
+});
+ipcMain.handle('deskai:app-action', async (event, input: { sessionId: string; action: string; payload: unknown }) => {
+  trusted(event); return (await getDesktopHost()).apps.invokeAction(input.sessionId, input.action, input.payload);
+});
+ipcMain.handle('deskai:app-close', async (event, id: string) => { trusted(event); (await getDesktopHost()).apps.closeSession(id); });
 
 ipcMain.handle('deskai:runtime', event => {
   trusted(event);
@@ -347,6 +466,7 @@ async function openConversation() {
   if (ttsSmoke && !realModelSmoke) fixturePort = new FixtureChatPort();
   const chatPort = ttsSmoke && !realModelSmoke ? fixturePort! : await createChatPort(service, root);
   if (epoch !== sessionEpoch || shutdown) { await chatPort.cancel(); throw new Error('SESSION_START_CANCELLED'); }
+  planner = new WorkPlanner(service, root);
   speechRuntime = new SpeechRuntime(service, inputRuntimeConfig.conversation, root);
   sessionId = randomUUID();
   petActivity.startSession(sessionId); syncPet();
@@ -446,7 +566,7 @@ async function openConversation() {
       voiceSubmitting = true;
       outputTimeline.record('input-submitted', ready);
       const current = controller;
-      void dialogue?.submit({ text, source: 'voice', continuationOf: ready.continuationOf,
+      void submitCoordinated({ text, source: 'voice', continuationOf: ready.continuationOf,
         utteranceIds: ready.utteranceIds, isEligible: () => sessionId === ready.sessionId && current.isEligible(ready.inputRevision, ready.utteranceIds),
         onAccepted: () => {
           if (sessionId === ready.sessionId) {
@@ -467,6 +587,7 @@ async function openConversation() {
         }).finally(() => {
           voiceSubmitting = false;
           if (sessionId) current.reevaluateReady();
+          flushHostNotices();
         });
     }
   });
@@ -508,9 +629,9 @@ ipcMain.handle('deskai:send-text', async (event, value: unknown) => {
   trusted(event);
   const data = value as { sessionId?: string; text?: string };
   if (!data || data.sessionId !== sessionId || !dialogue || typeof data.text !== 'string' || data.text.length > 4000) throw new Error('INVALID_TEXT_INPUT');
-  return dialogue.submit({ text: data.text, source: captureArmed ? 'voice' : 'text' });
+  return submitCoordinated({ text: data.text, source: captureArmed ? 'voice' : 'text' });
 });
-ipcMain.handle('deskai:cancel-turn', async event => { trusted(event); await dialogue?.cancel(); refreshOutput(); });
+ipcMain.handle('deskai:cancel-turn', async event => { trusted(event); planningRevision++; await planner?.cancel(); await dialogue?.cancel(); refreshOutput(); });
 ipcMain.handle('deskai:retry-turn', async event => { trusted(event); return dialogue?.retry() ?? { accepted: false }; });
 ipcMain.on('deskai:displayed', (event, value: unknown) => {
   trusted(event);
@@ -598,6 +719,7 @@ ipcMain.on('deskai:playback', (event, report: unknown) => {
   voiceOutput?.playback(value as SpeechPlaybackReport);
   syncPet();
   refreshOutput();
+  flushHostNotices();
 });
 ipcMain.handle('deskai:playback-fixture', async event => {
   trusted(event);
@@ -640,7 +762,7 @@ ipcMain.on('deskai:finish-dialogue-smoke', (event, input: unknown) => {
   const data = input as { checks?: Record<string, unknown>; notes?: unknown[]; simulated?: unknown };
   const checks = Object.fromEntries(Object.entries(data.checks ?? {}).filter(([, value]) => typeof value === 'boolean'));
   const required = ['directTextDisplayed', 'localQuietNoBubble', 'textQuestionDisplayed', 'shortAnswerWorked',
-    'retryWorked', 'cancelWorked', 'preferencesIndependent', 'roleplaySelectable', 'relationshipSelectable', 'noMicrophoneOpened'];
+    'retryWorked', 'cancelWorked', 'preferencesIndependent', 'roleplaySelectable', 'relationshipSelectable', 'noMicrophoneOpened', 'hostPanelsReady'];
   const report = { simulated: true, provider: 'local-interface-fixture', realModelValidated: false,
     passed: data.simulated === true && required.every(key => checks[key] === true) && metrics.inputFrames === 0 &&
       fixturePort?.requests.length === 5,
@@ -978,6 +1100,7 @@ app.on('before-quit', event => {
   shutdown = true;
   petWindow?.prepareToQuit();
   tray?.destroy();
-  void Promise.allSettled([stopSession(), workOpening?.then(() => workRuntime?.dispose()), workRuntime?.dispose()])
+  artifactWindows.close();
+  void Promise.allSettled([stopSession(), hostPreparing?.then(host => Promise.allSettled([host.close(), hostApi.close()])), runtimePreparing?.then(runtime => runtime.dispose())])
     .then(() => Promise.allSettled([speech?.dispose(), tts?.dispose(), petWindow?.flush()])).finally(() => app.quit());
 });

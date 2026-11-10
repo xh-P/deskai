@@ -12,6 +12,7 @@ export interface ChatTurnInput {
   deliveryState?: unknown;
   mode?: 'voice' | 'text';
   replyLanguage?: 'auto' | 'zh' | 'ja' | 'en';
+  hostContext?: unknown;
 }
 export type ChatEvent =
   | { type: 'attempt-start'; attemptId: string; revision: number }
@@ -84,7 +85,8 @@ export function buildChatContent(input: ChatTurnInput): string {
     kind: 'deskai2-visible-history-v1',
     mode: input.mode ?? 'voice', replyLanguage: input.replyLanguage ?? 'auto',
     visibleHistory: projectionHistory(input.visibleHistory), deliveryState: projectionDelivery(input.deliveryState),
-    currentUserText: text
+    currentUserText: text,
+    hostContext: input.hostContext ?? null
   });
   if ([...projection].length > 16000) throw new Error('CHAT_CONTEXT_LENGTH');
   return `以下是桌面应用提供的结构化对话投影。visibleHistory 仅含已接纳用户输入和已交付助手正文：voice 为完整已播句，text 为界面确认已显示文字。deliveryState 只含交付元数据与计数，未播正文不进入模型上下文。请直接回答 currentUserText。\n${projection}`;
@@ -95,12 +97,15 @@ export class LocalDshChat {
   private active?: ActiveTurn;
   private readonly host: LocalDshSpeech;
   private readonly root: string;
-  constructor(host: LocalDshSpeech, root: string) { this.host = host; this.root = root; }
+  private readonly options: { preset?: string; renderInput?: (input: ChatTurnInput) => string };
+  constructor(host: LocalDshSpeech, root: string, options: { preset?: string; renderInput?: (input: ChatTurnInput) => string } = {}) {
+    this.host = host; this.root = root; this.options = options;
+  }
 
   async runTurn(input: ChatTurnInput, onEvent: (event: ChatEvent) => void): Promise<ChatAccepted> {
     if (this.active) throw new Error('CHAT_TURN_BUSY');
-    const content = buildChatContent(input);
-    const preset = personaPreset(input.personaId, input.relationshipMode);
+    const content = this.options.renderInput?.(input) ?? buildChatContent(input);
+    const preset = this.options.preset ?? personaPreset(input.personaId, input.relationshipMode);
     let finish!: (value: ChatSettlement) => void;
     const completed = new Promise<ChatSettlement>(resolve => { finish = resolve; });
     const active: ActiveTurn = { sessionId: '', completed, cancelRequested: false, promptAccepted: false, promptSubmitted: false };
