@@ -2,6 +2,7 @@
 
 当前入口是源码开发模式 `npm run desktop:dev`。
 
+- [角色编辑、会话归属与知识检索](./character-knowledge-20261112.md) 记录 H1、H4 的真实模型开关对照和验收入口。
 - [对话引用与 Work 回执](./work-control-20261112.md) 记录 A 的候选消歧、操作绑定和验证。
 - [Work 验收与 AUIP 应用协作](./work-review-auip-20261112.md) 记录 F、G 的验收证据、上游样例和复现入口。
 - [独立 Host、执行恢复与交付](./host-work-20261112.md) 记录 C、D、E 的源码入口、真实 dsh 验证与待确认项。

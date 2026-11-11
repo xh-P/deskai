@@ -16,6 +16,8 @@ Windows 桌面语音与任务工作台，当前持续迭代源码，不制作新
 
 同一句话可能指向多个任务时，桌面会显示选择卡。选定后用原话继续，已受理操作可按操作 ID 找回执行回执。[对话引用与 Work 回执](./docs/desktop-voice/work-control-20261112.md)
 
+角色可编辑，会话保存当时的角色版本与关系。选择主线消失后的长门角色后，可以启用随附的《消失》资料检索。索引准备和真实模型对照见[角色编辑与知识检索](./docs/desktop-voice/character-knowledge-20261112.md)。
+
 ## 配置与资源
 
 - 默认输入配置：`config/voice/input-runtime.json`；Chat 路由：`config/voice/chat-runtime.json`。界面设置写入应用用户目录，不改源码默认值。

@@ -33,27 +33,29 @@ DeskAI2 的 dsh 语音候选可提前请求并缓冲回复。正式输入与 Hos
 
 ## I. 角色呈现
 
-### I2｜播报驱动字幕、口型与表情｜待接入
+用户希望后续视觉以主播式 Live2D 为主。I1–I3 暂缓，以下条目保留上游实现对照。[Amadeus Live2D 实验后端](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/docs/live2d_character_visuals.md)
+
+### I2｜播报驱动字幕、口型与表情｜暂缓
 
 上游在播放过程中发布基于 PCM RMS 的嘴部开合值，并在句子开始时更新字幕和角色表现。DeskAI2 已有播放回执和桌宠状态，嘴部目前按定时器开合。先接实际渲染 PCM 的幅度和句子身份，让字幕与表情随播放推进，验收中断后上一轮字幕、口型和表情及时退出。[上游播放](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/tts/playback.py) · [上游字幕](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/tts/subtitle.py) · [上游角色表现](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/character_presentation.py) · [本地桌宠](../../apps/desktop/renderer/src/pet/PetApp.tsx)
 
-### I1｜SpriteForge 角色包与动画状态｜待接入
+### I1｜SpriteForge 角色包与动画状态｜暂缓
 
 上游角色包装载器校验 manifest、KTX2 片段和嘴部覆盖层，动画器按状态和意图切换片段。DeskAI2 当前使用 PNG 立绘。选一套可用资源验证载入、待机、说话和中断回到待机，再接 I2 的播放信号。[上游角色包](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/render/character_pack.py) · [上游动画器](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/render/spriteforge_animator.py) · [上游角色包格式示例](https://github.com/Code-Amadeus/Amadeus/tree/be9b97aef2ac3affb200998f8af3aab72aa22f6c/examples/character-pack-minimal)
 
-### I3｜Windows 桌面场景挂载与恢复｜待接入
+### I3｜Windows 桌面场景挂载与恢复｜暂缓
 
 上游 Windows 端用 helper 管理 Lively 场景的挂载、停止与原壁纸恢复，壁纸页渲染角色与字幕。DeskAI2 已有独立桌宠窗口。角色场景跑通后再接入壁纸宿主，验证打开主窗口、退出、挂载失败时的场景和壁纸状态。[上游 Windows 挂载](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/electron/src/main/windowsWallpaper.ts) · [上游 helper](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/electron/resources/windows-wallpaper/helper.py) · [生命周期说明](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/docs/windows_wallpaper_lifecycle.md)
 
 ## H. 角色定义与知识
 
-### H1｜可编辑角色定义与会话归属｜部分接入
+### H1｜可编辑角色定义与会话归属｜框架已完成
 
-上游校验、创建和更新角色定义，构建角色提示词，并用角色 ID 约束会话归属。DeskAI2 已有 JSON 角色卡、关系模式和 dsh 人格 preset。移植角色校验与会话归属行为，验证旧会话能识别其角色，切换角色后用对应设定回复。[上游角色存储](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/core/character_profiles.py) · [上游角色提示词](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/llm/character_prompts.py) · [上游会话处理](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/handlers/session_handler.py) · [本地 preset](../../packages/dsh-adapter/src/chat-patch.ts)
+桌面支持创建和编辑角色。会话保存角色修订、关系模式和已交付历史，重开后使用原归属。真实模型验证了新会话能采用角色编辑内容。[上游角色存储](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/core/character_profiles.py) · [上游会话归属](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/docs/character-runtime.md) · [实施与验证](./character-knowledge-20261112.md)
 
-### H4｜角色知识 RAG｜待接入
+### H4｜角色知识 RAG｜框架已完成
 
-上游可选地加载本地 FAISS 角色知识索引，用距离阈值选取片段注入对话。现有运行入口限定默认角色。DeskAI2 接入这一检索和注入路径时，先用一套现有角色知识验证命中、无命中和缺资源时的对话表现。[上游角色知识实现](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/core/character_rag.py) · [上游示例语料](https://github.com/Code-Amadeus/Amadeus/tree/be9b97aef2ac3affb200998f8af3aab72aa22f6c/examples/character-rag)
+接入可选的本地 E5/FAISS 逐轮检索，以长门角色 ID 加载三条有出处的《消失》资料。用同一真实模型验证了检索开关、剧情命中和无关话题未命中，索引缺失可继续普通对话。后续资料可按原作出处扩充。[上游角色知识实现](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/core/character_rag.py) · [实施与验证](./character-knowledge-20261112.md)
 
 ## A. 对话与 Work 控制
 
@@ -109,7 +111,7 @@ Host 校验当前修订、接管前后的授权版本、参数与应用动作前
 
 ## 推进顺序
 
-1. 从 I2 开始验证播放驱动的表现，再接 I1 和 H1。
-2. H4 和 I3 分别按知识素材和角色场景的准备情况推进。
+1. H1 和 H4 进入使用验收，语料按已核实的原作出处逐步扩充。
+2. I 暂缓，后续按用户选择的 Live2D 方向重新确认范围。
 
 每轮更新对应条目，附实现提交和实际验证结果。物理设备验收记录在对应实施文档中。
