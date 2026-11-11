@@ -11,7 +11,7 @@ Windows 桌面语音与任务工作台，当前持续迭代源码，不制作新
 
 语音使用 SenseVoice 唤醒 → Qwen3-ASR 对话识别 → 可配置 Chat → GPT-SoVITS v2 原生流式合成。Qwen 默认保持驻留。人格、声音和语言独立；桌宠沿用现有实现。
 
-对话可由 AI 委派 dsh 执行后台任务。独立 Host 管理项目、执行恢复、Git 工作区、Diff 与产物导出。应用可通过受控会话声明状态和动作，让角色继续协作。dsh 默认启用原生自动审查。[实现与验证记录](./docs/desktop-voice/host-work-20261112.md)
+对话可由 AI 委派 dsh 执行后台任务。独立 Host 管理项目、执行恢复、Git 工作区、Diff、产物导出与人工验收。登记的应用可通过 AUIP v0 上报状态并接收声明动作。dsh 默认启用原生自动审查。[Host 与交付](./docs/desktop-voice/host-work-20261112.md) · [Work 验收与 AUIP](./docs/desktop-voice/work-review-auip-20261112.md)
 
 ## 配置与资源
 
@@ -27,6 +27,7 @@ Windows 桌面语音与任务工作台，当前持续迭代源码，不制作新
 - [当前方向](./docs/desktop-voice/current-direction.md)
 - [当前文档与历史索引](./docs/desktop-voice/README.md)
 - [独立 Host、执行恢复与交付](./docs/desktop-voice/host-work-20261112.md)
+- [Work 验收与 AUIP 应用协作](./docs/desktop-voice/work-review-auip-20261112.md)
 - [Amadeus 对照基准](./docs/desktop-voice/amadeus-vs-deskai2.md)
 
 自动检查不能替代实际设备上的唤醒、外放双讲、误打断和音质验收。历史目录包不包含本轮源码变化，请使用开发入口验收。

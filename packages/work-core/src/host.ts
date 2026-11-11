@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { ProviderEvent, ProviderPort, ProviderRequest, ProviderResult, WorkAttempt, WorkEvent, WorkProject, WorkSnapshot, WorkTask } from './types.ts';
 import { pendingRequests } from './requests.ts';
 import { relativeInside, workspacesOverlap, type Workspaces } from './workspace.ts';
+import { assessCompletion, expectedFiles, type AcceptanceReceipt, type CompletionAssessment, type DeliveryEvidence, type DeliveryFailure } from './completion.ts';
 
 const now = () => new Date().toISOString();
 const id = () => randomUUID();
@@ -14,7 +15,11 @@ const clean = (value: string, max: number) => {
 };
 
 type ArtifactInput = { taskId: string; attemptId: string; workDir: string; relativePath: string };
-type WorkHostOptions = { workspaces?: Workspaces; registerArtifact?: (input: ArtifactInput, expectedSha256: string) => Promise<unknown> };
+type WorkHostOptions = {
+  workspaces?: Workspaces;
+  registerArtifact?: (input: ArtifactInput, expectedSha256: string) => Promise<unknown>;
+  verifyDelivery?: (task: WorkTask, attempt: WorkAttempt, claims: string[]) => Promise<DeliveryEvidence>;
+};
 
 /** Host-owned ledger. Only this class mutates work state; the provider owns execution. */
 export class WorkHost {
@@ -79,10 +84,11 @@ export class WorkHost {
     if (!draft) { draft = { id: id(), projectId: input.projectId, text: '', updatedAt: now() }; this.state.drafts.push(draft); }
     draft.text = input.text; draft.updatedAt = now(); this.save();
   }
-  submit(input: { projectId: string; prompt: string; title?: string; authoring?: boolean }): WorkTask {
+  submit(input: { projectId: string; prompt: string; title?: string; authoring?: boolean; expectedArtifacts?: string[] }): WorkTask {
     this.project(input.projectId); const prompt = clean(input.prompt, 100000); const time = now();
     const task: WorkTask = { id: id(), projectId: input.projectId, title: input.title ? clean(input.title, 200) : prompt.slice(0, 80), prompt, status: 'queued', attemptIds: [], createdAt: time, updatedAt: time };
     task.authoring = input.authoring === true;
+    task.expectedArtifacts = expectedFiles(input.expectedArtifacts);
     this.state.tasks.push(task); this.launch(task, prompt); return structuredClone(task);
   }
   private launch(task: WorkTask, prompt: string, providerSessionId?: string): WorkAttempt {
@@ -142,7 +148,7 @@ export class WorkHost {
       task.status = attempt.status = pendingRequests(this.state).some(event => event.attemptId === attempt.id) ? 'waiting' : 'running';
       this.save();
       const request: ProviderRequest = { taskId: task.id, attemptId: attempt.id, projectPath: task.workspace?.path ?? projectPath,
-        prompt: attempt.prompt, providerSessionId: attempt.providerSessionId, authoring: task.authoring };
+        prompt: attempt.prompt, providerSessionId: attempt.providerSessionId, authoring: task.authoring, expectedArtifacts: task.expectedArtifacts };
       const notify = (event: ProviderEvent) => this.onProviderEvent(task, attempt, event);
       this.executing.add(attempt.id);
       try {
@@ -158,6 +164,8 @@ export class WorkHost {
       try { await this.local(this.deliver(task, attempt)); }
       catch (error) { attempt.deliveryError = error instanceof Error ? error.message : String(error); }
     }
+    if (!this.closing && !result.unsettled && this.options.verifyDelivery)
+      attempt.delivery = await this.local(this.verifyDelivery(task, attempt));
     if (!this.closing) this.finish(task, attempt, result);
   }
 
@@ -184,8 +192,46 @@ export class WorkHost {
   private finish(task: WorkTask, attempt: WorkAttempt, result: ProviderResult) {
     if (result.providerSessionId) attempt.providerSessionId = result.providerSessionId;
     attempt.result = result; attempt.status = task.status = result.outcome; attempt.summary = result.summary; attempt.error = result.error;
-    attempt.updatedAt = task.updatedAt = now(); this.event(attempt, 'settled', result);
+    attempt.assessment = assessCompletion(task, attempt, this.state.events);
+    attempt.updatedAt = task.updatedAt = now(); this.event(attempt, 'settled', { ...result, assessment: attempt.assessment });
     this.save();
+  }
+
+  private async verifyDelivery(task: WorkTask, attempt: WorkAttempt): Promise<DeliveryEvidence> {
+    const events = this.state.events.filter(event => event.attemptId === attempt.id);
+    const failures: DeliveryFailure[] = events.filter(event => event.type === 'artifact_rejected' || event.type === 'artifact-manifest-invalid')
+      .map(event => event.data as DeliveryFailure);
+    if (attempt.deliveryError) failures.push({ reason: attempt.deliveryError });
+    const claims = events.filter(event => event.type === 'artifact').map(event => (event.data as { path: string }).path);
+    try {
+      const evidence = await this.options.verifyDelivery?.(task, attempt, claims) ?? { files: [], appEntries: [], failures: [] };
+      return { ...evidence, failures: [...failures, ...evidence.failures] };
+    } catch (error) {
+      return { files: [], appEntries: [], failures: [...failures, { reason: error instanceof Error ? error.message : String(error) }] };
+    }
+  }
+
+  async review(taskId: string, attemptId: string, action: 'accept' | 'recheck'): Promise<AcceptanceReceipt | CompletionAssessment> {
+    const task = this.task(taskId);
+    const attempt = this.last(task);
+    if (attempt.id !== attemptId) throw new Error('WORK_REVIEW_ATTEMPT_CHANGED');
+    if (attempt.acceptance) return structuredClone(action === 'accept' ? attempt.acceptance : attempt.acceptance.assessment);
+    if (attempt.status !== 'completed') throw new Error('WORK_REVIEW_NOT_READY');
+    const delivery = await this.local(this.verifyDelivery(task, attempt));
+    const current = this.last(task);
+    if (this.closing || current.id !== attemptId) throw new Error('WORK_REVIEW_ATTEMPT_CHANGED');
+    if (current.acceptance) return structuredClone(action === 'accept' ? current.acceptance : current.acceptance.assessment);
+    const assessment = assessCompletion(task, { ...attempt, delivery }, this.state.events);
+    attempt.delivery = delivery; attempt.assessment = assessment;
+    if (action === 'recheck') { this.save(); return structuredClone(assessment); }
+    if (assessment.review !== 'review_ready') { this.save(); throw new Error('WORK_REVIEW_NOT_READY'); }
+    const acceptedAt = now();
+    const receipt: AcceptanceReceipt = { id: id(), taskId, attemptId, acceptedAt, assessment: { ...assessment, review: 'accepted' } };
+    attempt.acceptance = receipt; attempt.assessment = receipt.assessment;
+    this.event(attempt, 'accepted', receipt);
+    try { this.save(); }
+    catch (error) { attempt.acceptance = undefined; attempt.assessment = assessment; this.state.events.pop(); throw error; }
+    return structuredClone(receipt);
   }
 
   private onProviderEvent(task: WorkTask, attempt: WorkAttempt, event: ProviderEvent): void {

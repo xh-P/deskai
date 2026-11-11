@@ -1,6 +1,8 @@
 import type { DialogueEvent } from '../../../../packages/voice-core/src/dialogue.ts'
 import type { HostSnapshot } from '../../../host/src/protocol.ts'
 import type { ExportReceipt } from '../../../../packages/app-core/src/exports.ts'
+import type { AppStateVersion } from '../../../../packages/app-core/src/app-host.ts'
+import type { EngagementMode } from '../../../../packages/app-core/src/auip-contract.ts'
 import type { WorkUiCommand } from '../../../../packages/work-core/src/types.ts'
 import type { VoiceDiagnostics } from '../../../../packages/voice-core/src/diagnostics.ts'
 import type { PetGeometry, PetPreferencePatch, PetSnapshot } from '../../../../packages/desktop-pet/src/types.ts'
@@ -127,7 +129,8 @@ export interface DeskaiBridge {
   openArtifact(id: string, interact: boolean): Promise<unknown>
   exportArtifact(id: string): Promise<ExportReceipt | null>
   workDiff(attemptId: string): Promise<string>
-  appAction(input: { sessionId: string; action: string; payload: unknown }): Promise<unknown>
+  appAction(input: { sessionId: string; action: string; payload: unknown; expected: AppStateVersion }): Promise<unknown>
+  setAppMode(id: string, mode: EngagementMode): Promise<unknown>
   closeApp(id: string): Promise<void>
   openWork(): Promise<WorkStatus>
   getWorkStatus(): Promise<WorkStatus>

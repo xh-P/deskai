@@ -32,6 +32,9 @@ import { WorkPlanner } from './work-planner.ts';
 import { ArtifactWindows } from './artifact-window.ts';
 import type { DialogueInput } from '../../../packages/voice-core/src/dialogue.ts';
 import type { WorkUiCommand } from '../../../packages/work-core/src/types.ts';
+import { completionLabel, type CompletionAssessment } from '../../../packages/work-core/src/completion.ts';
+import type { AppStateVersion } from '../../../packages/app-core/src/index.ts';
+import type { EngagementMode } from '../../../packages/app-core/src/auip-contract.ts';
 
 const root = path.resolve(process.env.DESKAI_PROJECT_ROOT ?? process.cwd());
 const assetRoot = path.resolve(process.env.DESKAI_ASSET_ROOT ?? root);
@@ -310,10 +313,11 @@ function publishHostSnapshot(snapshot: HostSnapshot, seen: Set<string>) {
     if (seen.has(event.id)) continue;
     seen.add(event.id);
     if (!['settled', 'permission', 'question'].includes(event.type)) continue;
-    const data = event.data as { outcome?: string; summary?: string };
+    const data = event.data as { outcome?: string; assessment?: CompletionAssessment };
     const label = snapshot.work.tasks.find(task => task.id === event.taskId)?.title ?? '后台任务';
-    const state = ({ completed: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断', unknown: '结果尚不确定' } as Record<string,string>)[data.outcome ?? ''] ?? '有更新';
-    const text = event.type === 'settled' ? label + '：' + state + '。' + (data.summary?.slice(0, 240) ?? '') : label + '需要你的答复，请查看任务面板。';
+    const state = data.outcome === 'completed' ? `执行已结束，${completionLabel(data.assessment)}` :
+      ({ failed: '执行失败', cancelled: '已取消', interrupted: '已中断', unknown: '结果尚不确定' } as Record<string,string>)[data.outcome ?? ''] ?? '有更新';
+    const text = event.type === 'settled' ? `${label}，${state}。` : label + '需要你的答复，请查看任务面板。';
     pendingNotices.push(text);
     send({ type: 'host-notice', text });
   }
@@ -352,7 +356,9 @@ async function submitCoordinated(input: DialogueInput): Promise<{ accepted: bool
     if (revision !== planningRevision || current !== dialogue || currentSession !== sessionId || input.isEligible?.() === false) return { accepted: false };
     if (realModelSmoke && decision.intent !== 'chat') throw new Error('VOICE_SMOKE_EXPECTED_CHAT');
     if (decision.intent !== 'chat') current.discardSpeculative(input.speculation);
-    const facts = decision.intent === 'chat' ? { kind: 'chat' } : await host.command({ type: 'plan', plan: decision });
+    const app = decision.intent === 'app' ? snapshot.apps.find(item => item.id === decision.sessionId) : undefined;
+    const appVersion = app ? { revision: app.revision, generation: app.generation } : undefined;
+    const facts = decision.intent === 'chat' ? { kind: 'chat' } : await host.command({ type: 'plan', plan: decision, appVersion });
     committed = decision.intent !== 'chat';
     if (committed) input.onAccepted?.();
     const context = dialogueContext(committed ? await host.snapshot() : snapshot, facts);
@@ -401,8 +407,11 @@ ipcMain.handle('deskai:artifact-export', async (event, artifactId: string) => {
   if (approval.canceled || !approval.filePath) return null;
   return host.command<ExportReceipt>({ type: 'artifact-export', artifactId, destination: approval.filePath });
 });
-ipcMain.handle('deskai:app-action', async (event, input: { sessionId: string; action: string; payload: unknown }) => {
+ipcMain.handle('deskai:app-action', async (event, input: { sessionId: string; action: string; payload: unknown; expected: AppStateVersion }) => {
   trusted(event); return (await getDesktopHost()).command({ ...input, type: 'app-action' });
+});
+ipcMain.handle('deskai:app-mode', async (event, sessionId: string, mode: EngagementMode) => {
+  trusted(event); return (await getDesktopHost()).command({ type: 'app-mode', sessionId, mode });
 });
 ipcMain.handle('deskai:app-close', async (event, id: string) => { trusted(event); return (await getDesktopHost()).command({ type: 'app-close', sessionId: id }); });
 

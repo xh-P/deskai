@@ -25,7 +25,7 @@ async function serve() {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('INVALID_HOST_COMMAND');
     const input = raw as HostCommand;
     if (input.type === 'shutdown') { setImmediate(stop); return { stopping: true }; }
-    if (input.type === 'plan') return host.execute(parseCoordinationPlan(JSON.stringify(input.plan)));
+    if (input.type === 'plan') return host.execute(parseCoordinationPlan(JSON.stringify(input.plan)), input.appVersion);
     return host.command(input);
   }, async () => {
     const state = await realpath(directory);

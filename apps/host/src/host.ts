@@ -4,11 +4,12 @@ import { WorkHost } from '../../../packages/work-core/src/host.ts';
 import { Workspaces } from '../../../packages/work-core/src/workspace.ts';
 import type { ProviderPort } from '../../../packages/work-core/src/types.ts';
 import { pendingRequests } from '../../../packages/work-core/src/requests.ts';
-import { AppHost, ArtifactRegistry } from '../../../packages/app-core/src/index.ts';
+import { AppHost, ArtifactRegistry, type AppStateVersion } from '../../../packages/app-core/src/index.ts';
 import { ArtifactExports } from '../../../packages/app-core/src/exports.ts';
 import type { WorkRuntime } from '../../../packages/dsh-adapter/src/work-runtime.ts';
 import type { CoordinationPlan } from '../../../packages/voice-core/src/coordination.ts';
 import type { HostCommand, HostSnapshot } from './protocol.ts';
+import { verifyWorkDelivery } from './work-delivery.ts';
 
 /** Shared Work and application state, independent of the client lifecycle. */
 export class LocalHost {
@@ -26,7 +27,8 @@ export class LocalHost {
     this.artifacts = new ArtifactRegistry({ storageFile: path.join(directory, 'artifacts.json'),
       authorize: (taskId, workDir, relativePath, attemptId) => this.work.authorizeArtifact(taskId, workDir, relativePath, attemptId) });
     this.work = new WorkHost(path.join(directory, 'work-ledger.json'), provider, {
-      workspaces: new Workspaces(directory), registerArtifact: (input, sha256) => this.artifacts.registerArtifact(input, sha256)
+      workspaces: new Workspaces(directory), registerArtifact: (input, sha256) => this.artifacts.registerArtifact(input, sha256),
+      verifyDelivery: (task, attempt, claims) => verifyWorkDelivery(this.artifacts, task, attempt, claims)
     });
     this.exports = new ArtifactExports(path.join(directory, 'exports'), this.artifacts);
     this.apps = new AppHost(this.artifacts);
@@ -37,9 +39,9 @@ export class LocalHost {
     if (!host.work.snapshot().projects.length) host.work.createProject({ name: path.basename(workspace), path: workspace });
     host.selectedProjectId = host.work.snapshot().projects[0].id;
     host.work.subscribe(() => host.changed());
-    host.apps.subscribe(() => {
-      if (!host.apps.listSessions().some(app => app.id === host.selectedAppId && app.status === 'connected'))
-        host.selectedAppId = host.apps.listSessions().filter(app => app.status === 'connected').at(-1)?.id ?? '';
+    host.apps.subscribe(sessions => {
+      if (!sessions.some(app => app.id === host.selectedAppId && app.status === 'connected'))
+        host.selectedAppId = sessions.filter(app => app.status === 'connected').at(-1)?.id ?? '';
       host.changed();
     });
     await host.apps.start();
@@ -72,7 +74,7 @@ export class LocalHost {
         else if (input.projectId) this.selectProject(input.projectId);
         return;
       }
-      case 'plan': return this.execute(input.plan);
+      case 'plan': return this.execute(input.plan, input.appVersion);
       case 'diff': return this.work.diff(input.attemptId);
       case 'artifact-preview': {
         const { artifact, bytes } = await this.artifacts.readVerified(input.artifactId);
@@ -83,7 +85,8 @@ export class LocalHost {
         const receipt = await this.exports.export(input.artifactId, input.destination);
         this.changed(); return receipt;
       }
-      case 'app-action': return this.apps.invokeAction(input.sessionId, input.action, input.payload);
+      case 'app-action': return this.apps.invokeAction(input.sessionId, input.action, input.payload, input.expected);
+      case 'app-mode': return this.apps.setMode(input.sessionId, input.mode);
       case 'app-close': return this.apps.closeSession(input.sessionId);
       case 'native-window': {
         if (!this.runtime) throw new Error('WORK_HOST_UNAVAILABLE');
@@ -101,6 +104,7 @@ export class LocalHost {
       }
       case 'draft-save': return this.work.saveDraft(command);
       case 'submit': { const task = this.work.submit(command); this.selectTask(task.id); return task; }
+      case 'accept': case 'recheck': return this.work.review(command.taskId, command.attemptId, command.type);
       case 'append': return this.work.append(command.taskId, command.prompt);
       case 'continue': return this.work.continue(command.taskId, command.prompt);
       case 'retry': return this.work.retry(command.taskId);
@@ -110,10 +114,11 @@ export class LocalHost {
       default: throw new Error('UNKNOWN_WORK_COMMAND');
     }
   }
-  async execute(plan: CoordinationPlan): Promise<unknown> {
+  async execute(plan: CoordinationPlan, appVersion?: AppStateVersion): Promise<unknown> {
     if (plan.intent === 'chat') return { kind: 'chat' };
     if (plan.intent === 'submit') {
-      const task = this.work.submit({ projectId: plan.projectId ?? this.selectedProjectId, title: plan.title, prompt: plan.prompt!, authoring: plan.authoring });
+      const task = this.work.submit({ projectId: plan.projectId ?? this.selectedProjectId, title: plan.title, prompt: plan.prompt!,
+        authoring: plan.authoring, expectedArtifacts: plan.expectedArtifacts });
       this.selectTask(task.id);
       return { kind: 'task-submitted', taskId: task.id, title: task.title, status: task.status, message: '任务已受理，尚未完成。' };
     }
@@ -122,13 +127,19 @@ export class LocalHost {
       if (plan.taskId && !state.tasks.some(task => task.id === plan.taskId)) throw new Error('WORK_TASK_NOT_FOUND');
       return { kind: 'task-status', requests: pendingRequests(state).filter(event => !plan.taskId || event.taskId === plan.taskId),
         permissionHandling: '权限请求请打开对应任务的原生会话处理；自动审查已默认开启。',
-        tasks: state.tasks.filter(task => !plan.taskId || task.id === plan.taskId).slice(-10).map(task => ({
-        id: task.id, title: task.title, status: task.status,
-        summary: state.attempts.find(a => a.id === task.attemptIds.at(-1))?.summary?.slice(0, 1200),
-      })) };
+        tasks: state.tasks.filter(task => !plan.taskId || task.id === plan.taskId).slice(-10).map(task => {
+          const attempt = state.attempts.find(item => item.id === task.attemptIds.at(-1));
+          const assessment = attempt?.assessment;
+          return { id: task.id, title: task.title, execution: task.status, review: assessment?.review,
+            completeness: assessment?.completeness, missingFiles: assessment?.missingFiles, missingApp: assessment?.missingApp,
+            validationFailures: assessment?.delivery.failures, pendingInputs: assessment?.pendingInputs,
+            pendingPermissions: assessment?.pendingPermissions, acceptedAt: attempt?.acceptance?.acceptedAt,
+            providerReport: attempt?.summary?.slice(0, 1200) };
+        }) };
     }
     if (plan.intent === 'app') {
-      const receipt = await this.apps.invokeAction(plan.sessionId!, plan.action!, plan.payload ?? {});
+      if (!appVersion) throw new Error('app_state_version_required');
+      const receipt = await this.apps.invokeAction(plan.sessionId!, plan.action!, plan.payload ?? {}, appVersion);
       return { kind: 'application-receipt', sessionId: plan.sessionId, action: plan.action, receipt };
     }
     this.selectTask(plan.taskId!);

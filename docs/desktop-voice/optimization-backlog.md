@@ -93,24 +93,24 @@ Host 为每个 Git Work 绑定独立分支与 worktree，继续执行和重试�
 
 ## F. Work 完成评估
 
-### F1/F2｜执行结果、交付证据与人工验收｜待接入
+### F1/F2｜执行结果、交付证据与人工验收｜已完成
 
-上游用执行终态、登记产物、验证结果和待处理输入等证据得出完成度与待审状态，并保留用户确认入口。DeskAI2 目前把 dsh 终态写入任务状态，产物校验独立进行。接入评估后，用执行成功但缺少产物、验证失败、交付齐备三个场景检查显示和回执。[上游完成评估](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_completion.py) · [上游结果验证](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/outcome_verification.py) · [本地 Work 账本](../../packages/work-core/src/host.ts)
+Host 结合执行终态、预期文件、登记摘要、交付验证与待处理输入投影完成度。桌面和命令行可复查交付、确认当前 Attempt 并取得持久回执。已验证正常结束但文件缺失、未归属文件声明被拒绝、交付齐备进入待验收，以及改动文件后拒绝验收。[上游完成评估](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_completion.py) · [上游结果验证](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/outcome_verification.py) · [本地评估](../../packages/work-core/src/completion.ts) · [实施记录](./work-review-auip-20261112.md)
 
 ## G. AUIP 应用协作
 
-### G1｜接通上游 AUIP v0 示例｜部分接入
+### G1｜接通上游 AUIP v0 示例｜已完成
 
-上游验证产物绑定、一次性票据、manifest、状态修订和动作回执。DeskAI2 已有精简应用协议。按固定提交的协议接通一份上游示例，验证注册、状态上报、声明动作、回执和断线失效。[上游协议校验](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/auip_contract.py) · [上游应用连接](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/auip_app_connection.py) · [上游 2048 示例](https://github.com/Code-Amadeus/Amadeus/tree/be9b97aef2ac3affb200998f8af3aab72aa22f6c/examples/auip-2048) · [本地应用 Host](../../packages/app-core/src/index.ts)
+Host 校验已登记的入口、manifest 和引用资源，通过一次性票据建立受限的 `amadeus.auip/v0` 连接。固定提交的原版 2048 在 Electron 完成注册、上报棋盘、执行声明滑动、返回回执和语义事件，窗口关闭后会话断开。[上游协议校验](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/auip_contract.py) · [上游应用连接](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/auip_app_connection.py) · [上游 2048 示例](https://github.com/Code-Amadeus/Amadeus/tree/be9b97aef2ac3affb200998f8af3aab72aa22f6c/examples/auip-2048) · [本地应用 Host](../../packages/app-core/src/app-host.ts) · [实施记录](./work-review-auip-20261112.md)
 
-### G2｜控制器租约与用户接管｜待接入
+### G2｜控制器租约与用户接管｜已完成
 
-上游 AppSession 校验动作前置条件，并为声明 `controller/v1` 的应用维护租约与用户接管状态。DeskAI2 已按声明动作校验请求。接通 G1 后用带控制器的样例验证动作取得租约、用户接管撤销租约，以及过期修订上的请求被拒绝。[上游运行时](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/auip_runtime.py) · [上游控制器示例](https://github.com/Code-Amadeus/Amadeus/tree/be9b97aef2ac3affb200998f8af3aab72aa22f6c/examples/auip-bullet-hell)
+Host 校验当前修订、接管前后的授权版本、参数与应用动作前置条件。声明的控制器策略在应用回执被接受后启用限时租约，用户接管将应用切换到观察模式并发出撤销。已在原版弹幕样例观察到租约生效和接管后双方回到空闲，并验证过期修订和接管后的动作被拒绝。[上游运行时](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/auip_runtime.py) · [上游控制器示例](https://github.com/Code-Amadeus/Amadeus/tree/be9b97aef2ac3affb200998f8af3aab72aa22f6c/examples/auip-bullet-hell) · [本地控制器](../../packages/app-core/src/controller.ts) · [实施记录](./work-review-auip-20261112.md)
 
 ## 推进顺序
 
 1. 从 I2 开始验证播放驱动的表现，再接 I1 和 H1。
-2. 先补 A1、A2 的引用与回执，再推进 C1/C2 和 D1/D2。E1、E2 提供工作区与交付事实，F1/F2 用这些证据更新任务完成度。
-3. G1 跑通上游样例后再做 G2。H4 和 I3 分别按知识素材和角色场景的准备情况推进。
+2. A1、A2 继续补引用与回执。C 至 G 的实施与验证已记在对应条目。
+3. H4 和 I3 分别按知识素材和角色场景的准备情况推进。
 
 每轮更新对应条目，附实现提交和实际验证结果。物理设备验收记录在对应实施文档中。

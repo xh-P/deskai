@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('deskai', Object.freeze({
   openArtifact: (id: string, interact: boolean) => ipcRenderer.invoke('deskai:artifact-open', id, interact),
   exportArtifact: (id: string) => ipcRenderer.invoke('deskai:artifact-export', id),
   appAction: (input: unknown) => ipcRenderer.invoke('deskai:app-action', input),
+  setAppMode: (id: string, mode: string) => ipcRenderer.invoke('deskai:app-mode', id, mode),
   closeApp: (id: string) => ipcRenderer.invoke('deskai:app-close', id),
   onHostSnapshot: (callback: (snapshot: unknown) => void) => {
     const listener = (_: unknown, snapshot: unknown) => callback(snapshot);

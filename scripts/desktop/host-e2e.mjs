@@ -71,7 +71,7 @@ if (!process.versions.electron) {
     }
     const plan = await planner.plan(capabilitiesOnly
       ? '能帮我在当前项目创建 capability-check.txt，内容为 DESKAI_CAPABILITY_OK 吗？现在就做，只需这个文件。'
-      : '请在当前项目新建一个可与角色协作的单文件 HTML 待办应用，保存为 todo.html。界面极简，只要输入框、添加按钮和列表。通过协作协议声明添加待办动作并发布当前列表状态。可以嵌入协作客户端 helper，但不要直接复制现成的 todo.html 示例；不要增加测试脚本或其他业务文件。', planningContext(host.snapshot()));
+      : '请在当前项目新建一个可与角色协作的 AUIP v0 HTML 待办应用，入口保存为 todo.html。界面极简，只要输入框、添加按钮和列表。按任务提供的协议准备清单与客户端 helper，声明添加待办动作并发布当前列表状态。请自己写待办业务，不直接复制现成的 todo.html，也不要增加测试脚本。', planningContext(host.snapshot()));
     assert.equal(plan.intent, 'submit');
     if (!capabilitiesOnly) assert.equal(plan.authoring, true);
     const receipt = await host.execute(plan); report.submitted = receipt.kind === 'task-submitted';
@@ -96,13 +96,13 @@ if (!process.versions.electron) {
     console.log('Host e2e: application registered; planning a semantic action');
     const action = await planner.plan('请在这个待办应用中添加一条待办：明天复核清单。', planningContext(host.snapshot()));
     assert.equal(action.intent, 'app');
-    const response = await host.execute(action);
+    const response = await host.execute(action, { revision: connected.revision, generation: connected.generation });
     report.actionAccepted = response.receipt.accepted === true;
     report.stateUpdated = JSON.stringify(host.apps.listSessions().find(session => session.id === connected.id)?.state).includes('明天复核清单');
     assert.ok(report.actionAccepted && report.stateUpdated);
     host.apps.closeSession(connected.id);
-    await until(() => host.apps.listSessions().find(session => session.id === connected.id)?.status === 'disconnected', 'app disconnect', 5000);
-    await assert.rejects(host.apps.invokeAction(connected.id, action.action, action.payload));
+    await until(() => host.apps.listSessions().find(session => session.id === connected.id)?.status === 'closed', 'app disconnect', 5000);
+    await assert.rejects(host.apps.invokeAction(connected.id, action.action, action.payload, connected));
     report.disconnectedActionRejected = true; report.passed = true;
   } catch (error) {
     report.error = error instanceof Error ? error.message : String(error);

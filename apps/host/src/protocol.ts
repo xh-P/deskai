@@ -1,4 +1,5 @@
-import type { Artifact, SessionSnapshot } from '../../../packages/app-core/src/index.ts';
+import type { AppStateVersion, Artifact, SessionSnapshot } from '../../../packages/app-core/src/index.ts';
+import type { EngagementMode } from '../../../packages/app-core/src/auip-contract.ts';
 import type { ExportReceipt } from '../../../packages/app-core/src/exports.ts';
 import type { WorkRuntimeStatus } from '../../../packages/dsh-adapter/src/work-runtime.ts';
 import type { CoordinationPlan } from '../../../packages/voice-core/src/coordination.ts';
@@ -19,11 +20,12 @@ export type HostSelection = { projectId?: string; taskId?: string; appSessionId?
 export type HostCommand =
   | { type: 'work'; command: Exclude<WorkUiCommand, { type: 'native-open' }> }
   | ({ type: 'select' } & HostSelection)
-  | { type: 'plan'; plan: CoordinationPlan }
+  | { type: 'plan'; plan: CoordinationPlan; appVersion?: AppStateVersion }
   | { type: 'diff'; attemptId: string }
   | { type: 'artifact-preview' | 'artifact-launch'; artifactId: string }
   | { type: 'artifact-export'; artifactId: string; destination: string }
-  | { type: 'app-action'; sessionId: string; action: string; payload: unknown }
+  | { type: 'app-action'; sessionId: string; action: string; payload: unknown; expected: AppStateVersion }
+  | { type: 'app-mode'; sessionId: string; mode: EngagementMode }
   | { type: 'app-close'; sessionId: string }
   | { type: 'native-window' }
   | { type: 'shutdown' };

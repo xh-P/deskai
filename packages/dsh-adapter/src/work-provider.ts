@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { ProviderBinding, ProviderEvent, ProviderPort, ProviderRequest, ProviderResult } from '../../work-core/src/types.ts';
-import { APP_AUTHORING_GUIDE } from '../../app-core/src/index.ts';
+import { APP_AUTHORING_GUIDE } from '../../app-core/src/authoring.ts';
 import { errorMessage, followDshSession, within, type DshEvent, type DshWorkTransport } from './session-feed.ts';
 
 export type { DshWorkTransport } from './session-feed.ts';
@@ -71,7 +71,7 @@ export class DshWorkProvider implements ProviderPort {
     const result = await this.run(request, onEvent, binding);
     if (!result.unsettled) {
       try { for (const file of await verifiedArtifacts(request.projectPath, request.taskId, request.attemptId)) onEvent({ type: 'artifact', path: file }); }
-      catch { onEvent({ type: 'activity', text: '产物清单无效，请在任务工作台检查生成文件。' }); }
+      catch (error) { onEvent({ type: 'artifact-manifest-invalid', reason: errorMessage(error) }); }
     }
     return result;
   }
@@ -269,9 +269,10 @@ export class DshWorkProvider implements ProviderPort {
       if (active.cancelRequested) return sessionResult('cancelled');
       const manifest = path.join(request.projectPath, '.deskai2-artifacts', `${request.attemptId}.json`);
       const artifactInstructions = `\n\nDeskAI task artifact protocol: If you create or modify files that the user should open, write a JSON manifest at ${manifest} with exactly {"taskId":${JSON.stringify(request.taskId)},"attemptId":${JSON.stringify(request.attemptId)},"paths":["project-relative/file.ext"]}. Include only actual files you produced for this task. Do not list the manifest itself. Paths must remain inside the current project directory. This is a task-scoped handoff, not a claim that a file exists.`;
-      const authoringInstructions = request.authoring ? `\n\nDeskAI cooperative app authoring:\n${APP_AUTHORING_GUIDE}\nHelper source: ${path.join(this.root, 'packages/app-core/examples/deskai-app-client.js')}. Embed this helper's actual source in the HTML file.` : '';
+      const authoringInstructions = request.authoring ? `\n\nDeskAI AUIP v0 app authoring:\n${APP_AUTHORING_GUIDE}\nHelper source: ${path.join(this.root, 'packages/app-core/examples/deskai-app-client.js')}.` : '';
+      const deliveryInstructions = request.expectedArtifacts?.length ? `\nRequired files for review: ${JSON.stringify(request.expectedArtifacts)}. Deliver these files in the working directory and list newly produced files in the Attempt artifact manifest.` : '';
       if (!active.connected) throw new Error('WORK_SESSION_NOT_READY');
-      await this.submitPrompt(active, request.prompt + artifactInstructions + authoringInstructions);
+      await this.submitPrompt(active, request.prompt + artifactInstructions + deliveryInstructions + authoringInstructions);
       active.acceptingInput = true;
       if (active.cancelRequested) await cancelNative();
       return await within(end, 30 * 60_000, 'WORK_SETTLEMENT_TIMEOUT');

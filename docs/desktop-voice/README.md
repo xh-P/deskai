@@ -1,7 +1,8 @@
 # 桌面语音与任务工作台
 
-当前入口是源码开发模式：`npm run desktop:dev`。本轮继续优化，不生成安装包或目录包。
+当前入口是源码开发模式 `npm run desktop:dev`。
 
+- [Work 验收与 AUIP 应用协作](./work-review-auip-20261112.md) 记录 F、G 的验收证据、上游样例和复现入口。
 - [独立 Host、执行恢复与交付](./host-work-20261112.md) 记录 C、D、E 的源码入口、真实 dsh 验证与待确认项。
 - [语音延迟实施记录](./voice-latency-20261111.md) 记录 B4、B5 的 GPU 对照、投机确认和端到端冒烟。
 - [语音稳定性实施记录](./voice-stability-20261111.md) 记录本轮改造、冒烟结果与设备验收项。

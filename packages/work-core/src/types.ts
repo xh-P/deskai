@@ -1,3 +1,5 @@
+import type { AcceptanceReceipt, CompletionAssessment, DeliveryEvidence } from './completion.ts';
+
 export type WorkStatus = 'queued' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'unknown';
 export interface WorkProject { id: string; name: string; path: string; createdAt: string }
 export interface WorkDraft { id: string; projectId: string; text: string; updatedAt: string }
@@ -7,10 +9,11 @@ export type WorkWorkspace =
 export type WorkBaseline = { kind: 'git'; root: string; tree: string } | { kind: 'local' };
 export interface WorkChanges { before: string; after: string; fileCount: number }
 export interface ProviderBinding { baseline: number; requestIds: string[]; removedIds?: string[] }
-export interface WorkTask { id: string; projectId: string; title: string; prompt: string; authoring?: boolean; status: WorkStatus; workspace?: WorkWorkspace; attemptIds: string[]; createdAt: string; updatedAt: string }
+export interface WorkTask { id: string; projectId: string; title: string; prompt: string; authoring?: boolean; expectedArtifacts?: string[]; status: WorkStatus; workspace?: WorkWorkspace; attemptIds: string[]; createdAt: string; updatedAt: string }
 export interface WorkAttempt {
   id: string; taskId: string; status: WorkStatus; prompt: string; providerSessionId?: string; binding?: ProviderBinding;
   baseline?: WorkBaseline; changes?: WorkChanges; artifactFiles?: { relativePath: string; sha256: string }[]; deliveryError?: string; result?: ProviderResult;
+  delivery?: DeliveryEvidence; assessment?: CompletionAssessment; acceptance?: AcceptanceReceipt;
   summary?: string; error?: string; createdAt: string; updatedAt: string;
 }
 export interface WorkEvent { id: string; taskId: string; attemptId: string; time: string; type: string; data: unknown; providerSeq?: number }
@@ -19,7 +22,8 @@ export interface WorkSnapshot { version: 1; projects: WorkProject[]; drafts: Wor
 export type WorkUiCommand =
   | { type: 'project-create'; name: string; path: string }
   | { type: 'draft-save'; projectId: string; text: string }
-  | { type: 'submit'; projectId: string; prompt: string; authoring?: boolean }
+  | { type: 'submit'; projectId: string; prompt: string; authoring?: boolean; expectedArtifacts?: string[] }
+  | { type: 'accept' | 'recheck'; taskId: string; attemptId: string }
   | { type: 'append' | 'continue'; taskId: string; prompt: string }
   | { type: 'retry' | 'cancel' | 'recover'; taskId: string }
   | { type: 'native-open'; taskId: string }
@@ -32,8 +36,9 @@ export type ProviderEvent = (
   | { type: 'permission' | 'question'; requestId: string; text: string; data?: unknown }
   | { type: 'request-resolved'; requestId: string }
   | { type: 'artifact'; path: string; data?: unknown }
+  | { type: 'artifact-manifest-invalid'; reason: string }
 ) & { providerSeq?: number };
-export interface ProviderRequest { taskId: string; attemptId: string; projectPath: string; prompt: string; providerSessionId?: string; authoring?: boolean }
+export interface ProviderRequest { taskId: string; attemptId: string; projectPath: string; prompt: string; providerSessionId?: string; authoring?: boolean; expectedArtifacts?: string[] }
 export interface ProviderResult {
   providerSessionId?: string; outcome: 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'unknown';
   summary?: string; error?: string; unsettled?: boolean;

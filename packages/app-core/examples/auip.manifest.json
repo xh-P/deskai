@@ -1,0 +1,16 @@
+{
+  "schema": "amadeus.auip/v0",
+  "app": {"id": "deskai.todo", "title": "待办清单", "version": "1.0"},
+  "events": {"todo.added": {}, "todo.toggled": {}},
+  "actions": {
+    "todo.add": {
+      "description": "Add one todo item.",
+      "inputSchema": {"type": "object", "properties": {"text": {"type": "string", "maxLength": 120}}, "required": ["text"], "additionalProperties": false}
+    },
+    "todo.toggle": {
+      "description": "Toggle one existing item by id.",
+      "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"], "additionalProperties": false}
+    }
+  },
+  "stances": ["spectator", "participant"]
+}

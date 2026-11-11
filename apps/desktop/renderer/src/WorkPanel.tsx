@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import type { WorkEvent, WorkSnapshot } from '../../../../packages/work-core/src/types.ts'
 import { pendingRequests } from '../../../../packages/work-core/src/requests.ts'
+import { completionLabel } from '../../../../packages/work-core/src/completion.ts'
 
 import type { WorkUiCommand } from '../../../../packages/work-core/src/types.ts'
 
@@ -18,7 +19,7 @@ const row: CSSProperties = { display: 'flex', flexWrap: 'wrap', gap: 8, alignIte
 const field: CSSProperties = { maxWidth: '100%', boxSizing: 'border-box', padding: 7 }
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 const display = (value: unknown): string => typeof value === 'string' ? value : JSON.stringify(value, null, 2) ?? ''
-const statusText: Record<string, string> = { queued: '排队', running: '运行中', waiting: '等待答复', completed: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断', unknown: '状态未知' }
+const statusText: Record<string, string> = { queued: '排队', running: '运行中', waiting: '等待答复', completed: '执行已结束', failed: '失败', cancelled: '已取消', interrupted: '已中断', unknown: '状态未知' }
 
 function RequestReply({ event, taskId, send }: { event: WorkEvent; taskId: string; send: (command: WorkUiCommand) => Promise<boolean> }) {
   const [selected, setSelected] = useState<Record<string, string[]>>({})
@@ -77,6 +78,7 @@ export default function WorkPanel({ snapshot, selectedProjectId, selectedTaskId,
   const [projectPath, setProjectPath] = useState('')
   const [authoring, setAuthoring] = useState(false)
   const [draft, setDraft] = useState('')
+  const [expectedArtifacts, setExpectedArtifacts] = useState('')
   const [followup, setFollowup] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -86,12 +88,14 @@ export default function WorkPanel({ snapshot, selectedProjectId, selectedTaskId,
   const attempts = task ? snapshot.attempts.filter(item => item.taskId === task.id) : []
   const events = task ? snapshot.events.filter(item => item.taskId === task.id) : []
   const lastAttempt = attempts.at(-1)
+  const assessment = lastAttempt?.assessment
   const live = !!task && ['queued', 'running', 'waiting'].includes(task.status)
   const unsettled = lastAttempt?.result?.unsettled === true
   const pending = pendingRequests(snapshot).filter(event => event.taskId === task?.id)
 
   useEffect(() => {
     setDraft(snapshot.drafts.find(item => item.projectId === selectedProjectId)?.text ?? '')
+    setExpectedArtifacts('')
     setFollowup('')
     // Preserve edits while snapshots update; switching projects reloads the stored draft.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -121,21 +125,39 @@ export default function WorkPanel({ snapshot, selectedProjectId, selectedTaskId,
       <div style={box}>
         <label htmlFor="work-draft"><strong>任务草稿</strong></label>
         <textarea id="work-draft" style={{ ...field, display: 'block', width: '100%', minHeight: 90, marginTop: 8 }} value={draft} onChange={e => setDraft(e.target.value)} placeholder="描述要交给工作代理的任务" />
+        <label htmlFor="work-expected">交付文件（可选，每行一个相对路径）</label>
+        <textarea id="work-expected" style={{ ...field, display: 'block', width: '100%' }} rows={2} value={expectedArtifacts} onChange={e => setExpectedArtifacts(e.target.value)} />
         <div style={row}>
           <label><input type="checkbox" checked={authoring} onChange={e => setAuthoring(e.target.checked)} />创建可与角色协作的应用</label>
           <button type="button" disabled={busy} onClick={() => void send({ type: 'draft-save', projectId: project.id, text: draft })}>保存草稿</button>
-          <button type="button" disabled={busy || !draft.trim()} onClick={() => void send({ type: 'submit', projectId: project.id, prompt: draft, authoring })}>提交任务</button>
+          <button type="button" disabled={busy || !draft.trim()} onClick={() => void send({ type: 'submit', projectId: project.id, prompt: draft, authoring,
+            expectedArtifacts: expectedArtifacts.split('\n').map(line => line.trim()).filter(Boolean) })}>提交任务</button>
         </div>
       </div>
       <div style={box}>
         <strong>任务列表</strong>
         {tasks.length === 0 ? <p>这个项目还没有任务。</p> : <ul>{tasks.map(item => <li key={item.id}>
-          <button type="button" aria-pressed={selectedTaskId === item.id} onClick={() => { setFollowup(''); onSelectTask(item.id) }}>{item.title}</button> <span>{statusText[item.status] ?? item.status}</span>
+          <button type="button" aria-pressed={selectedTaskId === item.id} onClick={() => { setFollowup(''); onSelectTask(item.id) }}>{item.title}</button>{' '}
+          <span>{item.status === 'completed' ? completionLabel(snapshot.attempts.find(attempt => attempt.id === item.attemptIds.at(-1))?.assessment) : statusText[item.status]}</span>
         </li>)}</ul>}
       </div>
     </>}
     {task && <div style={box}>
       <h3>{task.title}</h3><p>状态：{statusText[task.status] ?? task.status}</p>
+      {assessment && !live && <div style={box}>
+        <strong>{completionLabel(assessment)}</strong>
+        {assessment.missingFiles.length > 0 && <p>待交付文件 · {assessment.missingFiles.join('、')}</p>}
+        {assessment.missingApp && <p>待交付可校验的 AUIP 应用</p>}
+        {assessment.delivery.failures.length > 0 && <ul>{assessment.delivery.failures.map((failure, index) =>
+          <li key={index}>{failure.relativePath ? `${failure.relativePath} · ` : ''}{failure.reason}</li>)}</ul>}
+        {assessment.delivery.files.length > 0 && <p>已校验文件 · {assessment.delivery.files.map(file => file.relativePath).join('、')}</p>}
+        {assessment.delivery.appEntries.length > 0 && <p>AUIP 包检查通过 · {assessment.delivery.appEntries.join('、')}</p>}
+        {assessment.review === 'review_ready' && lastAttempt && <button type="button" disabled={busy}
+          onClick={() => void send({ type: 'accept', taskId: task.id, attemptId: lastAttempt.id })}>确认验收</button>}
+        {assessment.review === 'open' && assessment.execution === 'completed' && lastAttempt && <button type="button" disabled={busy}
+          onClick={() => void send({ type: 'recheck', taskId: task.id, attemptId: lastAttempt.id })}>重新校验交付</button>}
+        {lastAttempt?.acceptance && <p>验收时间 · {new Date(lastAttempt.acceptance.acceptedAt).toLocaleString()}</p>}
+      </div>}
       {task.workspace && <p style={{ overflowWrap: 'anywhere' }}>执行目录 · {task.workspace.path}{task.workspace.kind === 'git' && ` · ${task.workspace.branch}`}</p>}
       <div style={row}>
         {live && <button type="button" disabled={busy} onClick={() => void send({ type: 'cancel', taskId: task.id })}>取消任务</button>}
@@ -149,8 +171,9 @@ export default function WorkPanel({ snapshot, selectedProjectId, selectedTaskId,
       {live && pending.map(event => <RequestReply key={event.id} event={event} taskId={task.id} send={send} />)}
       <details open><summary>执行记录（{attempts.length}）</summary>{attempts.map((attempt, index) => <div key={attempt.id} style={box}>
         <strong>第 {index + 1} 次 · {statusText[attempt.status] ?? attempt.status}</strong>
+        {attempt.acceptance && <div>验收回执 · {attempt.acceptance.id}</div>}
         {attempt.providerSessionId && <div>原生会话：{attempt.providerSessionId}</div>}
-        {attempt.summary && <p style={{ whiteSpace: 'pre-wrap' }}>{attempt.summary}</p>}{attempt.error && <p style={{ color: '#a22', whiteSpace: 'pre-wrap' }}>{attempt.error}</p>}
+        {attempt.summary && <p style={{ whiteSpace: 'pre-wrap' }}>执行代理报告 · {attempt.summary}</p>}{attempt.error && <p style={{ color: '#a22', whiteSpace: 'pre-wrap' }}>{attempt.error}</p>}
         {attempt.changes && <AttemptDiff attemptId={attempt.id} fileCount={attempt.changes.fileCount} />}
         {attempt.deliveryError && <p role="alert">差异收集失败 · {attempt.deliveryError}</p>}
         <ul>{events.filter(event => event.attemptId === attempt.id).map(event => <li key={event.id} style={{ overflowWrap: 'anywhere' }}><time>{new Date(event.time).toLocaleString()}</time> · {event.type}<pre style={{ whiteSpace: 'pre-wrap', margin: '3px 0 8px' }}>{display(event.data)}</pre></li>)}</ul>
