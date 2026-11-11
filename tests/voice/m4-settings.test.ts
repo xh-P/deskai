@@ -31,14 +31,15 @@ test('legacy saved settings gain a dormant friend mode without changing the file
       inputDeviceId: 'mic-old', outputDeviceId: 'speaker-old', volume: 0.35, speed: 1.4, closeToTray: false };
     const file = path.join(directory, 'voice-preferences.json'), original = JSON.stringify(legacy);
     await writeFile(file, original);
-    assert.deepEqual(await loadPreferences(directory), { ...legacy, relationshipMode: 'friend', wakePhrases: null, aecMode: null });
+    assert.deepEqual(await loadPreferences(directory), { ...legacy, relationshipMode: 'friend', wakePhrases: null, aecMode: null, characterKnowledge: false });
     assert.equal(await readFile(file, 'utf8'), original);
-    const next = mergePreferences(await loadPreferences(directory), { personaId: 'nagato-mainline-post-disappearance', relationshipMode: 'kyon' });
-    assert.deepEqual(next, { ...legacy, personaId: 'nagato-mainline-post-disappearance', relationshipMode: 'kyon', wakePhrases: null, aecMode: null });
+    const next = mergePreferences(await loadPreferences(directory), { personaId: 'nagato-mainline-post-disappearance', relationshipMode: 'kyon', characterKnowledge: true });
+    assert.deepEqual(next, { ...legacy, personaId: 'nagato-mainline-post-disappearance', relationshipMode: 'kyon', wakePhrases: null, aecMode: null, characterKnowledge: true });
     await savePreferences(directory, next);
     assert.deepEqual(await loadPreferences(directory), next);
     for (const relationshipMode of ['lover', '', null, 1]) assert.throws(() => mergePreferences(next, { relationshipMode }), /INVALID_RELATIONSHIP/u);
     assert.throws(() => mergePreferences(next, { personaId: '../evil' }), /INVALID_PERSONA/u);
+    assert.throws(() => mergePreferences(next, { characterKnowledge: 'true' }), /INVALID_PREFERENCES/u);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 

@@ -9,8 +9,6 @@ import { createInputController, encodePcm16Wav, type InputController, type Input
 import { VAD_FRAME_SAMPLES } from '../../../packages/voice-core/src/input-config.ts';
 import type { CaptureFrame } from '../renderer/src/bridge.d.ts';
 import { DialogueController, type DialogueEvent, type DialoguePreferences } from '../../../packages/voice-core/src/dialogue.ts';
-import { validatePersona } from '../../../packages/voice-core/src/prompts.ts';
-import { PERSONA_IDS } from '../../../packages/voice-core/src/persona-catalog.ts';
 import { FixtureChatPort } from './fixture-chat.ts';
 import { LocalTtsService, type TtsStatus, type VoiceSelection } from '../../../packages/tts-adapter/src/index.ts';
 import { SpeechOutput, type SpeechPlaybackReport } from './speech-output.ts';
@@ -37,6 +35,8 @@ import type { WorkUiCommand } from '../../../packages/work-core/src/types.ts';
 import { completionLabel, workExecutionLabel, workOperationLabel, type CompletionAssessment } from '../../../packages/work-core/src/completion.ts';
 import type { AppStateVersion } from '../../../packages/app-core/src/index.ts';
 import type { EngagementMode } from '../../../packages/app-core/src/auip-contract.ts';
+import { CharacterStore, ConversationArchive, conversationSummary, type CharacterDraft, type ConversationRecord } from './character-store.ts';
+import { CharacterKnowledge } from './character-knowledge.ts';
 
 const root = path.resolve(process.env.DESKAI_PROJECT_ROOT ?? process.cwd());
 const assetRoot = path.resolve(process.env.DESKAI_ASSET_ROOT ?? root);
@@ -86,7 +86,10 @@ let opening: Promise<void> | undefined;
 let outputPaused = false;
 let voiceSubmitting = false;
 let preferences: DesktopPreferences = { ...defaultPreferences };
-let personas: { id: string; displayName: string; revision: number }[] = [];
+let characters: CharacterStore;
+let conversations: ConversationArchive;
+let activeConversation: ConversationRecord | undefined;
+const characterKnowledge = new CharacterKnowledge(root);
 let tray: Tray | undefined;
 let petWindow: PetWindowManager | undefined;
 const petActivity = new PetActivity();
@@ -220,7 +223,7 @@ function attachOutput() {
       if (dialogue !== activeDialogue || !sessionId) return;
       activeDialogue.recordPlayback(progress); refreshOutput();
       petActivity.spoken(progress); syncPet();
-      if (progress.completed) ttsMetrics.playedSegments++;
+      if (progress.completed) { ttsMetrics.playedSegments++; checkpointConversation(); }
       if (ttsSmoke) maybeFinishTtsSmoke();
     },
     onFinalSegment: (attemptId, segmentId) => { activeDialogue.finalSegment(attemptId, segmentId); refreshOutput(); },
@@ -230,6 +233,7 @@ function attachOutput() {
 }
 function dialogueEvent(event: DialogueEvent) {
   if (!sessionId) return;
+  if (event.type === 'user' || event.type === 'assistant-state') checkpointConversation();
   if (event.type === 'model-state' && event.state === 'generating') {
     outputTimeline.record('model-started', { sessionId, generationId: dialogue?.generationId });
   } else if (event.type === 'assistant-delta') {
@@ -272,6 +276,7 @@ async function stopSession(retainPetError = false) {
   controller?.stop();
   planningRevision++;
   await planner?.cancel(); planner = undefined;
+  checkpointConversation();
   const oldDialogue = dialogue;
   const oldOutput = voiceOutput;
   const oldSpeechRuntime = speechRuntime;
@@ -280,6 +285,7 @@ async function stopSession(retainPetError = false) {
   voiceOutput = undefined;
   outputBusy = false;
   dialogue = undefined;
+  activeConversation = undefined;
   sessionId = '';
   outputActive = false;
   outputPaused = false;
@@ -292,6 +298,16 @@ async function stopSession(retainPetError = false) {
   await oldDialogue?.close().catch(() => {});
   await oldOutput?.close().catch(() => {});
   await oldSpeechRuntime?.dispose();
+  await conversations?.flush();
+}
+
+function checkpointConversation() {
+  if (activeConversation && dialogue) conversations.checkpoint(activeConversation.id, dialogue.projectHistory().history);
+}
+
+function conversationPreferences(record: ConversationRecord, settings = preferences): DialoguePreferences {
+  return { personaId: record.persona.id, persona: record.persona, relationshipMode: record.relationshipMode,
+    replyLanguage: settings.replyLanguage, voiceId: settings.voiceId, characterKnowledge: settings.characterKnowledge };
 }
 
 async function getDesktopHost(): Promise<HostClient> {
@@ -357,8 +373,10 @@ function announceControl(facts: ControlReceipt) {
 }
 
 async function submitCoordinated(input: DialogueInput, inputId?: string): Promise<{ accepted: boolean }> {
+  await preferenceWrite;
   const current = dialogue, currentSession = sessionId;
-  if (!current || !currentSession) return { accepted: false };
+  const owner = activeConversation;
+  if (!current || !currentSession || !owner || input.isEligible?.() === false) return { accepted: false };
   if (!input.speculation) current.discardSpeculative();
   if (smokeMode && !realModelSmoke || !planner) {
     const host = await getDesktopHost();
@@ -372,7 +390,7 @@ async function submitCoordinated(input: DialogueInput, inputId?: string): Promis
   try {
     const host = await getDesktopHost();
     const turn = { id: inputId ?? (input.speculation ? `${currentSession}_${input.speculation.inputRevision}` : randomUUID()),
-      conversationId: currentSession, text: input.text };
+      conversationId: owner.id, text: input.text };
     const context = await host.command<ControlContext>({ type: 'plan-context', turn });
     if (revision !== planningRevision || current !== dialogue || currentSession !== sessionId) return { accepted: false };
     const decision = await planner.plan(input.text, context.planning);
@@ -385,7 +403,7 @@ async function submitCoordinated(input: DialogueInput, inputId?: string): Promis
     if (revision !== planningRevision || current !== dialogue || currentSession !== sessionId) return { accepted: committed };
     if (facts.kind === 'reference-clarification') send({ type: 'reference-card', sessionId: currentSession, card: facts });
     else if (decision.intent === 'choose') closeReference(currentSession, decision.clarificationId);
-    const result = await current.submit({ ...input, ...(committed ? { onAccepted: undefined, isEligible: undefined, requiresReply: true } : {}),
+    const result = await current.submit({ ...input, ...(committed ? { onAccepted: undefined, isEligible: undefined, requiresReply: true, characterKnowledge: false } : {}),
       hostContext: committed ? { ...context.chat, receipt: facts } : context.chat });
     if (committed && !result.accepted && currentSession === sessionId) announceControl(facts);
     return { accepted: committed || result.accepted };
@@ -400,20 +418,20 @@ async function submitCoordinated(input: DialogueInput, inputId?: string): Promis
 }
 ipcMain.handle('deskai:reference-select', async (event, selection: ReferenceSelection) => {
   trusted(event);
-  const conversationId = sessionId;
-  if (!conversationId) throw new Error('COORDINATION_SESSION_UNAVAILABLE');
-  const facts = await (await getDesktopHost()).command<ControlReceipt>({ type: 'reference-select', conversationId, selection });
-  if (conversationId !== sessionId) return facts;
-  closeReference(conversationId, selection.clarificationId);
+  const owner = activeConversation, liveSession = sessionId;
+  if (!owner || !liveSession) throw new Error('COORDINATION_SESSION_UNAVAILABLE');
+  const facts = await (await getDesktopHost()).command<ControlReceipt>({ type: 'reference-select', conversationId: owner.id, selection });
+  if (owner !== activeConversation || liveSession !== sessionId) return facts;
+  closeReference(liveSession, selection.clarificationId);
   announceControl(facts);
   return facts;
 });
 ipcMain.handle('deskai:reference-dismiss', async (event, clarificationId: string) => {
   trusted(event);
-  const conversationId = sessionId;
-  if (!conversationId) return;
-  await (await getDesktopHost()).command({ type: 'reference-dismiss', conversationId, clarificationId });
-  closeReference(conversationId, clarificationId);
+  const owner = activeConversation, liveSession = sessionId;
+  if (!owner || !liveSession) return;
+  await (await getDesktopHost()).command({ type: 'reference-dismiss', conversationId: owner.id, clarificationId });
+  closeReference(liveSession, clarificationId);
 });
 ipcMain.handle('deskai:work-open', async event => { trusted(event); return workWindow.open(await getDesktopHost()); });
 ipcMain.handle('deskai:work-status', event => { trusted(event); return desktopHost?.cached()?.runtime ?? { state: 'stopped' }; });
@@ -458,12 +476,15 @@ ipcMain.handle('deskai:app-close', async (event, id: string) => { trusted(event)
 
 ipcMain.handle('deskai:runtime', event => {
   trusted(event);
-  return { smoke: smokeMode, fakeMedia, dialogueSmoke, ttsSmoke, preferences, personas, aecMode: preferences.aecMode ?? inputRuntimeConfig.aec.mode, defaultWakePhrases: inputRuntimeConfig.wake.phrases,
+  return { smoke: smokeMode, fakeMedia, dialogueSmoke, ttsSmoke, preferences, personas: characters.list(), aecMode: preferences.aecMode ?? inputRuntimeConfig.aec.mode, defaultWakePhrases: inputRuntimeConfig.wake.phrases,
     interruption: inputRuntimeConfig.interruption, endpoint: inputRuntimeConfig.endpoint,
     speechStatus: lastSpeechStatus, assetStatus, ttsStatus, voices: tts?.registry() ?? [],
     voiceDiagnostics: { continuationWindowMs, input: metrics.inputTimeline, output: outputTimeline.snapshot(), asr: speechRuntime?.diagnostics() },
     versions: { electron: process.versions.electron ?? '', chrome: process.versions.chrome ?? '' } };
 });
+ipcMain.handle('deskai:character', (event, id: string) => { trusted(event); return characters.get(id); });
+ipcMain.handle('deskai:character-save', (event, draft: CharacterDraft) => { trusted(event); return characters.save(draft); });
+ipcMain.handle('deskai:conversations', event => { trusted(event); return conversations.list(); });
 ipcMain.handle('deskai:pet-snapshot', event => {
   trusted(event);
   if (!petWindow) throw new Error('PET_NOT_READY');
@@ -489,16 +510,23 @@ ipcMain.on('pet:context-menu', event => { if (petWindow?.owns(event)) petWindow.
 ipcMain.on('pet:geometry', (event, value: unknown) => {
   if (petWindow?.owns(event)) petWindow.reportGeometry(value as PetGeometry);
 });
-async function openConversation() {
-  if (sessionId) return;
+async function openConversation(requestedId?: string) {
+  if (sessionId) {
+    if (requestedId && requestedId !== activeConversation?.id) throw new Error('CONVERSATION_ALREADY_OPEN');
+    return;
+  }
   if (opening) return opening;
   const work = (async () => {
   const epoch = ++sessionEpoch;
+  const restored = requestedId === undefined ? undefined : conversations.get(requestedId);
   if (dialogueSmoke) {
+    const record = restored ?? await conversations.create(characters.get(preferences.personaId), preferences.relationshipMode);
+    if (epoch !== sessionEpoch || shutdown) throw new Error('SESSION_START_CANCELLED');
+    activeConversation = record;
     sessionId = randomUUID();
     petActivity.startSession(sessionId); syncPet();
     fixturePort = new FixtureChatPort();
-    dialogue = new DialogueController(fixturePort, preferences, dialogueEvent);
+    dialogue = new DialogueController(fixturePort, conversationPreferences(record), dialogueEvent, undefined, record.history);
     return;
   }
   const service = speech ??= new LocalDshSpeech(root, status);
@@ -509,8 +537,11 @@ async function openConversation() {
   finally { if (preparingService === service) preparingService = undefined; }
   if (epoch !== sessionEpoch || shutdown) throw new Error('SESSION_START_CANCELLED');
   if (ttsSmoke && !realModelSmoke) fixturePort = new FixtureChatPort();
-  const chat = ttsSmoke && !realModelSmoke ? { port: fixturePort!, speculative: undefined } : await createChatRuntime(service, root);
+  const chat = ttsSmoke && !realModelSmoke ? { port: fixturePort!, speculative: undefined } : await createChatRuntime(service, root, characterKnowledge);
   if (epoch !== sessionEpoch || shutdown) { await chat.port.cancel(); throw new Error('SESSION_START_CANCELLED'); }
+  const record = restored ?? await conversations.create(characters.get(preferences.personaId), preferences.relationshipMode);
+  if (epoch !== sessionEpoch || shutdown) throw new Error('SESSION_START_CANCELLED');
+  activeConversation = record;
   planner = new WorkPlanner(service, root);
   speechRuntime = new SpeechRuntime(service, inputRuntimeConfig.conversation, root);
   sessionId = randomUUID();
@@ -519,11 +550,11 @@ async function openConversation() {
   metrics.inputTimeline = [];
   outputTimeline.clear();
 
-  dialogue = new DialogueController(chat.port, preferences, dialogueEvent, chat.speculative && {
+  dialogue = new DialogueController(chat.port, conversationPreferences(record), dialogueEvent, chat.speculative && {
     ...chat.speculative, diagnostic: event => {
       if (sessionId === event.sessionId) outputTimeline.record(event.type, event);
     },
-  });
+  }, record.history);
   attachOutput();
   // Keep this instance across sessions so a canceled ASR task settles before
   // the new session can start another task on the same recognizer.
@@ -650,11 +681,16 @@ async function openConversation() {
   try { await work; } finally { if (opening === work) opening = undefined; }
 }
 function sessionDescription() {
-  return { sessionId, catalog: [{ voiceId: 'nagato-normal-v2', name: '常态有希 v2' }],
+  if (!activeConversation) throw new Error('CONVERSATION_NOT_OPEN');
+  const record = conversations.get(activeConversation.id);
+  return { sessionId, conversation: conversationSummary(record), history: record.history,
+    catalog: [{ voiceId: 'nagato-normal-v2', name: '常态有希 v2' }],
     status: dialogueSmoke ? '本地模拟模型验证' : captureArmed
       ? (wakeGate.snapshot(performance.now()).mode === 'wake' ? '等待唤醒：' + effectiveWakePhrases().join(' / ') : '连续对话中；空闲后自动回到唤醒待机') : '文字对话已就绪' };
 }
-ipcMain.handle('deskai:open-conversation', async event => { trusted(event); await openConversation(); return sessionDescription(); });
+ipcMain.handle('deskai:open-conversation', async (event, id?: string) => {
+  trusted(event); await preferenceWrite; await openConversation(id); return sessionDescription();
+});
 ipcMain.handle('deskai:start', async event => {
   trusted(event);
   await openConversation();
@@ -691,13 +727,16 @@ ipcMain.on('deskai:displayed', (event, value: unknown) => {
   trusted(event);
   const data = value as { sessionId?: string; attemptId?: string; characters?: number };
   if (data?.sessionId === sessionId && typeof data.attemptId === 'string' && Number.isSafeInteger(data.characters)) {
-    dialogue?.displayed(data.attemptId, data.characters!); refreshOutput();
+    dialogue?.displayed(data.attemptId, data.characters!); checkpointConversation(); refreshOutput();
   }
 });
 ipcMain.handle('deskai:preferences', async (event, value: unknown) => {
   trusted(event);
   const work = preferenceWrite.then(async () => {
     const next = mergePreferences(preferences, value);
+    const patch = value as Partial<DesktopPreferences>;
+    const current = activeConversation;
+    const card = patch.personaId !== undefined ? characters.get(next.personaId) : current?.persona;
     if (next.voiceId !== preferences.voiceId || next.referenceId !== preferences.referenceId) {
       await dialogue?.cancelOutput();
       await prepareTts();
@@ -707,7 +746,29 @@ ipcMain.handle('deskai:preferences', async (event, value: unknown) => {
       voiceSelection = await tts.selectVoice(voice.id, next.referenceId || voice.defaultReferenceId);
       next.referenceId = voiceSelection.referenceId;
     }
-    if (next.personaId !== preferences.personaId || next.replyLanguage !== preferences.replyLanguage || next.relationshipMode !== preferences.relationshipMode) await dialogue?.updatePreferences(next);
+    if (current && card) {
+      const relation = card.roleplay ? patch.relationshipMode ?? (card.id === current.persona.id ? current.relationshipMode : next.relationshipMode) : 'friend';
+      const identityChanged = card.id !== current.persona.id || relation !== current.relationshipMode;
+      if (identityChanged) {
+        const live = dialogue;
+        planningRevision++;
+        await planner?.cancel();
+        checkpointConversation();
+        const replacement = await conversations.create(characters.get(card.id), relation);
+        if (current === activeConversation && live === dialogue) {
+          await live?.updatePreferences(conversationPreferences(replacement, next));
+          if (current === activeConversation && live === dialogue) {
+            activeConversation = replacement;
+            if (planner && speech) planner = new WorkPlanner(speech, root);
+            send({ type: 'conversation-changed', sessionId, conversation: conversationSummary(replacement) });
+          }
+        }
+      } else if (next.replyLanguage !== preferences.replyLanguage || next.characterKnowledge !== preferences.characterKnowledge) {
+        planningRevision++;
+        await planner?.cancel();
+        await dialogue?.updatePreferences(conversationPreferences(current, next));
+      }
+    }
     const wakeChanged = JSON.stringify(next.wakePhrases) !== JSON.stringify(preferences.wakePhrases);
     if (!smokeMode) await savePreferences(app.getPath('userData'), next);
     preferences = next;
@@ -822,7 +883,8 @@ ipcMain.on('deskai:finish-dialogue-smoke', (event, input: unknown) => {
   const data = input as { checks?: Record<string, unknown>; notes?: unknown[]; simulated?: unknown };
   const checks = Object.fromEntries(Object.entries(data.checks ?? {}).filter(([, value]) => typeof value === 'boolean'));
   const required = ['directTextDisplayed', 'localQuietNoBubble', 'textQuestionDisplayed', 'shortAnswerWorked',
-    'retryWorked', 'cancelWorked', 'preferencesIndependent', 'roleplaySelectable', 'relationshipSelectable', 'noMicrophoneOpened', 'hostPanelsReady'];
+    'retryWorked', 'cancelWorked', 'preferencesIndependent', 'roleplaySelectable', 'relationshipSelectable', 'characterEditPinned',
+    'noMicrophoneOpened', 'hostPanelsReady'];
   const report = { simulated: true, provider: 'local-interface-fixture', realModelValidated: false,
     passed: data.simulated === true && required.every(key => checks[key] === true) && metrics.inputFrames === 0 &&
       fixturePort?.requests.length === 5,
@@ -1037,10 +1099,8 @@ app.whenReady().then(async () => {
   if (!smokeMode && !shellSmoke) preferences = await loadPreferences(app.getPath('userData'));
   wakeGate.setPhrases(effectiveWakePhrases());
   assetStatus = await inspectAssets(assetRoot);
-  personas = await Promise.all(PERSONA_IDS.map(async id => {
-    const card = validatePersona(JSON.parse(await readFile(path.join(root, 'config/personas', id + '.json'), 'utf8')));
-    return { id: card.id, displayName: card.displayName, revision: card.revision };
-  }));
+  const characterData = smokeMode || shellSmoke ? undefined : app.getPath('userData');
+  [characters, conversations] = await Promise.all([CharacterStore.open(root, characterData), ConversationArchive.open(characterData)]);
   protocol.handle('deskai', async request => {
     const url = new URL(request.url);
     let relative;
@@ -1164,5 +1224,5 @@ app.on('before-quit', event => {
   artifactWindows.close();
   workWindow.close();
   void Promise.allSettled([stopSession(), closeHostClient()])
-    .then(() => Promise.allSettled([speech?.dispose(), tts?.dispose(), petWindow?.flush()])).finally(() => app.quit());
+    .then(() => { characterKnowledge.close(); return Promise.allSettled([speech?.dispose(), tts?.dispose(), petWindow?.flush()]); }).finally(() => app.quit());
 });

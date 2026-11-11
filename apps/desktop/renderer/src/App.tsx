@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { FrameVAD } from './frame-vad'
-import type { DeskaiEvent, DialogueSmokeReport, PersonaId, ReplyLanguage, RuntimeInfo, SessionStart, SmokeReport, Preferences } from './bridge'
+import type { DeskaiEvent, DialogueSmokeReport, ReplyLanguage, RuntimeInfo, SessionStart, SmokeReport, Preferences } from './bridge'
 import type { DialogueEvent } from '../../../../packages/voice-core/src/dialogue.ts'
+import type { CharacterLookupSummary } from '../../../../packages/voice-core/src/character-reference.ts'
+import type { ConversationSummary } from '../../src/character-store.ts'
 import type { ReferenceClarification } from '../../../../packages/voice-core/src/coordination.ts'
 import { workExecutionLabel } from '../../../../packages/work-core/src/completion.ts'
+import { DEFAULT_PERSONA_ID } from '../../../../packages/voice-core/src/persona-catalog.ts'
 import type { PetPreferencePatch, PetSnapshot } from '../../../../packages/desktop-pet/src/types.ts'
 import { aecCaptureOptions } from '../../../../packages/voice-core/src/aec-mode.ts'
 import { PcmPlayer } from './player'
 import WorkPanel from './WorkPanel'
 import ApplicationsPanel from './ApplicationsPanel'
+import CharacterEditor from './CharacterEditor'
 import type { HostSnapshot } from '../../../host/src/protocol.ts'
 import './style.css'
 
@@ -42,6 +46,9 @@ export default function App() {
   const [textDraft, setTextDraft] = useState('')
   const [sendingText, setSendingText] = useState(false)
   const [referenceCard, setReferenceCard] = useState<ReferenceClarification | null>(null)
+  const [knowledgeLookup, setKnowledgeLookup] = useState<CharacterLookupSummary | null>(null)
+  const [savedConversations, setSavedConversations] = useState<ConversationSummary[]>([])
+  const [savedId, setSavedId] = useState('')
   const [selectingReference, setSelectingReference] = useState(false)
   const [modelState, setModelState] = useState('idle')
   const [retryable, setRetryable] = useState(false)
@@ -72,6 +79,17 @@ export default function App() {
   const dialogueSmokeStarted = useRef(false)
   const microphoneOpened = useRef(false)
   const lastTranscript = useRef('')
+  const acceptSession = useCallback((opened: SessionStart) => {
+    if (currentSession.current !== opened.sessionId) {
+      setEntries(opened.history.map(entry => ({ ...entry, id: ++nextEntry.current, completed: true })))
+      setKnowledgeLookup(null)
+    }
+    currentSession.current = opened.sessionId
+    setSession(opened)
+    setServiceState(opened.status)
+  }, [])
+  const showError = useCallback((cause: unknown) => setError(describeMediaError(cause)), [])
+  const refreshConversations = useCallback(() => window.deskai.listConversations().then(setSavedConversations), [])
 
   useEffect(() => {
     const unsubscribe = window.deskai.onPetSnapshot(setPetSnapshot)
@@ -182,6 +200,7 @@ export default function App() {
         setError(event.code === 'MISSING_CREDENTIAL' ? '模型凭据未配置。请检查当前 Chat Provider 的凭据设置后重试。' : event.message)
         setRetryable(event.retryable)
         break
+      case 'knowledge': setKnowledgeLookup(event.result); break
       case 'usage': break
     }
   }, [addAssistantDelta, addEntry])
@@ -191,7 +210,8 @@ export default function App() {
     dialogueSmokeStarted.current = true
     const checks: DialogueSmokeReport['checks'] = { directTextDisplayed: false, localQuietNoBubble: false,
       textQuestionDisplayed: false, shortAnswerWorked: false, retryWorked: false, cancelWorked: false,
-      preferencesIndependent: false, roleplaySelectable: false, relationshipSelectable: false, noMicrophoneOpened: false, hostPanelsReady: false }
+      preferencesIndependent: false, roleplaySelectable: false, relationshipSelectable: false, characterEditPinned: false,
+      noMicrophoneOpened: false, hostPanelsReady: false }
     const notes: string[] = []
     try {
       const opened = await window.deskai.openConversation()
@@ -250,6 +270,13 @@ export default function App() {
         relationOptionsVisible &&= next.voiceId === before.preferences.voiceId && next.replyLanguage === before.preferences.replyLanguage
       }
       checks.relationshipSelectable = relationOptionsVisible
+      const role = await window.deskai.getCharacter('nagato-mainline-post-disappearance')
+      const owned = (await window.deskai.openConversation()).conversation
+      const edited = await window.deskai.saveCharacter({ id: role.id, revision: role.revision, displayName: `${role.displayName} · 冒烟`,
+        traits: role.traits, speechStyle: role.speechStyle })
+      const pinned = (await window.deskai.openConversation()).conversation
+      checks.characterEditPinned = edited.revision === role.revision + 1 && pinned.id === owned.id && pinned.revision === role.revision &&
+        pinned.relationshipMode === 'kyon'
       await window.deskai.updatePreferences({ personaId: 'assistant-neutral', replyLanguage: 'ja' })
       const after = await window.deskai.getRuntime()
       setPreferences(after.preferences)
@@ -286,6 +313,7 @@ export default function App() {
     setModelState('idle')
     setRetryable(false)
     setReferenceCard(null)
+    setKnowledgeLookup(null)
     setStarting(false)
     // Main admission/cancellation must not depend on ONNX/audio cleanup succeeding.
     const stopMain = window.deskai.stopSession().catch(cause => setError(describeMediaError(cause)))
@@ -319,9 +347,7 @@ export default function App() {
     try {
       const opened = await window.deskai.startSession()
       if (epoch !== startEpoch.current) throw new Error('会话已结束')
-      currentSession.current = opened.sessionId
-      setSession(opened)
-      setServiceState(opened.status)
+      acceptSession(opened)
       const { aecMode, interruption, endpoint } = await window.deskai.getRuntime()
       const output = await ensureOutput(opened)
       context = output.context
@@ -398,7 +424,7 @@ export default function App() {
       startLock.current = false
       setStarting(false)
     }
-  }, [ensureOutput, finishSmoke, stop])
+  }, [acceptSession, ensureOutput, finishSmoke, stop])
 
   const pauseCapture = useCallback(async () => {
     if (startLock.current) { await stop('已取消麦克风准备'); return; }
@@ -422,6 +448,11 @@ export default function App() {
         case 'host-notice': setServiceState(event.text); break
         case 'coordination-state': setModelState(event.state); break
         case 'dialogue': handleDialogue(event.event); break
+        case 'conversation-changed':
+          setSession(current => current && { ...current, conversation: event.conversation, history: [] })
+          setEntries([]); setKnowledgeLookup(null); setReferenceCard(null)
+          void refreshConversations().catch(showError)
+          break
         case 'reference-card': setReferenceCard(event.card); break
         case 'reference-closed':
           setReferenceCard(card => card?.id === event.clarificationId ? null : card); break
@@ -500,7 +531,7 @@ export default function App() {
       if (smokeTimer.current) clearTimeout(smokeTimer.current)
       void stop()
     }
-  }, [addEntry, finishSmoke, handleDialogue, runDialogueSmoke, pauseCapture, start, stop])
+  }, [addEntry, finishSmoke, handleDialogue, runDialogueSmoke, pauseCapture, refreshConversations, showError, start, stop])
 
   useEffect(() => {
     if (!currentSession.current) return
@@ -515,21 +546,31 @@ export default function App() {
     }
   }, [entries])
 
-  const openTextConversation = async (): Promise<SessionStart> => {
-    if (session) return session
+  const openTextConversation = async (id?: string, replace = false): Promise<SessionStart> => {
+    if (session && !replace) return session
     if (stopLock.current) throw new Error('会话正在结束')
     const epoch = ++startEpoch.current
     setStarting(true)
     setError('')
     try {
-      const opened = await window.deskai.openConversation()
+      const opened = await window.deskai.openConversation(id)
       if (epoch !== startEpoch.current) throw new Error('会话已结束')
-      currentSession.current = opened.sessionId
-      setSession(opened)
-      setServiceState(opened.status)
+      acceptSession(opened)
       await ensureOutput(opened)
       return opened
     } finally { if (epoch === startEpoch.current) setStarting(false) }
+  }
+
+  const switchConversation = async (id?: string) => {
+    if (starting || sendingText || id && id === session?.conversation.id) return
+    try {
+      if (session) await stop()
+      if (!id && session && (session.conversation.personaId !== preferences?.personaId || session.conversation.relationshipMode !== preferences?.relationshipMode)) {
+        setPreferences(await window.deskai.updatePreferences({ personaId: session.conversation.personaId, relationshipMode: session.conversation.relationshipMode }))
+      }
+      await openTextConversation(id, true)
+      await refreshConversations()
+    } catch (cause) { showError(cause) }
   }
 
   const sendText = async () => {
@@ -557,21 +598,12 @@ export default function App() {
     finally { setSelectingReference(false) }
   }
 
-  const changePreferences = async (personaId: PersonaId, replyLanguage: ReplyLanguage, relationshipMode = preferences?.relationshipMode ?? 'friend') => {
-    setPreferenceNote('正在切换设置…')
-    try {
-      const identityChanged = personaId !== preferences?.personaId || (personaId === 'nagato-mainline-post-disappearance' && relationshipMode !== preferences?.relationshipMode)
-      const next = await window.deskai.updatePreferences({ personaId, replyLanguage, relationshipMode })
-      setPreferences(next)
-      setPreferenceNote(identityChanged ? '已切换人格或关系；后续回复使用新的对话上下文，旧记录仍可查看。声音与语言保持独立。' : '设置已保存；后续回复生效。')
-    } catch (cause) { setError(describeMediaError(cause)); setPreferenceNote('') }
-  }
-
   const changeSetting = async (patch: Partial<Preferences>) => {
     setPreferenceNote('正在保存设置…')
     try {
       const next = await window.deskai.updatePreferences(patch)
       setPreferences(next)
+      if ('characterKnowledge' in patch) setKnowledgeLookup(null)
       outputRef.current?.player.setVolume(next.volume)
       if ('outputDeviceId' in patch && outputRef.current) {
         const context = outputRef.current.context as AudioContext & { setSinkId?: (id: string) => Promise<void> }
@@ -600,6 +632,11 @@ export default function App() {
   }
 
   const voices = runtime?.voices ?? []
+  const roleId = session?.conversation.personaId ?? preferences?.personaId ?? DEFAULT_PERSONA_ID
+  const role = runtime?.personas.find(persona => persona.id === roleId)
+  const relation = session?.conversation.relationshipMode ?? preferences?.relationshipMode ?? 'friend'
+  const lookupState = !preferences?.characterKnowledge ? '关闭' : knowledgeLookup ? ({ disabled: '等待普通对话',
+    'no-corpus': '当前角色暂无资料', unavailable: '资料不可用', miss: '本轮未命中', hit: `本轮命中 ${knowledgeLookup.hits.length} 条` })[knowledgeLookup.status] : '开启 · 等待输入'
   const selectedVoice = voices.find(voice => voice.id === preferences?.voiceId)
   const selectedVoiceName = selectedVoice?.name ?? '常态有希 · v2'
   const ttsLabel = ({ starting: '正在启动', loading: '正在加载模型', warming: '正在预热', switching: '正在切换声音', ready: '已就绪', error: '出错，可恢复', stopped: '已停止' } as Record<string, string>)[ttsState.split(' · ')[0]] ?? ttsState
@@ -639,18 +676,19 @@ export default function App() {
       <label>参考语气<select value={preferences?.referenceId || selectedVoice?.defaultReferenceId || ''} disabled={!selectedVoice || starting} onChange={event => void changeSetting({ referenceId: event.target.value })}>
         {(selectedVoice?.references ?? []).map(ref => <option key={ref.id} value={ref.id}>{ref.name}</option>)}
       </select></label>
-      <label>人格 / 角色<select value={preferences?.personaId ?? 'nagato-normal-light'} onChange={event => void changePreferences(event.target.value as PersonaId, preferences?.replyLanguage ?? 'auto')}>
-        {(runtime?.personas ?? [{ id: 'nagato-normal-light' as PersonaId, displayName: '常态有希 · 轻量风格', revision: 1 }, { id: 'assistant-neutral' as PersonaId, displayName: '普通助手', revision: 1 }]).map(persona => <option key={persona.id} value={persona.id}>{persona.displayName}</option>)}
+      <label>人格 / 角色<select value={roleId} disabled={!runtime || starting} onChange={event => void changeSetting({ personaId: event.target.value })}>
+        {runtime?.personas.map(persona => <option key={persona.id} value={persona.id}>{persona.displayName}</option>)}
       </select></label>
-      {preferences?.personaId === 'nagato-mainline-post-disappearance' && <label>关系模式<select aria-label="关系模式" value={preferences.relationshipMode ?? 'friend'} onChange={event => void changePreferences(preferences.personaId, preferences.replyLanguage, event.target.value as Preferences['relationshipMode'])}>
-        <option value="friend">朋友 · 独立用户</option><option value="kyon">阿虚 · 用户扮演</option>
+      {role?.relationships && <label>关系模式<select aria-label="关系模式" value={relation} disabled={starting} onChange={event => void changeSetting({ relationshipMode: event.target.value as Preferences['relationshipMode'] })}>
+        <option value="friend">{role.relationships.friend}</option><option value="kyon">{role.relationships.kyon}</option>
       </select></label>}
-      <label>回复语言<select value={preferences?.replyLanguage ?? 'auto'} onChange={event => void changePreferences(preferences?.personaId ?? 'nagato-normal-light', event.target.value as ReplyLanguage)}>
+      <label>回复语言<select value={preferences?.replyLanguage ?? 'auto'} onChange={event => void changeSetting({ replyLanguage: event.target.value as ReplyLanguage })}>
         <option value="auto">自动跟随</option><option value="zh">中文</option><option value="ja">日语</option><option value="en">英语</option>
       </select></label>
       <span>模型：{modelState === 'planning' ? '正在理解任务' : modelState === 'waiting' ? '等待续句' : modelState === 'silent' ? '本轮保持安静' : modelState === 'generating' ? '正在回复' : modelState === 'cancelling' ? '正在停止' : modelState === 'error' ? '回复出错' : '空闲'}</span>
     </section>
-    {preferences?.personaId === 'nagato-mainline-post-disappearance' && <p className="hint">主线常态有希，《消失》结束后。角色表达仍待正片校验；朋友模式保留你的独立身份，阿虚模式使用虚构共同背景，均不默认恋爱关系。声音与回复语言分别设置。</p>}
+    {runtime && <CharacterEditor characters={runtime.personas} selectedId={roleId} onError={showError}
+      onSaved={async () => setRuntime(await window.deskai.getRuntime())} />}
     {preferenceNote && <p className="hint">{preferenceNote}</p>}
     <details className="settings"><summary>声音与设备设置 · 合成服务：{ttsLabel}</summary>
       <div className="preferences">
@@ -678,6 +716,27 @@ export default function App() {
       <p>声音、人格、语言分别设置。系统睡眠会结束会话；恢复后请重新开启。设备名称需麦克风授权后才可能显示。</p>
     </details>
     {error && <p className="error" role="alert">{error}</p>}
+    <details className="settings" onToggle={event => { if (event.currentTarget.open) void refreshConversations().catch(showError) }}>
+      <summary>{session ? `${session.conversation.displayName} · 第 ${session.conversation.revision} 版${session.conversation.relationship ? ` · ${session.conversation.relationship}` : ''}` : '会话'}</summary>
+      <div className="actions conversation-actions">
+        <button type="button" className="secondary" disabled={starting || sendingText} onClick={() => void switchConversation()}>新会话</button>
+        <select aria-label="已有会话" value={savedId} onChange={event => setSavedId(event.target.value)}>
+          <option value="">选择已有会话</option>
+          {savedConversations.map(row => <option key={row.id} value={row.id}>{row.title} · {row.displayName} · v{row.revision}{row.relationship ? ` · ${row.relationship}` : ''}</option>)}
+        </select>
+        <button type="button" className="secondary" disabled={!savedId || starting || sendingText || savedId === session?.conversation.id}
+          onClick={() => void switchConversation(savedId)}>继续会话</button>
+      </div>
+    </details>
+    <details className="settings">
+      <summary>角色知识 · {lookupState}</summary>
+      <label className="knowledge-toggle"><input type="checkbox" checked={preferences?.characterKnowledge ?? false}
+        disabled={!preferences} onChange={event => void changeSetting({ characterKnowledge: event.target.checked })} /> 启用角色知识检索</label>
+      {preferences?.characterKnowledge && knowledgeLookup?.status === 'unavailable' &&
+        <p>运行 <code>npm run desktop:prepare-knowledge</code> 准备索引。{knowledgeLookup.code && ` ${knowledgeLookup.code}`}</p>}
+      {preferences?.characterKnowledge && !!knowledgeLookup?.hits.length && <ul>{knowledgeLookup.hits.map(hit =>
+        <li key={hit.id}>{hit.source} · {hit.locator} · 距离 {hit.distance.toFixed(3)}</li>)}</ul>}
+    </details>
     <section className="conversation" aria-label="对话记录">
       {entries.length === 0 ? <p className="empty">可直接输入文字开始对话，或点击“开始语音对话”自动监听和识别。</p> : entries.map(entry => <div className={`entry ${entry.role}`} data-attempt-id={entry.attemptId} key={entry.id}><small>{entry.role === 'user' ? '你' : entry.role === 'assistant' ? `助手${entry.interrupted ? ' · 已中断' : ''}` : '轮次状态'}</small><p>{entry.text}</p></div>)}
     </section>

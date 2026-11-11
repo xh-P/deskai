@@ -4,12 +4,15 @@ import { localDecision } from './policy.ts';
 import { cleanSpeech } from './sentences.ts';
 import { SpeculativeChat, type SpeculationDiagnostic, type SpeculationIdentity } from './speculative-chat.ts';
 import type { ChatAccepted, ChatEvent, ChatPersonaId, ChatSettlement, ChatTurnInput, RelationshipMode } from '../../dsh-adapter/src/session.ts';
+import type { Persona } from './prompts.ts';
+import type { CharacterLookupSummary } from './character-reference.ts';
 
 export type DialoguePort = { runTurn(input: ChatTurnInput, event: (event: ChatEvent) => void): Promise<ChatAccepted>; cancel(): Promise<ChatSettlement | undefined> };
-export type DialoguePreferences = { personaId: ChatPersonaId; relationshipMode?: RelationshipMode; replyLanguage: ReplyLanguage; voiceId: string };
+export type DialoguePreferences = { personaId: ChatPersonaId; persona?: Persona; relationshipMode?: RelationshipMode;
+  replyLanguage: ReplyLanguage; voiceId: string; characterKnowledge?: boolean };
 export type DialogueInput = { text: string; source: DeliveryMode; continuationOf?: number; utteranceIds?: number[]; hostContext?: unknown;
   isEligible?: () => boolean; onAccepted?: () => void; noSpeech?: boolean; acousticEcho?: boolean; retryOf?: string; requiresReply?: boolean;
-  speculation?: SpeculationIdentity };
+  speculation?: SpeculationIdentity; characterKnowledge?: boolean };
 export type DialogueEvent =
   | { type: 'user'; turnId: string; text: string; source: DeliveryMode }
   | { type: 'decision'; turnId: string; generationId: number; action: string; local: boolean }
@@ -18,8 +21,10 @@ export type DialogueEvent =
   | { type: 'output-clear'; generationId: number }
   | { type: 'model-state'; state: 'idle' | 'generating' | 'cancelling' | 'waiting' | 'silent' | 'error'; code?: string }
   | { type: 'error'; code: string; message: string; retryable: boolean }
+  | { type: 'knowledge'; turnId: string; result: CharacterLookupSummary }
   | { type: 'usage'; usage: unknown };
 type UserHistory = { role: 'user'; turnId: string; text: string };
+export type DialogueHistoryEntry = UserHistory | { role: 'assistant'; turnId: string; text: string; interrupted: boolean };
 type Active = { id: string; epoch: number; generation: number; input: DialogueInput; port: DialoguePort; accepted: boolean; canceled: boolean;
   attemptId?: string; failure?: string; finished?: boolean;
   attempts: string[]; completed?: Promise<ChatSettlement> };
@@ -40,6 +45,7 @@ export class DialogueController {
   private queue: Promise<unknown> = Promise.resolve();
   private queued = 0;
   private userHistory: UserHistory[] = [];
+  private priorHistory: readonly DialogueHistoryEntry[];
   private contextStartTurn = 0;
   private failedInput?: DialogueInput;
   private blocked?: string;
@@ -50,15 +56,18 @@ export class DialogueController {
   private waitTimer?: ReturnType<typeof setTimeout>;
 
   constructor(port: DialoguePort, preferences: DialoguePreferences, emit: (event: DialogueEvent) => void,
-    speculative?: { port: DialoguePort; maxAgeMs: number; diagnostic?: (event: SpeculationDiagnostic) => void }) {
+    speculative?: { port: DialoguePort; maxAgeMs: number; diagnostic?: (event: SpeculationDiagnostic) => void },
+    history: readonly DialogueHistoryEntry[] = []) {
     this.port = port; this.preferences = { ...preferences }; this.emit = emit;
+    this.priorHistory = [...history];
+    this.serial = history.reduce((serial, entry) => Math.max(serial, Number(entry.turnId.match(/^turn-(\d+)$/u)?.[1] ?? 0)), 0);
     if (speculative) this.speculative = new SpeculativeChat(speculative.port, speculative.maxAgeMs, speculative.diagnostic);
   }
 
   get isGenerating(): boolean { return !!this.active && !this.active.finished && !this.active.canceled && !this.active.failure; }
   get generationId(): number { return this.generation; }
   get stats() { return { ...this.counts, promptVersion: PROMPT_VERSION, personaId: this.preferences.personaId,
-    relationshipMode: this.preferences.personaId === 'nagato-mainline-post-disappearance' ? this.preferences.relationshipMode ?? 'friend' : undefined }; }
+    relationshipMode: this.preferences.relationshipMode }; }
   expectsReply(now = Date.now()): boolean {
     this.ledger.expirePendingQuestion(now, 120000);
     return this.ledger.getPendingQuestion()?.status === 'awaiting';
@@ -133,6 +142,7 @@ export class DialogueController {
         state.completed = accepted.completed;
         if (state.failure) this.failedInput = { ...state.input, retryOf: state.id };
         if (epoch === this.epoch && !this.closed) {
+          if (accepted.knowledge) this.emit({ type: 'knowledge', turnId, result: accepted.knowledge });
           try { input.onAccepted?.(); }
           catch { this.emit({ type: 'error', code: 'INPUT_RECEIPT_RECONCILED', message: '本轮输入已被模型接纳，后续识别片段失败；请继续说话。', retryable: false }); }
           if (!input.retryOf) {
@@ -165,7 +175,8 @@ export class DialogueController {
 
   private chatRequest(input: DialogueInput): ChatTurnInput {
     const projection = this.projectHistory();
-    return { text: input.text, hostContext: input.hostContext, personaId: this.preferences.personaId,
+    return { text: input.text, hostContext: input.hostContext, personaId: this.preferences.personaId, persona: this.preferences.persona,
+      characterKnowledge: input.characterKnowledge ?? this.preferences.characterKnowledge,
       relationshipMode: this.preferences.relationshipMode ?? 'friend', mode: input.source, replyLanguage: this.preferences.replyLanguage,
       visibleHistory: projection.history, deliveryState: { attempts: projection.attempts,
         pendingQuestion: this.ledger.getPendingQuestion(), continuationOf: input.continuationOf,
@@ -288,13 +299,15 @@ export class DialogueController {
 
   async updatePreferences(preferences: DialoguePreferences): Promise<void> {
     this.discardSpeculative();
-    const identityChanged = preferences.personaId !== this.preferences.personaId ||
-      (preferences.personaId === 'nagato-mainline-post-disappearance' && (preferences.relationshipMode ?? 'friend') !== (this.preferences.relationshipMode ?? 'friend'));
+    const identityChanged = preferences.personaId !== this.preferences.personaId || preferences.persona?.revision !== this.preferences.persona?.revision ||
+      (preferences.relationshipMode ?? 'friend') !== (this.preferences.relationshipMode ?? 'friend');
+    if (!identityChanged && preferences.replyLanguage === this.preferences.replyLanguage) { this.preferences = { ...preferences }; return; }
     // Invalidate queued input before waiting for cancellation to settle.
     if (identityChanged) this.epoch++;
     await this.cancel();
     if (identityChanged) {
       this.userHistory = [];
+      this.priorHistory = [];
       this.contextStartTurn = this.serial;
       this.failedInput = undefined;
     }
@@ -328,10 +341,10 @@ export class DialogueController {
     if (this.outputAttempt?.attemptId === attemptId) this.outputAttempt = undefined;
   }
 
-  projectHistory(): { history: unknown[]; attempts: unknown[] } {
+  projectHistory(): { history: DialogueHistoryEntry[]; attempts: unknown[] } {
     // Never include unplayed/generated-only content in the next model request.
     const attempts = this.ledger.snapshot().filter(attempt => Number(attempt.turnId.replace(/^turn-/u, '')) > this.contextStartTurn);
-    const history: unknown[] = [];
+    const history: DialogueHistoryEntry[] = [...this.priorHistory];
     for (const user of this.userHistory.slice(-10)) {
       history.push(user);
       for (const attempt of attempts.filter(item => item.turnId === user.turnId && item.action === 'SPEAK')) {
@@ -345,9 +358,8 @@ export class DialogueController {
       partiallyPlayedSegment: attempt.partiallyPlayedSegment,
       ...(attempt.deliveryMode === 'text' ? { displayed: attempt.displayed } : {}), interrupted: attempt.interrupted }));
     // Keep a predictable projection budget; previous visible prose is compacted without another LLM.
-    const result = { history: history.slice(-12).map(item => {
-      const row = item as { text?: string }; return { ...row, text: row.text?.slice(-1200) };
-    }), attempts: compact.map(item => ({ ...item, displayed: item.displayed?.slice(-1200),
+    const result = { history: history.slice(-12).map(item => ({ ...item, text: item.text.slice(-1200) })),
+      attempts: compact.map(item => ({ ...item, displayed: item.displayed?.slice(-1200),
       fullyPlayedSegments: item.fullyPlayedSegments.slice(-4).map(segment => ({ ...segment, text: segment.text.slice(-500) })) })) };
     while (JSON.stringify(result).length > 9000 && result.history.length) result.history.shift();
     while (JSON.stringify(result).length > 9000 && result.attempts.length) result.attempts.shift();
@@ -359,6 +371,7 @@ export class DialogueController {
     this.clearWait();
     await Promise.all([this.speculative?.close(), this.cancel()]);
     this.userHistory = [];
+    this.priorHistory = [];
     this.failedInput = undefined;
     this.ledger.markQuestionResolved();
   }

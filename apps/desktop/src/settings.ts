@@ -1,6 +1,6 @@
 import { access, readFile, writeFile, rename, mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { isPersonaId, isRelationshipMode, type ChatPersonaId, type RelationshipMode } from '../../../packages/voice-core/src/persona-catalog.ts';
+import { DEFAULT_PERSONA_ID, isPersonaId, isRelationshipMode, type ChatPersonaId, type RelationshipMode } from '../../../packages/voice-core/src/persona-catalog.ts';
 import { AEC_MODES, type AecMode } from '../../../packages/voice-core/src/aec-mode.ts';
 
 export type DesktopPreferences = {
@@ -8,10 +8,11 @@ export type DesktopPreferences = {
   voiceId: string; referenceId: string; inputDeviceId: string; outputDeviceId: string;
   volume: number; speed: number; closeToTray: boolean; wakePhrases: string[] | null;
   aecMode: AecMode | null;
+  characterKnowledge: boolean;
 };
 export const defaultPreferences: DesktopPreferences = {
-  personaId: 'nagato-normal-light', relationshipMode: 'friend', replyLanguage: 'auto', voiceId: 'nagato-normal-v2', referenceId: '',
-  inputDeviceId: '', outputDeviceId: '', volume: 0.8, speed: 1, closeToTray: true, wakePhrases: null, aecMode: null,
+  personaId: DEFAULT_PERSONA_ID, relationshipMode: 'friend', replyLanguage: 'auto', voiceId: 'nagato-normal-v2', referenceId: '',
+  inputDeviceId: '', outputDeviceId: '', volume: 0.8, speed: 1, closeToTray: true, wakePhrases: null, aecMode: null, characterKnowledge: false,
 };
 /** Only supported UI values are persisted; no arbitrary paths, prompts or credentials. */
 export function mergePreferences(previous: DesktopPreferences, value: unknown): DesktopPreferences {
@@ -34,8 +35,8 @@ export function mergePreferences(previous: DesktopPreferences, value: unknown): 
       if (!['auto', 'zh', 'ja', 'en'].includes(String(item))) throw new Error('INVALID_LANGUAGE');
     } else if (key === 'volume' || key === 'speed') {
       if (typeof item !== 'number' || !Number.isFinite(item) || item < (key === 'volume' ? 0 : 0.6) || item > (key === 'volume' ? 1 : 1.6)) throw new Error('INVALID_AUDIO_SETTING');
-    } else if (key === 'closeToTray') {
-      if (typeof item !== 'boolean') throw new Error('INVALID_TRAY_SETTING');
+    } else if (key === 'closeToTray' || key === 'characterKnowledge') {
+      if (typeof item !== 'boolean') throw new Error('INVALID_PREFERENCES');
     } else if (typeof item !== 'string' || item.length > 256 || /[\x00-\x1f]/u.test(item)) throw new Error('INVALID_SETTING');
     Object.assign(next, { [key]: item });
   }

@@ -1,12 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { DecisionStream, ChunkCursor } from '../../packages/voice-core/src/stream.ts';
 import { parseDecisionHeader } from '../../packages/voice-core/src/decision.ts';
 import { DeliveryLedger } from '../../packages/voice-core/src/delivery.ts';
 import { validatePersona, buildSystemPrompt, buildRuntimeContext } from '../../packages/voice-core/src/prompts.ts';
 import { classifyLocalText } from '../../packages/voice-core/src/index.ts';
-import { PERSONA_IDS } from '../../packages/voice-core/src/persona-catalog.ts';
 
 const speak = { v: 1, action: 'SPEAK', reason: 'direct_request', expectsReply: true } as const;
 const wait = { v: 1, action: 'WAIT', reason: 'unfinished', expectsReply: false } as const;
@@ -30,8 +29,9 @@ test('mainline card exposes only the selected relationship with evidence and rea
     assert.doesNotMatch(prompt.text, /字段恰为 v\/action/u);
     assert.match(prompt.text, /不能当作现实用户经历|不默认恋人/u);
   }
-  for (const id of PERSONA_IDS.filter(id => id !== card.id)) {
-    const ordinary = validatePersona(JSON.parse(readFileSync(new URL(`../../config/personas/${id}.json`, import.meta.url), 'utf8')));
+  const directory = new URL('../../config/personas/', import.meta.url);
+  for (const file of readdirSync(directory).filter(file => file.endsWith('.json') && file !== `${card.id}.json`)) {
+    const ordinary = validatePersona(JSON.parse(readFileSync(new URL(file, directory), 'utf8')));
     assert.doesNotMatch(buildSystemPrompt(ordinary).text, /kyon|verifiedBackground|SOS团|阿虚/u);
   }
 });

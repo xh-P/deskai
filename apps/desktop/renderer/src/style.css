@@ -40,4 +40,10 @@ summary { cursor: pointer; }
 .settings .preferences { margin-top: 12px; border: 0; padding: 0; }
 .settings select { max-width: 240px; }
 .settings input[type="range"] { width: 160px; }
+.character-editor, .character-editor form { display: grid; gap: 10px; margin-top: 10px; }
+.character-editor label { display: grid; gap: 6px; }
+.character-editor textarea { resize: vertical; font: inherit; color: #e9e9ed; background: #1b1e25; border: 1px solid #46505d; border-radius: 9px; padding: 10px; }
+.character-editor button { justify-self: start; }
+.conversation-actions { margin-top: 10px; }
+.knowledge-toggle { display: block; margin-top: 10px; }
 pre { overflow: auto; font-size: 12px; }

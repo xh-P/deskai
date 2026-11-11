@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { LocalDshChat, type ChatEvent } from '../../packages/dsh-adapter/src/session.ts';
 import { LocalDshSpeech } from '../../packages/dsh-adapter/src/speech.ts';
+import { DESKTOP_CHAT_PRESET } from '../../packages/voice-core/src/prompts.ts';
 import WebSocket, { WebSocketServer } from 'ws';
 
 function fixture() {
@@ -101,18 +102,22 @@ test('cancel calls native RPC and waits for durable turn/end', async () => {
   assert.deepEqual(await accepted.completed, { sessionId: 'session-1', status: 'cancelled' });
 });
 
-test('new relationship presets route in one native request and ordinary modes keep their original presets', async () => {
+test('each native request carries only the selected persona and relationship', async () => {
   for (const [personaId, relationshipMode, expected] of [
-    ['nagato-mainline-post-disappearance', 'friend', 'deskai2-voice-nagato-mainline-friend'],
-    ['nagato-mainline-post-disappearance', 'kyon', 'deskai2-voice-nagato-mainline-kyon'],
-    ['assistant-neutral', 'kyon', 'deskai2-voice-m2-neutral'],
-    ['nagato-normal-light', 'kyon', 'deskai2-voice-m2-nagato'],
+    ['nagato-mainline-post-disappearance', 'friend', 'friend'],
+    ['nagato-mainline-post-disappearance', 'kyon', 'kyon'],
+    ['assistant-neutral', 'kyon', undefined],
+    ['nagato-normal-light', 'kyon', undefined],
   ] as const) {
     const { host, calls, send } = fixture();
     const chat = new LocalDshChat(host, 'E:/workspace/deskai2');
     const accepted = await chat.runTurn({ text: '你好', personaId, relationshipMode }, () => {});
-    assert.equal(calls[0].request.agentPreset, expected);
+    assert.equal(calls[0].request.agentPreset, DESKTOP_CHAT_PRESET);
     assert.equal(calls.filter(c => c.endpoint === 'session/prompt').length, 1);
+    const content = calls[1].request.content as { text: string }[];
+    const { roleProfile } = JSON.parse(content[0].text.split('\n').at(-1)!);
+    assert.equal(roleProfile.id, personaId);
+    assert.equal(roleProfile.roleplay?.relationshipMode, expected);
     send({ type: 'event', event: { seq: 5, type: 'turn/end' } });
     await accepted.completed;
   }
@@ -125,15 +130,18 @@ test('new relationship presets route in one native request and ordinary modes ke
 
 test('reservation blocks parallel create and cancel during create prevents prompt', async () => {
   let release!: () => void;
+  let entering!: () => void;
+  const creating = new Promise<void>(resolve => { entering = resolve; });
   const gate = new Promise<void>(resolve => { release = resolve; });
   const calls: string[] = [];
   const host = { async sessionCall<T>(endpoint: string) {
     calls.push(endpoint);
-    if (endpoint === 'session/create') { await gate; return { sessionId: 'late', agentPreset: 'deskai2-voice-m2-nagato' } as T; }
+    if (endpoint === 'session/create') { entering(); await gate; return { sessionId: 'late', agentPreset: DESKTOP_CHAT_PRESET } as T; }
     throw new Error('unexpected RPC');
   } } as unknown as LocalDshSpeech;
   const chat = new LocalDshChat(host, 'E:/workspace/deskai2');
   const first = chat.runTurn({ text: '先发' }, () => {});
+  await creating;
   await assert.rejects(chat.runTurn({ text: '并发' }, () => {}), /CHAT_TURN_BUSY/);
   const cancellation = chat.cancel();
   release();

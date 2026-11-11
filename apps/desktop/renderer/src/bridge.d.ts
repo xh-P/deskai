@@ -1,4 +1,6 @@
-import type { DialogueEvent } from '../../../../packages/voice-core/src/dialogue.ts'
+import type { DialogueEvent, DialogueHistoryEntry } from '../../../../packages/voice-core/src/dialogue.ts'
+import type { Persona } from '../../../../packages/voice-core/src/prompts.ts'
+import type { CharacterDraft, CharacterSummary, ConversationSummary } from '../../src/character-store.ts'
 import type { ReferenceClarification, ReferenceSelection } from '../../../../packages/voice-core/src/coordination.ts'
 import type { HostSnapshot } from '../../../host/src/protocol.ts'
 import type { ExportReceipt } from '../../../../packages/app-core/src/exports.ts'
@@ -16,7 +18,7 @@ export type ReplyLanguage = 'auto' | 'zh' | 'ja' | 'en'
 export type WorkStatus = { state: 'stopped' | 'starting' | 'ready' | 'error'; code?: string }
 export interface Preferences { personaId: PersonaId; relationshipMode: RelationshipMode; replyLanguage: ReplyLanguage; voiceId: string; referenceId: string;
   inputDeviceId: string; outputDeviceId: string; volume: number; speed: number; closeToTray: boolean; wakePhrases: string[] | null;
-  aecMode: AecMode | null }
+  aecMode: AecMode | null; characterKnowledge: boolean }
 
 export interface RuntimeInfo {
   smoke: boolean
@@ -29,7 +31,7 @@ export interface RuntimeInfo {
   defaultWakePhrases: string[]
   versions: Record<string, string>
   preferences: Preferences
-  personas: { id: PersonaId; displayName: string; revision: number }[]
+  personas: CharacterSummary[]
   speechStatus: { status: string; detail?: string }
   assetStatus: { ready: boolean; missing: string[] }
   voices?: { id: string; name: string; defaultReferenceId: string; references: { id: string; name: string }[] }[]
@@ -44,6 +46,8 @@ export interface VoiceCatalogEntry {
 
 export interface SessionStart {
   sessionId: string
+  conversation: ConversationSummary
+  history: DialogueHistoryEntry[]
   catalog: VoiceCatalogEntry[]
   status: string
 }
@@ -82,6 +86,7 @@ export type DeskaiEvent =
   | { type: 'host-notice'; text: string }
   | { type: 'coordination-state'; state: 'planning' | 'idle' }
   | { type: 'dialogue'; sessionId: string; event: DialogueEvent }
+  | { type: 'conversation-changed'; sessionId: string; conversation: ConversationSummary }
   | { type: 'reference-card'; sessionId: string; card: ReferenceClarification }
   | { type: 'reference-closed'; sessionId: string; clarificationId: string }
   | { type: 'session-ended'; sessionId: string; reason: string }
@@ -142,7 +147,10 @@ export interface DeskaiBridge {
   getPetSnapshot(): Promise<PetSnapshot>
   updatePetPreferences(input: PetPreferencePatch): Promise<PetSnapshot>
   onPetSnapshot(listener: (snapshot: PetSnapshot) => void): () => void
-  openConversation(): Promise<SessionStart>
+  openConversation(id?: string): Promise<SessionStart>
+  listConversations(): Promise<ConversationSummary[]>
+  getCharacter(id: string): Promise<Persona>
+  saveCharacter(draft: CharacterDraft): Promise<Persona>
   startSession(): Promise<SessionStart>
   stopSession(): Promise<void>
   pauseCapture(): Promise<void>

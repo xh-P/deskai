@@ -4,6 +4,7 @@ import type { DialoguePort } from '../../../packages/voice-core/src/dialogue.ts'
 import type { LocalDshSpeech } from '../../../packages/dsh-adapter/src/speech.ts';
 import { LocalDshChat } from '../../../packages/dsh-adapter/src/session.ts';
 import { OpenAICompatibleChat } from '../../../packages/dsh-adapter/src/openai-chat.ts';
+import { CharacterChat, type CharacterKnowledge } from './character-knowledge.ts';
 
 export type ChatRuntimeConfig =
   | { provider: 'dsh-session'; speculativeVoice?: { maxAgeMs: number } }
@@ -33,13 +34,14 @@ export async function readChatRuntimeConfig(root: string): Promise<ChatRuntimeCo
 type ChatRuntime = { port: DialoguePort; speculative?: { port: DialoguePort; maxAgeMs: number } };
 
 /** Speculation gets a separate text-only dsh session owner so its cancellation cannot affect confirmed Chat. */
-export async function createChatRuntime(host: LocalDshSpeech, root: string): Promise<ChatRuntime> {
+export async function createChatRuntime(host: LocalDshSpeech, root: string, knowledge?: CharacterKnowledge): Promise<ChatRuntime> {
   const config = await readChatRuntimeConfig(root);
-  if (config.provider === 'dsh-session') return { port: new LocalDshChat(host, root),
-    ...(config.speculativeVoice ? { speculative: { port: new LocalDshChat(host, root), ...config.speculativeVoice } } : {}) };
+  const withKnowledge = (port: DialoguePort) => knowledge ? new CharacterChat(port, knowledge) : port;
+  if (config.provider === 'dsh-session') return { port: withKnowledge(new LocalDshChat(host, root)),
+    ...(config.speculativeVoice ? { speculative: { port: withKnowledge(new LocalDshChat(host, root)), ...config.speculativeVoice } } : {}) };
   const apiKey = config.apiKeyEnv ? process.env[config.apiKeyEnv] : undefined;
   if (config.apiKeyEnv && !apiKey) throw new Error('MISSING_CREDENTIAL');
-  return { port: new OpenAICompatibleChat(root, { baseUrl: config.baseUrl, model: config.model, apiKey, timeoutMs: config.timeoutMs }) };
+  return { port: withKnowledge(new OpenAICompatibleChat(root, { baseUrl: config.baseUrl, model: config.model, apiKey, timeoutMs: config.timeoutMs })) };
 }
 
 export async function createChatPort(host: LocalDshSpeech, root: string): Promise<DialoguePort> {

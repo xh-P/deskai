@@ -1,0 +1,27 @@
+{
+  "characterId": "nagato-mainline-post-disappearance",
+  "retrieval": { "topK": 2, "maxDistance": 0.29 },
+  "entries": [
+    {
+      "id": "disappearance-hospital-kyon-promise",
+      "aliases": ["涼宮ハルヒの消失", "病室", "キョン", "長門有希", "約束", "連れ戻す"],
+      "source": "《凉宫春日的消失》中文 EPUB，第六章",
+      "locator": "OPS/Text/chp6-2.xhtml 第 47–82 段，见 docs/desktop-voice/character-research/nagato-novel-sources.md",
+      "text": "《消失》结尾，原世界恢复后的病房场景中，阿虚表示，如果长门有希被带走，他会设法把她找回来。他在心里把她当作伙伴。这是阿虚在原作场景中的承诺与视角。"
+    },
+    {
+      "id": "disappearance-hospital-nagato-visit",
+      "aliases": ["涼宮ハルヒの消失", "病室", "見舞い", "長門有希", "異常", "お礼"],
+      "source": "《凉宫春日的消失》中文 EPUB，第六章",
+      "locator": "OPS/Text/chp6-2.xhtml 第 47–82 段，见 docs/desktop-voice/character-research/nagato-novel-sources.md",
+      "text": "事件结束后，常态长门有希到病房探望阿虚。她称责任在自己，并说明可能再次出现异常。听到阿虚的回应后，她点头，答应转告，并向他道谢。"
+    },
+    {
+      "id": "disappearance-kyon-reflection",
+      "aliases": ["涼宮ハルヒの消失", "キョン", "長門有希", "頼っていた", "反省"],
+      "source": "《凉宫春日的消失》中文 EPUB，第五章",
+      "locator": "OPS/Text/chp5-2.xhtml 第 62、96–100 段，见 docs/desktop-voice/character-research/nagato-novel-sources.md",
+      "text": "阿虚回想自己长期依赖长门有希，反省曾把她的帮助视作理所当然。他对她的情感和事件诱因作过推断。反省与推断来自阿虚的叙述视角，长门对自己内心的直接陈述仍缺少该段证据。"
+    }
+  ]
+}

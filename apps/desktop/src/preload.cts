@@ -24,7 +24,10 @@ contextBridge.exposeInMainWorld('deskai', Object.freeze({
     return () => ipcRenderer.removeListener('deskai:work-status', listener);
   },
   startSession: () => ipcRenderer.invoke('deskai:start'),
-  openConversation: () => ipcRenderer.invoke('deskai:open-conversation'),
+  openConversation: (id?: string) => ipcRenderer.invoke('deskai:open-conversation', id),
+  listConversations: () => ipcRenderer.invoke('deskai:conversations'),
+  getCharacter: (id: string) => ipcRenderer.invoke('deskai:character', id),
+  saveCharacter: (draft: unknown) => ipcRenderer.invoke('deskai:character-save', draft),
   sendText: (input: unknown) => ipcRenderer.invoke('deskai:send-text', input),
   selectReference: (selection: unknown) => ipcRenderer.invoke('deskai:reference-select', selection),
   dismissReference: (id: string) => ipcRenderer.invoke('deskai:reference-dismiss', id),

@@ -1,18 +1,24 @@
 import { randomUUID } from 'node:crypto';
 import type { LocalDshSpeech } from './speech.ts';
-import { personaPreset, type ChatPersonaId, type RelationshipMode } from '../../voice-core/src/persona-catalog.ts';
+import type { ChatPersonaId, RelationshipMode } from '../../voice-core/src/persona-catalog.ts';
+import { buildPersonaContext, DESKTOP_CHAT_PRESET, type Persona } from '../../voice-core/src/prompts.ts';
+import { readBundledPersona } from '../../voice-core/src/persona-files.ts';
+import type { CharacterLookupSummary, CharacterReference } from '../../voice-core/src/character-reference.ts';
 
 export type { ChatPersonaId, RelationshipMode } from '../../voice-core/src/persona-catalog.ts';
 export interface ChatTurnInput {
   requestId?: string;
   text: string;
   personaId?: ChatPersonaId;
+  persona?: Persona;
   relationshipMode?: RelationshipMode;
   visibleHistory?: readonly unknown[];
   deliveryState?: unknown;
   mode?: 'voice' | 'text';
   replyLanguage?: 'auto' | 'zh' | 'ja' | 'en';
   hostContext?: unknown;
+  characterKnowledge?: boolean;
+  characterReference?: readonly CharacterReference[];
 }
 export type ChatEvent =
   | { type: 'attempt-start'; attemptId: string; revision: number }
@@ -21,7 +27,7 @@ export type ChatEvent =
   | { type: 'usage'; usage: unknown }
   | { type: 'error'; code: string };
 export interface ChatSettlement { sessionId: string; status: 'completed' | 'cancelled' | 'failed'; code?: string }
-export interface ChatAccepted { accepted: true; sessionId: string; completed: Promise<ChatSettlement> }
+export interface ChatAccepted { accepted: true; sessionId: string; completed: Promise<ChatSettlement>; knowledge?: CharacterLookupSummary }
 type ActiveTurn = { sessionId: string; completed: Promise<ChatSettlement>; cancelRequested: boolean; promptAccepted: boolean;
   promptSubmitted: boolean; cancelRpc?: Promise<void>; requestCancel?: () => void; reconnect?: () => Promise<void> };
 
@@ -78,7 +84,7 @@ function projectionDelivery(value: unknown): object | null {
     ...(typeof data.promptVersion === 'string' ? { promptVersion: short(data.promptVersion, 80) } : {}) };
 }
 
-export function buildChatContent(input: ChatTurnInput): string {
+export function buildChatContent(input: ChatTurnInput, persona?: Persona): string {
   const text = input.text.trim();
   if (!text || [...text].length > 4000) throw new Error('CHAT_INPUT_LENGTH');
   const projection = JSON.stringify({
@@ -89,7 +95,9 @@ export function buildChatContent(input: ChatTurnInput): string {
     hostContext: input.hostContext ?? null
   });
   if ([...projection].length > 16000) throw new Error('CHAT_CONTEXT_LENGTH');
-  return `以下是桌面应用提供的结构化对话投影。visibleHistory 仅含已接纳用户输入和已交付助手正文：voice 为完整已播句，text 为界面确认已显示文字。deliveryState 只含交付元数据与计数，未播正文不进入模型上下文。请直接回答 currentUserText。\n${projection}`;
+  const role = persona ? { roleProfile: buildPersonaContext(persona, input.relationshipMode) } : {};
+  const references = input.characterReference?.slice(0, 3).map(({ id, source, locator, text }) => ({ id, source, locator, text })) ?? [];
+  return `以下是桌面应用提供的结构化对话投影。visibleHistory 仅含已接纳用户输入和已交付助手正文：voice 为完整已播句，text 为界面确认已显示文字。deliveryState 只含交付元数据与计数，未播正文不进入模型上下文。请直接回答 currentUserText。\n${projection}\n${JSON.stringify({ ...role, characterReference: references })}`;
 }
 
 /** Uses the authenticated Host already owned by LocalDshSpeech. Each turn is projected into a fresh Session. */
@@ -104,8 +112,7 @@ export class LocalDshChat {
 
   async runTurn(input: ChatTurnInput, onEvent: (event: ChatEvent) => void): Promise<ChatAccepted> {
     if (this.active) throw new Error('CHAT_TURN_BUSY');
-    const content = this.options.renderInput?.(input) ?? buildChatContent(input);
-    const preset = this.options.preset ?? personaPreset(input.personaId, input.relationshipMode);
+    const preset = this.options.preset ?? DESKTOP_CHAT_PRESET;
     let finish!: (value: ChatSettlement) => void;
     const completed = new Promise<ChatSettlement>(resolve => { finish = resolve; });
     const active: ActiveTurn = { sessionId: '', completed, cancelRequested: false, promptAccepted: false, promptSubmitted: false };
@@ -218,6 +225,8 @@ export class LocalDshChat {
       }
     };
     try {
+      const content = this.options.renderInput?.(input) ?? buildChatContent(input, input.persona ?? await readBundledPersona(this.root, input.personaId));
+      if (active.cancelRequested) throw new Error('CHAT_TURN_CANCELLED_BEFORE_PROMPT');
       const created = await this.host.sessionCall<{ sessionId: string; agentPreset?: string }>('session/create', { cwd: this.root, agentPreset: preset });
       if (!created.sessionId || created.agentPreset !== preset) throw new Error('CHAT_PRESET_MISMATCH');
       active.sessionId = created.sessionId;

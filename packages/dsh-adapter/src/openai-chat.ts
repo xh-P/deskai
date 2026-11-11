@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
-import { buildSystemPrompt, validatePersona } from '../../voice-core/src/prompts.ts';
+import { buildSystemPrompt } from '../../voice-core/src/prompts.ts';
+import { readBundledPersona } from '../../voice-core/src/persona-files.ts';
 import { buildChatContent, type ChatAccepted, type ChatEvent, type ChatSettlement, type ChatTurnInput } from './session.ts';
 
 export type OpenAIChatConfig = { baseUrl: string; model: string; apiKey?: string; timeoutMs?: number };
@@ -18,9 +17,7 @@ export class OpenAICompatibleChat {
   async runTurn(input: ChatTurnInput, onEvent: (event: ChatEvent) => void): Promise<ChatAccepted> {
     if (this.active) throw new Error('CHAT_TURN_BUSY');
     const content = buildChatContent(input);
-    const cardPath = path.join(this.root, 'config/personas', `${input.personaId ?? 'nagato-normal-light'}.json`);
-    const card = validatePersona(JSON.parse(await readFile(cardPath, 'utf8')));
-    if (input.personaId && card.id !== input.personaId) throw new Error('CHAT_PERSONA_ID_MISMATCH');
+    const card = input.persona ?? await readBundledPersona(this.root, input.personaId);
     const system = buildSystemPrompt(card, [], input.relationshipMode).text;
     const sessionId = randomUUID();
     const attemptId = randomUUID();
