@@ -57,6 +57,21 @@ function RequestReply({ event, taskId, send }: { event: WorkEvent; taskId: strin
   </div>
 }
 
+function AttemptDiff({ attemptId, fileCount }: { attemptId: string; fileCount: number }) {
+  const [patch, setPatch] = useState<string>()
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  return <div>
+    <button type="button" disabled={loading || fileCount === 0} onClick={() => {
+      if (patch !== undefined) { setPatch(undefined); return }
+      setLoading(true); setError('')
+      void window.deskai.workDiff(attemptId).then(setPatch, cause => setError(String(cause))).finally(() => setLoading(false))
+    }}>{patch === undefined ? `查看统一 Diff（${fileCount} 个文件）` : '收起 Diff'}</button>
+    {error && <p role="alert">{error}</p>}
+    {patch !== undefined && <pre style={{ maxHeight: 460, overflow: 'auto' }}>{patch}</pre>}
+  </div>
+}
+
 export default function WorkPanel({ snapshot, selectedProjectId, selectedTaskId, onCommand, onSelectProject, onSelectTask }: Props) {
   const [projectName, setProjectName] = useState('')
   const [projectPath, setProjectPath] = useState('')
@@ -72,6 +87,7 @@ export default function WorkPanel({ snapshot, selectedProjectId, selectedTaskId,
   const events = task ? snapshot.events.filter(item => item.taskId === task.id) : []
   const lastAttempt = attempts.at(-1)
   const live = !!task && ['queued', 'running', 'waiting'].includes(task.status)
+  const unsettled = lastAttempt?.result?.unsettled === true
   const pending = pendingRequests(snapshot).filter(event => event.taskId === task?.id)
 
   useEffect(() => {
@@ -120,19 +136,23 @@ export default function WorkPanel({ snapshot, selectedProjectId, selectedTaskId,
     </>}
     {task && <div style={box}>
       <h3>{task.title}</h3><p>状态：{statusText[task.status] ?? task.status}</p>
+      {task.workspace && <p style={{ overflowWrap: 'anywhere' }}>执行目录 · {task.workspace.path}{task.workspace.kind === 'git' && ` · ${task.workspace.branch}`}</p>}
       <div style={row}>
         {live && <button type="button" disabled={busy} onClick={() => void send({ type: 'cancel', taskId: task.id })}>取消任务</button>}
-        {!live && <button type="button" disabled={busy} onClick={() => void send({ type: 'retry', taskId: task.id })}>重试</button>}
+        {!live && !unsettled && <button type="button" disabled={busy} onClick={() => void send({ type: 'retry', taskId: task.id })}>重试</button>}
+        {!live && unsettled && lastAttempt?.binding && <button type="button" disabled={busy} onClick={() => void send({ type: 'recover', taskId: task.id })}>重新连接原执行</button>}
         <button type="button" disabled={busy || !lastAttempt?.providerSessionId} onClick={() => void send({ type: 'native-open', taskId: task.id })}>打开原生会话</button>
       </div>
       <label htmlFor="work-followup">追加或继续</label>
       <textarea id="work-followup" style={{ ...field, display: 'block', width: '100%', minHeight: 65 }} value={followup} onChange={e => setFollowup(e.target.value)} placeholder={live ? '向运行中的任务追加要求' : '在原会话中继续任务'} />
-      <button type="button" disabled={busy || !followup.trim() || (!live && !lastAttempt?.providerSessionId)} onClick={() => void send({ type: live ? 'append' : 'continue', taskId: task.id, prompt: followup }).then(ok => { if (ok) setFollowup('') })}>{live ? '追加要求' : '继续任务'}</button>
+      <button type="button" disabled={busy || !followup.trim() || (!live && (!lastAttempt?.providerSessionId || unsettled || !task.workspace))} onClick={() => void send({ type: live ? 'append' : 'continue', taskId: task.id, prompt: followup }).then(ok => { if (ok) setFollowup('') })}>{live ? '追加要求' : '继续任务'}</button>
       {live && pending.map(event => <RequestReply key={event.id} event={event} taskId={task.id} send={send} />)}
       <details open><summary>执行记录（{attempts.length}）</summary>{attempts.map((attempt, index) => <div key={attempt.id} style={box}>
         <strong>第 {index + 1} 次 · {statusText[attempt.status] ?? attempt.status}</strong>
         {attempt.providerSessionId && <div>原生会话：{attempt.providerSessionId}</div>}
         {attempt.summary && <p style={{ whiteSpace: 'pre-wrap' }}>{attempt.summary}</p>}{attempt.error && <p style={{ color: '#a22', whiteSpace: 'pre-wrap' }}>{attempt.error}</p>}
+        {attempt.changes && <AttemptDiff attemptId={attempt.id} fileCount={attempt.changes.fileCount} />}
+        {attempt.deliveryError && <p role="alert">差异收集失败 · {attempt.deliveryError}</p>}
         <ul>{events.filter(event => event.attemptId === attempt.id).map(event => <li key={event.id} style={{ overflowWrap: 'anywhere' }}><time>{new Date(event.time).toLocaleString()}</time> · {event.type}<pre style={{ whiteSpace: 'pre-wrap', margin: '3px 0 8px' }}>{display(event.data)}</pre></li>)}</ul>
       </div>)}</details>
     </div>}

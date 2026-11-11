@@ -5,12 +5,13 @@ Windows 桌面语音与任务工作台，当前持续迭代源码，不制作新
 ## 开发入口
 
 - `npm run desktop:dev` 或 `启动桌面语音对话.cmd`：启动桌面应用。开始语音后采集麦克风，关闭窗口默认隐藏到托盘。
+- `npm run host:serve` 启动独立任务 Host，`npm run host:ctl -- snapshot` 查询项目与任务。桌面退出后 Host 继续运行。
 - `npm start` 或 `start-deepseek-harness.cmd`：已有 DeepSeek Harness 原生 Web 入口。
 - `npm run desktop:build`：TypeScript 检查与开发构建；`npm run desktop:test`：回归测试。
 
 语音使用 SenseVoice 唤醒 → Qwen3-ASR 对话识别 → 可配置 Chat → GPT-SoVITS v2 原生流式合成。Qwen 默认保持驻留。人格、声音和语言独立；桌宠沿用现有实现。
 
-对话现可由 AI 委派 dsh 执行后台任务。Host 管理项目、任务、执行状态与产物；应用可通过受控会话声明状态和动作，让角色继续协作。dsh 默认启用原生自动审查。实现、验收入口和限制见[本轮架构与临时汇报](./docs/desktop-voice/host-architecture-20261110.md)。
+对话可由 AI 委派 dsh 执行后台任务。独立 Host 管理项目、执行恢复、Git 工作区、Diff 与产物导出。应用可通过受控会话声明状态和动作，让角色继续协作。dsh 默认启用原生自动审查。[实现与验证记录](./docs/desktop-voice/host-work-20261112.md)
 
 ## 配置与资源
 
@@ -25,7 +26,7 @@ Windows 桌面语音与任务工作台，当前持续迭代源码，不制作新
 
 - [当前方向](./docs/desktop-voice/current-direction.md)
 - [当前文档与历史索引](./docs/desktop-voice/README.md)
-- [本轮架构、结果及待答复](./docs/desktop-voice/host-architecture-20261110.md)
+- [独立 Host、执行恢复与交付](./docs/desktop-voice/host-work-20261112.md)
 - [Amadeus 对照基准](./docs/desktop-voice/amadeus-vs-deskai2.md)
 
 自动检查不能替代实际设备上的唤醒、外放双讲、误打断和音质验收。历史目录包不包含本轮源码变化，请使用开发入口验收。

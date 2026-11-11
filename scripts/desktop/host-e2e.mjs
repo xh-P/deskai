@@ -26,8 +26,9 @@ if (!process.versions.electron) {
   app.on('window-all-closed', () => {});
   const { LocalDshSpeech } = await import('../../.cache/desktop-main/packages/dsh-adapter/src/speech.js');
   const { DshWorkProvider } = await import('../../.cache/desktop-main/packages/dsh-adapter/src/work-provider.js');
-  const { WorkRuntime } = await import('../../.cache/desktop-main/apps/desktop/src/work-runtime.js');
-  const { DesktopHost } = await import('../../.cache/desktop-main/apps/desktop/src/desktop-host.js');
+  const { WorkRuntime } = await import('../../.cache/desktop-main/packages/dsh-adapter/src/work-runtime.js');
+  const { LocalHost } = await import('../../.cache/desktop-main/apps/host/src/host.js');
+  const { dialogueContext, planningContext } = await import('../../.cache/desktop-main/apps/host/src/context.js');
   const { WorkPlanner } = await import('../../.cache/desktop-main/apps/desktop/src/work-planner.js');
   const { createChatPort } = await import('../../.cache/desktop-main/apps/desktop/src/chat-runtime.js');
   const temporary = process.env.DESKAI_E2E_TEMP;
@@ -35,7 +36,8 @@ if (!process.versions.electron) {
     throw new Error('Expected a parent-owned temporary probe directory');
   const project = path.join(temporary, 'project'); await mkdir(project);
   app.setPath('userData', temporary); await app.whenReady();
-  const runtime = new WorkRuntime(root, () => {}, { profile: 'web', cwd: project });
+  const state = path.join(temporary, 'host');
+  const runtime = new WorkRuntime(root, { profile: 'web', cwd: project }, path.join(state, 'dsh-runtime.json'));
   const speech = new LocalDshSpeech(root);
   let host, browser, planner, chat;
   const report = { timestamp: new Date().toISOString(), realPlanner: true, realDsh: true, appAuthoredByDsh: !capabilitiesOnly, physicalAudioTested: false, passed: false };
@@ -47,16 +49,16 @@ if (!process.versions.electron) {
   try {
     console.log('Host e2e: preparing planner and task ledger');
     await speech.start(); planner = new WorkPlanner(speech, root);
-    host = await DesktopHost.open(path.join(temporary, 'host'), new DshWorkProvider(runtime, root), project);
+    host = await LocalHost.open(state, new DshWorkProvider(runtime, root), project, runtime);
     if (capabilitiesOnly) {
       chat = await createChatPort(speech, root);
       report.capabilityAnswers = [];
       for (const text of ['你除了聊天还能做什么？', '你是不是没有 agent 工具，只能对话？']) {
-        const decision = await planner.plan(text, host.planningContext());
+        const decision = await planner.plan(text, planningContext(host.snapshot()));
         assert.equal(decision.intent, 'chat');
         const facts = await host.execute(decision);
         let reply = '';
-        const turn = await chat.runTurn({ text, mode: 'text', personaId: 'nagato-mainline-post-disappearance', relationshipMode: 'kyon', hostContext: host.dialogueContext(facts) }, event => {
+        const turn = await chat.runTurn({ text, mode: 'text', personaId: 'nagato-mainline-post-disappearance', relationshipMode: 'kyon', hostContext: dialogueContext(host.snapshot(), facts) }, event => {
           if (event.type === 'attempt-start') reply = '';
           if (event.type === 'text') reply += event.text;
         });
@@ -69,7 +71,7 @@ if (!process.versions.electron) {
     }
     const plan = await planner.plan(capabilitiesOnly
       ? '能帮我在当前项目创建 capability-check.txt，内容为 DESKAI_CAPABILITY_OK 吗？现在就做，只需这个文件。'
-      : '请在当前项目新建一个可与角色协作的单文件 HTML 待办应用，保存为 todo.html。界面极简，只要输入框、添加按钮和列表。通过协作协议声明添加待办动作并发布当前列表状态。可以嵌入协作客户端 helper，但不要直接复制现成的 todo.html 示例；不要增加测试脚本或其他业务文件。', host.planningContext());
+      : '请在当前项目新建一个可与角色协作的单文件 HTML 待办应用，保存为 todo.html。界面极简，只要输入框、添加按钮和列表。通过协作协议声明添加待办动作并发布当前列表状态。可以嵌入协作客户端 helper，但不要直接复制现成的 todo.html 示例；不要增加测试脚本或其他业务文件。', planningContext(host.snapshot()));
     assert.equal(plan.intent, 'submit');
     if (!capabilitiesOnly) assert.equal(plan.authoring, true);
     const receipt = await host.execute(plan); report.submitted = receipt.kind === 'task-submitted';
@@ -92,7 +94,7 @@ if (!process.versions.electron) {
     const connected = await until(() => host.apps.listSessions().find(session => session.status === 'connected' && session.state), 'application registration', 10000);
     host.selectApp(connected.id); report.appConnected = true;
     console.log('Host e2e: application registered; planning a semantic action');
-    const action = await planner.plan('请在这个待办应用中添加一条待办：明天复核清单。', host.planningContext());
+    const action = await planner.plan('请在这个待办应用中添加一条待办：明天复核清单。', planningContext(host.snapshot()));
     assert.equal(action.intent, 'app');
     const response = await host.execute(action);
     report.actionAccepted = response.receipt.accepted === true;

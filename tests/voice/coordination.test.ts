@@ -4,8 +4,9 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseCoordinationPlan } from '../../packages/voice-core/src/coordination.ts';
-import { HostApi } from '../../apps/desktop/src/host-api.ts';
-import { DesktopHost } from '../../apps/desktop/src/desktop-host.ts';
+import { HostApi } from '../../apps/host/src/api.ts';
+import { LocalHost } from '../../apps/host/src/host.ts';
+import { dialogueContext } from '../../apps/host/src/context.ts';
 import type { ProviderPort } from '../../packages/work-core/src/types.ts';
 
 test('coordination rejects incomplete controls and prose, and accepts declared intents', () => {
@@ -21,10 +22,10 @@ test('dialogue context reflects host capabilities and the actual execution recei
     start: async () => ({ outcome: 'completed', summary: 'Done' }),
     append: async () => {}, cancel: async () => {}, reply: async () => {}
   };
-  const host = await DesktopHost.open(directory, provider, directory);
+  const host = await LocalHost.open(path.join(directory, 'host'), provider, directory);
   try {
     const chatReceipt = await host.execute({ intent: 'chat' });
-    const context = host.dialogueContext(chatReceipt);
+    const context = dialogueContext(host.snapshot(), chatReceipt);
     assert.deepEqual(context.receipt, { kind: 'chat' });
     assert.equal(host.snapshot().work.tasks.length, 0);
     assert.deepEqual(context.capabilities.applications, []);
@@ -33,7 +34,7 @@ test('dialogue context reflects host capabilities and the actual execution recei
     const receipt = await host.execute({ intent: 'submit', prompt: 'Create a note' }) as { kind: string; taskId: string };
     assert.equal(receipt.kind, 'task-submitted');
     assert.equal(host.snapshot().work.tasks[0].id, receipt.taskId);
-    assert.deepEqual(host.dialogueContext(receipt).receipt, receipt);
+    assert.deepEqual(dialogueContext(host.snapshot(), receipt).receipt, receipt);
     await new Promise(resolve => setImmediate(resolve));
   } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
 });

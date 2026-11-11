@@ -5,5 +5,5 @@
     "rewriteRelativeImportExtensions": true,
     "rootDir": "../..", "outDir": "../../.cache/desktop-main"
   },
-  "include": ["src/**/*.ts", "src/**/*.cts", "../../packages/voice-core/src/**/*.ts", "../../packages/dsh-adapter/src/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.cts", "../host/src/**/*.ts", "../../packages/voice-core/src/**/*.ts", "../../packages/dsh-adapter/src/**/*.ts"]
 }

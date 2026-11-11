@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DshWorkProvider, type DshWorkTransport } from '../../packages/dsh-adapter/src/work-provider.ts';
-import type { ProviderEvent } from '../../packages/work-core/src/types.ts';
+import type { ProviderBinding, ProviderEvent } from '../../packages/work-core/src/types.ts';
 
 const request = { taskId: 'task', attemptId: 'attempt', projectPath: process.cwd(), prompt: 'Build' };
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
@@ -140,9 +140,11 @@ test('native decisions resolve pending requests and text deltas are batched', as
   event('approval/asked', { id: 'approval', reason: 'May I?' });
   event('approval/decided', { id: 'approval', outcome: 'allowed-once' });
   event('tool/result', { message: { toolCallId: 'question', content: [{ type: 'text', text: '{"pending":true}' }] } });
+  await tick();
   assert.deepEqual(events.filter(e => e.type === 'request-resolved').map(e => e.requestId), ['approval']);
   event('user/message', { source: { kind: 'user-question-reply', callId: 'question' } });
   event('tool/result', { message: { toolCallId: 'unrelated', content: [] } });
+  await tick();
   assert.deepEqual(events.filter(e => e.type === 'request-resolved').map(e => e.requestId), ['approval', 'question']);
   for (const text of ['a', 'b', 'c']) frame({ type: 'item', value: { type: 'assistant-stream', frame: { type: 'chunk', chunk: { type: 'text-delta', text } } } });
   await new Promise(resolve => setTimeout(resolve, 300));
@@ -151,4 +153,53 @@ test('native decisions resolve pending requests and text deltas are batched', as
   event('turn/end', { turn: 1, reason: { kind: 'completed' } });
   assert.equal((await run).outcome, 'completed');
   assert.deepEqual(events.filter(e => e.type === 'activity').map(e => e.text), ['dsh: ask_user_question', 'abc', 'd']);
+});
+
+test('dsh replays a socket gap and reattaches the same request after Host restart', async () => {
+  let follows = 0;
+  let submissions = 0;
+  let binding!: ProviderBinding;
+  let frame!: (value: unknown) => void;
+  const entry = (seq: number, type: string, data: unknown) => ({ type: 'event', event: { seq, type, data } });
+  const history = () => [
+    entry(1, 'turn/start', { turn: 1 }),
+    entry(2, 'user/message', { source: { rpcId: binding.requestIds[0] } }),
+    entry(3, 'assistant/message', { message: { content: [{ type: 'text', text: 'Owned result' }] } }),
+    entry(4, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
+    entry(5, 'turn/start', { turn: 2 }),
+    entry(6, 'assistant/message', { message: { content: [{ type: 'text', text: 'Other turn' }] } }),
+    entry(7, 'turn/end', { turn: 2, reason: { kind: 'completed' } })
+  ];
+  const host = {
+    ensureHost: async () => ({ state: 'ready' }),
+    sessionFollow: async (_args: unknown, onFrame: (value: unknown) => void) => {
+      frame = onFrame;
+      const cursor = follows++ === 0 ? 0 : 7;
+      frame({ type: 'item', value: { type: 'snapshot', cursor, header: { id: 'session', cwd: request.projectPath },
+        records: cursor ? history().slice(-2) : [], hasMore: cursor > 0 } });
+      return () => {};
+    },
+    call: async (endpoint: string) => endpoint === 'permissionPresets/catalog' ? { options: [{ value: 'auto' }] } : { result: { kind: 'success' } },
+    sessionCall: async (endpoint: string, args: { beforeSeq: number }) => {
+      if (endpoint === 'session/create') return { sessionId: 'session' };
+      if (endpoint === 'session/prompt') {
+        submissions++;
+        for (const record of history().slice(0, 2)) frame({ type: 'item', value: record });
+        frame({ type: 'error', error: { code: 'WORK_FOLLOW_CLOSED' } });
+        return { accepted: true };
+      }
+      if (endpoint === 'session/page') return { records: history().slice(Math.max(0, args.beforeSeq - 3), args.beforeSeq - 1), hasMore: args.beforeSeq > 3 };
+      throw new Error(endpoint);
+    }
+  } as unknown as DshWorkTransport;
+  const original = new DshWorkProvider(host, process.cwd());
+  const result = await original.start(request, event => { if (event.type === 'binding') binding = event.binding; });
+  assert.equal(result.outcome, 'completed');
+  assert.equal(result.summary, 'Owned result');
+  const restored = new DshWorkProvider(host, process.cwd());
+  assert.deepEqual(await restored.recover({ ...request, providerSessionId: 'session', binding }, () => {}), result);
+  const unknown = await restored.recover({ ...request, providerSessionId: 'session', binding: { baseline: 0, requestIds: ['missing'] } }, () => {});
+  assert.equal(unknown.outcome, 'unknown');
+  assert.equal(unknown.unsettled, true);
+  assert.equal(submissions, 1);
 });

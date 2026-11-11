@@ -5,7 +5,9 @@ contextBridge.exposeInMainWorld('deskai', Object.freeze({
   getHostSnapshot: () => ipcRenderer.invoke('deskai:host-snapshot'),
   selectHost: (selection: unknown) => ipcRenderer.invoke('deskai:host-select', selection),
   workCommand: (command: unknown) => ipcRenderer.invoke('deskai:work-command', command),
+  workDiff: (attemptId: string) => ipcRenderer.invoke('deskai:work-diff', attemptId),
   openArtifact: (id: string, interact: boolean) => ipcRenderer.invoke('deskai:artifact-open', id, interact),
+  exportArtifact: (id: string) => ipcRenderer.invoke('deskai:artifact-export', id),
   appAction: (input: unknown) => ipcRenderer.invoke('deskai:app-action', input),
   closeApp: (id: string) => ipcRenderer.invoke('deskai:app-close', id),
   onHostSnapshot: (callback: (snapshot: unknown) => void) => {

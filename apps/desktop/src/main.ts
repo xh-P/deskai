@@ -21,12 +21,15 @@ import { PET_VARIANTS, type PetGeometry, type PetSnapshot } from '../../../packa
 import { PetWindowManager, petPage } from './pet-window.ts';
 import { loadInputRuntimeConfig, SpeechRuntime } from './speech-runtime.ts';
 import { WakeGate } from './wake-gate.ts';
-import { loadWorkOptions, WorkRuntime } from './work-runtime.ts';
-import { DshWorkProvider } from '../../../packages/dsh-adapter/src/work-provider.ts';
-import { DesktopHost } from './desktop-host.ts';
+import { WorkWindow } from './work-window.ts';
+import { HostClient } from '../../host/src/client.ts';
+import { dialogueContext, planningContext } from '../../host/src/context.ts';
+import { hostDirectory } from '../../host/src/state-directory.ts';
+import type { HostSelection, HostSnapshot } from '../../host/src/protocol.ts';
+import type { ExportReceipt } from '../../../packages/app-core/src/exports.ts';
+import { connectHost } from './host-connection.ts';
 import { WorkPlanner } from './work-planner.ts';
 import { ArtifactWindows } from './artifact-window.ts';
-import { HostApi } from './host-api.ts';
 import type { DialogueInput } from '../../../packages/voice-core/src/dialogue.ts';
 import type { WorkUiCommand } from '../../../packages/work-core/src/types.ts';
 
@@ -54,15 +57,15 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'deskai', privileges: {
 if (smokeMode) app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 let window: BrowserWindow | undefined;
-let workRuntime: WorkRuntime | undefined;
-let runtimePreparing: Promise<WorkRuntime> | undefined;
-let desktopHost: DesktopHost | undefined;
-let hostPreparing: Promise<DesktopHost> | undefined;
+const workWindow = new WorkWindow();
+const ownedSmokeHost = smokeMode && !process.env.DESKAI_HOST_DIR;
+let desktopHost: HostClient | undefined;
+let hostPreparing: Promise<HostClient> | undefined;
+let stopHostWatch: (() => void) | undefined;
 let planner: WorkPlanner | undefined;
 let planning = false;
 let planningRevision = 0;
 const artifactWindows = new ArtifactWindows();
-const hostApi = new HostApi();
 const pendingNotices: string[] = [];
 let speech: LocalDshSpeech | undefined;
 let controller: InputController | undefined;
@@ -136,7 +139,7 @@ function updateTray() {
     { label: captureArmed ? '暂停麦克风' : '恢复麦克风', click: () => {
       window?.show(); window?.focus(); send({ type: 'capture-command', command: captureArmed ? 'pause' : 'resume' });
     } },
-    { type: 'separator' }, { label: '退出并释放服务', click: () => app.quit() },
+    { type: 'separator' }, { label: '退出桌面客户端', click: () => app.quit() },
   ]));
 }
 function trusted(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) {
@@ -286,46 +289,42 @@ async function stopSession(retainPetError = false) {
   await oldSpeechRuntime?.dispose();
 }
 
-async function getWorkRuntime(): Promise<WorkRuntime> {
-  return runtimePreparing ??= (async () => {
-    workRuntime = new WorkRuntime(root, status => window?.webContents.send('deskai:work-status', status), await loadWorkOptions(root));
-    return workRuntime;
-  })().catch(error => { runtimePreparing = undefined; throw error; });
-}
-async function getDesktopHost(): Promise<DesktopHost> {
+async function getDesktopHost(): Promise<HostClient> {
+  if (desktopHost) return desktopHost;
   return hostPreparing ??= (async () => {
-    const runtime = await getWorkRuntime();
-    const options = await loadWorkOptions(root);
-    const hostDirectory = smokeMode ? path.join(root, '.cache/host-smoke', randomUUID()) : path.join(app.getPath('userData'), 'host');
-    const host = await DesktopHost.open(hostDirectory, new DshWorkProvider(runtime, root), options.cwd, event => {
-      const task = desktopHost?.work.snapshot().tasks.find(task => task.id === event.taskId);
-      const data = event.data as { outcome?: string; text?: string; summary?: string };
-      const label = task?.title ?? '后台任务';
-      const state = ({ completed: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断', unknown: '结果尚不确定' } as Record<string,string>)[data.outcome ?? ''] ?? '有更新';
-      const text = event.type === 'settled' ? label + '：' + state + '。' + (data.summary?.slice(0, 240) ?? '') : label + '需要你的答复，请查看任务面板。';
-      pendingNotices.push(text);
-      send({ type: 'host-notice', text });
-      flushHostNotices();
-    });
+    const directory = ownedSmokeHost ? path.join(root, '.cache/host-smoke', randomUUID()) : hostDirectory(app.getPath('userData'));
+    const host = new HostClient(directory);
+    const initial = await connectHost(host, root);
     desktopHost = host;
-    host.subscribe(() => { if (window && !window.isDestroyed()) window.webContents.send('deskai:host-snapshot', host.snapshot()); });
-    try { await hostApi.start(hostDirectory, () => host.snapshot(), async input => {
-      const request = input as { type: string; command?: WorkUiCommand; text?: string; sessionId?: string; action?: string; payload?: unknown };
-      if (request.type === 'work' && request.command) return executeWorkCommand(request.command);
-      if (request.type === 'chat' && typeof request.text === 'string' && request.text.length <= 4000) {
-        await openConversation(); return submitCoordinated({ text: request.text, source: 'text' });
-      }
-      if (request.type === 'app-action' && typeof request.sessionId === 'string' && typeof request.action === 'string')
-        return host.apps.invokeAction(request.sessionId, request.action, request.payload);
-      throw new Error('UNKNOWN_HOST_COMMAND');
-    }); } catch (error) {
-      desktopHost = undefined;
-      await host.close();
-      throw error;
-    }
-    if (shutdown) { await host.close(); await hostApi.close(); }
+    const seen = new Set(initial.work.events.map(event => event.id));
+    if (!shutdown) stopHostWatch = host.watch(snapshot => publishHostSnapshot(snapshot, seen));
     return host;
-  })().catch(error => { hostPreparing = undefined; throw error; });
+  })().finally(() => { hostPreparing = undefined; });
+}
+function publishHostSnapshot(snapshot: HostSnapshot, seen: Set<string>) {
+  if (window && !window.isDestroyed()) {
+    window.webContents.send('deskai:host-snapshot', snapshot);
+    window.webContents.send('deskai:work-status', snapshot.runtime);
+  }
+  for (const event of snapshot.work.events) {
+    if (seen.has(event.id)) continue;
+    seen.add(event.id);
+    if (!['settled', 'permission', 'question'].includes(event.type)) continue;
+    const data = event.data as { outcome?: string; summary?: string };
+    const label = snapshot.work.tasks.find(task => task.id === event.taskId)?.title ?? '后台任务';
+    const state = ({ completed: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断', unknown: '结果尚不确定' } as Record<string,string>)[data.outcome ?? ''] ?? '有更新';
+    const text = event.type === 'settled' ? label + '：' + state + '。' + (data.summary?.slice(0, 240) ?? '') : label + '需要你的答复，请查看任务面板。';
+    pendingNotices.push(text);
+    send({ type: 'host-notice', text });
+  }
+  flushHostNotices();
+}
+async function closeHostClient() {
+  stopHostWatch?.();
+  if (ownedSmokeHost) {
+    const host = await (hostPreparing ?? Promise.resolve(desktopHost)).catch(() => undefined);
+    await host?.command({ type: 'shutdown' }).catch(() => {});
+  }
 }
 function flushHostNotices() {
   if (shutdown || !dialogue || planning || voiceSubmitting || controller?.hasPendingInput ||
@@ -338,7 +337,7 @@ async function submitCoordinated(input: DialogueInput): Promise<{ accepted: bool
   if (!input.speculation) current.discardSpeculative();
   if (smokeMode && !realModelSmoke || !planner) {
     const host = await getDesktopHost();
-    return current.submit({ ...input, hostContext: host.dialogueContext({ kind: 'chat' }) });
+    return current.submit({ ...input, hostContext: dialogueContext(await host.snapshot(), { kind: 'chat' }) });
   }
   if (planning) throw new Error('COORDINATOR_BUSY');
   planning = true;
@@ -347,16 +346,18 @@ async function submitCoordinated(input: DialogueInput): Promise<{ accepted: bool
   let committed = false;
   try {
     const host = await getDesktopHost();
+    const snapshot = await host.snapshot();
     if (revision !== planningRevision || current !== dialogue || currentSession !== sessionId) return { accepted: false };
-    const decision = await planner.plan(input.text, host.planningContext());
+    const decision = await planner.plan(input.text, planningContext(snapshot));
     if (revision !== planningRevision || current !== dialogue || currentSession !== sessionId || input.isEligible?.() === false) return { accepted: false };
     if (realModelSmoke && decision.intent !== 'chat') throw new Error('VOICE_SMOKE_EXPECTED_CHAT');
     if (decision.intent !== 'chat') current.discardSpeculative(input.speculation);
-    const facts = await host.execute(decision);
+    const facts = decision.intent === 'chat' ? { kind: 'chat' } : await host.command({ type: 'plan', plan: decision });
     committed = decision.intent !== 'chat';
     if (committed) input.onAccepted?.();
+    const context = dialogueContext(committed ? await host.snapshot() : snapshot, facts);
     if (revision !== planningRevision || current !== dialogue || currentSession !== sessionId) return { accepted: committed };
-    const result = await current.submit({ ...input, ...(committed ? { onAccepted: undefined, isEligible: undefined } : {}), hostContext: host.dialogueContext(facts) });
+    const result = await current.submit({ ...input, ...(committed ? { onAccepted: undefined, isEligible: undefined } : {}), hostContext: context });
     return { accepted: committed || result.accepted };
   } catch (error) {
     if (revision !== planningRevision) return { accepted: committed };
@@ -367,47 +368,43 @@ async function submitCoordinated(input: DialogueInput): Promise<{ accepted: bool
     planning = false; send({ type: 'coordination-state', state: 'idle' }); flushHostNotices();
   }
 }
-ipcMain.handle('deskai:work-open', async event => { trusted(event); return (await getWorkRuntime()).open(); });
-ipcMain.handle('deskai:work-status', event => { trusted(event); return workRuntime?.getStatus() ?? { state: 'stopped' }; });
+ipcMain.handle('deskai:work-open', async event => { trusted(event); return workWindow.open(await getDesktopHost()); });
+ipcMain.handle('deskai:work-status', event => { trusted(event); return desktopHost?.cached()?.runtime ?? { state: 'stopped' }; });
 ipcMain.handle('deskai:host-snapshot', async event => { trusted(event); return (await getDesktopHost()).snapshot(); });
-ipcMain.handle('deskai:host-select', async (event, selection: { projectId?: string; taskId?: string; appSessionId?: string }) => {
-  trusted(event); const host = await getDesktopHost();
-  if (selection.appSessionId) host.selectApp(selection.appSessionId);
-  else if (selection.taskId) host.selectTask(selection.taskId); else if (selection.projectId) host.selectProject(selection.projectId);
+ipcMain.handle('deskai:host-select', async (event, selection: HostSelection) => {
+  trusted(event); return (await getDesktopHost()).command({ ...selection, type: 'select' });
 });
 async function executeWorkCommand(command: WorkUiCommand) {
   const host = await getDesktopHost();
-  switch (command.type) {
-    case 'project-create': {
-      await mkdir(path.resolve(command.path), { recursive: true });
-      const project = host.work.createProject(command); host.selectProject(project.id); return project;
-    }
-    case 'draft-save': return host.work.saveDraft(command);
-    case 'submit': { const task = host.work.submit(command); host.selectTask(task.id); return task; }
-    case 'append': return host.work.append(command.taskId, command.prompt);
-    case 'continue': return host.work.continue(command.taskId, command.prompt);
-    case 'retry': return host.work.retry(command.taskId);
-    case 'cancel': return host.work.cancel(command.taskId);
-    case 'reply': return host.work.reply(command.taskId, command.requestId, command.response);
-    case 'native-open': {
-      const state = host.work.snapshot(); const task = state.tasks.find(t => t.id === command.taskId);
-      const nativeId = state.attempts.find(a => a.id === task?.attemptIds.at(-1))?.providerSessionId;
-      if (!nativeId) throw new Error('WORK_SESSION_UNAVAILABLE');
-      const status = await (await getWorkRuntime()).showSession(nativeId);
-      if (status.state !== 'ready') throw new Error(status.code ?? 'WORK_SESSION_UI_UNAVAILABLE');
-      return status;
-    }
-    default: throw new Error('UNKNOWN_WORK_COMMAND');
-  }
+  if (command.type !== 'native-open') return host.command({ type: 'work', command });
+  const { work } = await host.snapshot();
+  const task = work.tasks.find(item => item.id === command.taskId);
+  const nativeId = work.attempts.find(attempt => attempt.id === task?.attemptIds.at(-1))?.providerSessionId;
+  if (!nativeId) throw new Error('WORK_SESSION_UNAVAILABLE');
+  const status = await workWindow.open(host, nativeId);
+  if (status.state !== 'ready') throw new Error(status.code ?? 'WORK_SESSION_UI_UNAVAILABLE');
+  return status;
 }
 ipcMain.handle('deskai:work-command', (event, command: WorkUiCommand) => { trusted(event); return executeWorkCommand(command); });
+ipcMain.handle('deskai:work-diff', async (event, attemptId: string) => {
+  trusted(event); return (await getDesktopHost()).command<string>({ type: 'diff', attemptId });
+});
 ipcMain.handle('deskai:artifact-open', async (event, id: string, interact: boolean) => {
   trusted(event); return artifactWindows.open(await getDesktopHost(), id, interact === true);
 });
-ipcMain.handle('deskai:app-action', async (event, input: { sessionId: string; action: string; payload: unknown }) => {
-  trusted(event); return (await getDesktopHost()).apps.invokeAction(input.sessionId, input.action, input.payload);
+ipcMain.handle('deskai:artifact-export', async (event, artifactId: string) => {
+  trusted(event); const host = await getDesktopHost();
+  const artifact = (await host.snapshot()).artifacts.find(item => item.id === artifactId);
+  if (!artifact || !window) throw new Error('ARTIFACT_NOT_AVAILABLE');
+  const approval = await dialog.showSaveDialog(window, { title: '导出任务产物', buttonLabel: '确认导出',
+    defaultPath: path.join(app.getPath('documents'), path.basename(artifact.relativePath)) });
+  if (approval.canceled || !approval.filePath) return null;
+  return host.command<ExportReceipt>({ type: 'artifact-export', artifactId, destination: approval.filePath });
 });
-ipcMain.handle('deskai:app-close', async (event, id: string) => { trusted(event); (await getDesktopHost()).apps.closeSession(id); });
+ipcMain.handle('deskai:app-action', async (event, input: { sessionId: string; action: string; payload: unknown }) => {
+  trusted(event); return (await getDesktopHost()).command({ ...input, type: 'app-action' });
+});
+ipcMain.handle('deskai:app-close', async (event, id: string) => { trusted(event); return (await getDesktopHost()).command({ type: 'app-close', sessionId: id }); });
 
 ipcMain.handle('deskai:runtime', event => {
   trusted(event);
@@ -515,14 +512,15 @@ async function openConversation() {
     },
     onStop: stopCurrentReply,
     onCandidate: candidate => {
-      if (smokeMode && !realModelSmoke || !captureArmed || candidate.sessionId !== sessionId || !desktopHost ||
+      const host = desktopHost?.cached();
+      if (smokeMode && !realModelSmoke || !captureArmed || candidate.sessionId !== sessionId || !host ||
           planning || voiceSubmitting || outputActive || outputBusy || outputPaused) return;
       const route = inputRoutes.get(candidate.utteranceIds[0]);
       const preview = smokeMode ? { accepted: true, text: candidate.text } : route && wakeGate.preview(candidate.text, route, performance.now());
       if (!preview?.accepted) return;
       dialogue?.prepareSpeculative({
         text: preview.text, source: 'voice', continuationOf: candidate.continuationOf, utteranceIds: candidate.utteranceIds,
-        hostContext: desktopHost.dialogueContext({ kind: 'chat' }), speculation: candidate,
+        hostContext: dialogueContext(host, { kind: 'chat' }), speculation: candidate,
       });
     },
     onCandidateRevoked: candidate => dialogue?.discardSpeculative(candidate),
@@ -762,7 +760,7 @@ ipcMain.on('deskai:finish-smoke', (event, input: unknown) => {
     await writeFile(path.join(dir, `audio-smoke-${Date.now()}.json`), JSON.stringify(report, null, 2));
     await stopSession();
     await speech?.dispose();
-    shutdown = true;
+    shutdown = true; await closeHostClient();
     app.exit(passed ? 0 : 1);
   })().catch(() => app.exit(1));
 });
@@ -785,7 +783,7 @@ ipcMain.on('deskai:finish-dialogue-smoke', (event, input: unknown) => {
     await mkdir(dir, { recursive: true });
     if (window && !window.isDestroyed()) await writeFile(path.join(dir, 'desktop-smoke.png'), (await window.webContents.capturePage()).toPNG());
     await writeFile(path.join(dir, `desktop-smoke-${Date.now()}.json`), JSON.stringify(report, null, 2));
-    await stopSession(); await speech?.dispose(); shutdown = true; app.exit(report.passed ? 0 : 1);
+    await stopSession(); await speech?.dispose(); shutdown = true; await closeHostClient(); app.exit(report.passed ? 0 : 1);
   })().catch(() => app.exit(1));
 });
 
@@ -808,7 +806,7 @@ function maybeFinishTtsSmoke() {
     await mkdir(directory, { recursive: true });
     await writeFile(path.join(directory, `desktop-smoke-${Date.now()}.json`), JSON.stringify(report, null, 2));
     if (window && !window.isDestroyed()) await writeFile(path.join(directory, 'desktop-smoke.png'), (await window.webContents.capturePage()).toPNG());
-    await stopSession(); await speech?.dispose(); await tts?.dispose(); shutdown = true; app.exit(report.passed ? 0 : 1);
+    await stopSession(); await speech?.dispose(); await tts?.dispose(); shutdown = true; await closeHostClient(); app.exit(report.passed ? 0 : 1);
   })().catch(() => app.exit(1));
 }
 
@@ -1054,7 +1052,7 @@ app.whenReady().then(async () => {
       if (details.level === 3 || details.level === 'error') rendererErrors.push(String(details.message ?? '').slice(0, 400));
     });
     const passed = await runPetSmoke(rendererErrors);
-    shutdown = true;
+    shutdown = true; await closeHostClient();
     app.exit(passed ? 0 : 1);
     return;
   }
@@ -1114,6 +1112,7 @@ app.on('before-quit', event => {
   petWindow?.prepareToQuit();
   tray?.destroy();
   artifactWindows.close();
-  void Promise.allSettled([stopSession(), hostPreparing?.then(host => Promise.allSettled([host.close(), hostApi.close()])), runtimePreparing?.then(runtime => runtime.dispose())])
+  workWindow.close();
+  void Promise.allSettled([stopSession(), closeHostClient()])
     .then(() => Promise.allSettled([speech?.dispose(), tts?.dispose(), petWindow?.flush()])).finally(() => app.quit());
 });

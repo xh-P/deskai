@@ -2,12 +2,13 @@
 
 当前入口是源码开发模式：`npm run desktop:dev`。本轮继续优化，不生成安装包或目录包。
 
+- [独立 Host、执行恢复与交付](./host-work-20261112.md) 记录 C、D、E 的源码入口、真实 dsh 验证与待确认项。
 - [语音延迟实施记录](./voice-latency-20261111.md) 记录 B4、B5 的 GPU 对照、投机确认和端到端冒烟。
 - [语音稳定性实施记录](./voice-stability-20261111.md) 记录本轮改造、冒烟结果与设备验收项。
 - [本轮起点交接](./handoff-20261111.md) 记录改造前的状态、上游源码基准和执行入口。
 - [当前方向](./current-direction.md)：有效要求与已撤销约束。
 - [Amadeus 整合任务清单](./optimization-backlog.md) 记录已核实的上游实现、DeskAI2 接入进度和验收项。
-- [本轮架构、结果与待答复](./host-architecture-20261110.md)：AI 委派 dsh、持久工作控制、产物与应用协作。
+- [初版 Host 架构与验证](./host-architecture-20261110.md) 记录 AI 委派 dsh、初版工作控制、产物与应用协作。
 - [AEC 专项核对](./aec-study-20261104.md)：上游源码差异、参考时序与近端误抑制的实验证据。
 - [Amadeus 对照基准](./amadeus-vs-deskai2.md)：迁移前比较，不当作当前代码清单。
 - [ASR 配置与环境](../../services/asr/README.md)、[v2 TTS 配置](../../services/tts/README.md)。

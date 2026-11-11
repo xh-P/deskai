@@ -67,29 +67,29 @@ DeskAI2 已在 `d5c3ae2` 把 Host 能力和真实回执注入普通对话。已�
 
 ### A2｜已受理 Work 的绑定与回执｜部分接入
 
-上游把已受理操作绑定到 Work、Attempt 与 Provider run，同一操作重放时投影原回执。DeskAI2 已能由模型委派 dsh 并报告结果。补齐受理、执行归属和回执的持久绑定，验证重复投递只产生一次执行。[上游 Work 受理](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_intake.py) · [上游操作执行](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_effect_executor.py) · [本地工作控制](../../apps/desktop/src/desktop-host.ts)
+上游把已受理操作绑定到 Work、Attempt 与 Provider run，同一操作重放时投影原回执。DeskAI2 已能由模型委派 dsh 并报告结果。补齐受理、执行归属和回执的持久绑定，验证重复投递只产生一次执行。[上游 Work 受理](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_intake.py) · [上游操作执行](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_effect_executor.py) · [本地工作控制](../../apps/host/src/host.ts)
 
 ## C. 独立 Host
 
-### C1/C2｜独立服务入口与桌面连接｜部分接入
+### C1/C2｜独立服务入口与桌面连接｜已完成
 
-上游 `server.app` 可独立运行，Electron 管理后端进程并通过本机 WebSocket 连接，Host 执行本地鉴权。DeskAI2 已有随桌面运行的 Host 和认证 HTTP API。将现有工作控制和存储交给独立服务，桌面与无界面客户端通过认证连接同一 Host。验收从命令行启动 Host 后提交任务，退出并重连桌面客户端时仍可查看该任务。[上游 Host 入口](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/app.py) · [上游 Electron 启动](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/electron/src/main/index.ts) · [上游本地鉴权](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/local_auth.py) · [本地 Host API](../../apps/desktop/src/host-api.ts)
+Node Host 独立持有 Work 账本、dsh 和产物服务。桌面与命令行通过同一套本机鉴权读取状态和发送命令。桌面可启动缺失的 Host，客户端退出后 Host 继续运行。已从命令行启动服务，退出并重开 Electron 后读到相同任务 ID。[上游 Host 入口](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/app.py) · [上游 Electron 启动](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/electron/src/main/index.ts) · [上游本地鉴权](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/local_auth.py) · [本地 Host API](../../apps/host/src/api.ts) · [实施记录](./host-work-20261112.md)
 
 ## D. 执行会话与恢复
 
-### D1/D2｜Provider 会话绑定与事件恢复｜部分接入
+### D1/D2｜Provider 会话绑定与事件恢复｜已完成
 
-上游按前序 Attempt 和 Provider 能力解析会话附着，用执行身份归属事件并恢复尚未投影的终态。DeskAI2 已保存 dsh 会话 ID 并订阅事件，Host 重启时活动记录先标记中断。将持久 Attempt 与实际 dsh 会话快照、事件和终态对齐，验证断线重连和重启后能够识别可续接与结果未知的任务。[上游会话附着](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/provider_session_binding.py) · [上游事件接收](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/provider_event_ingestion.py) · [上游账本恢复](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_ledger_coordinator.py) · [本地 dsh 适配](../../packages/dsh-adapter/src/work-provider.ts)
+Attempt 在发出请求前持久绑定 dsh 会话、日志游标和请求 ID。断线与 Host 重启时用原生快照和历史页补齐事件，按请求归属确定终态。缺少执行证据时显示状态未知，允许重新连接原执行。真实 dsh 测试在强制退出后读回两条原生中断终态，再通过显式继续命令复用原会话执行成功。[上游会话附着](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/provider_session_binding.py) · [上游事件接收](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/provider_event_ingestion.py) · [上游账本恢复](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_ledger_coordinator.py) · [本地 dsh 适配](../../packages/dsh-adapter/src/work-provider.ts) · [实施记录](./host-work-20261112.md)
 
 ## E. 工作区与产物交付
 
-### E1｜按 Work 准备隔离工作区｜待接入
+### E1｜按 Work 准备隔离工作区｜已完成
 
-上游为 Git 项目准备并复用任务分支与 worktree，并保留非 Git 的工作区入口。DeskAI2 当前把项目目录交给 dsh。移植 Work 与工作区绑定，在两个任务并行修改时验证执行目录、归属和继续执行的工作区。[上游工作区准备](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/workspace_provisioner.py) · [本地 Work 账本](../../packages/work-core/src/host.ts)
+Host 为每个 Git Work 绑定独立分支与 worktree，继续执行和重试沿用该工作区。非 Git 及尚无提交的目录走单写者入口。真实 dsh 并行任务分别写入各自的 worktree，续跑复用了目录和原会话，源工作区的已有修改保留。[上游工作区准备](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/workspace_provisioner.py) · [本地工作区准备](../../packages/work-core/src/workspace.ts) · [实施记录](./host-work-20261112.md)
 
-### E2｜按 Attempt 收集 Diff 与交付文件｜部分接入
+### E2｜按 Attempt 收集 Diff 与交付文件｜已完成
 
-上游按 Git 基线收集变更，登记归属本次 Attempt 的文件，支持查看统一 Diff、预览文件和经批准的产物导出。DeskAI2 已按执行清单登记、校验和预览产物。补上基线与差异展示，并接入基于已校验产物的导出回执。验收执行前的改动与本次产物能正确归属，批准的导出可追溯。[上游产物与基线](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_artifact_registry.py) · [上游 Diff 解析](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/unified_diff.py) · [上游导出服务](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_export_service.py) · [本地产物登记](../../packages/app-core/src/index.ts)
+按 Attempt 保存 Git 执行前后快照，可查看统一 Diff。登记结合本次增量、产物清单与文件摘要，打开和导出时再次校验文件。用户选择导出路径后，Host 保存执行归属、摘要、目的地与结果。已验证执行前的未提交文件未混入 Diff，过期产物版本被拒绝，导出内容与回执一致。[上游产物与基线](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_artifact_registry.py) · [上游 Diff 解析](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/unified_diff.py) · [上游导出服务](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_export_service.py) · [本地产物登记](../../packages/app-core/src/index.ts) · [实施记录](./host-work-20261112.md)
 
 ## F. Work 完成评估
 

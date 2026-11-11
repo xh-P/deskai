@@ -7,7 +7,7 @@ import { aecCaptureOptions } from '../../../../packages/voice-core/src/aec-mode.
 import { PcmPlayer } from './player'
 import WorkPanel from './WorkPanel'
 import ApplicationsPanel from './ApplicationsPanel'
-import type { DesktopHostSnapshot } from '../../src/desktop-host.ts'
+import type { HostSnapshot } from '../../../host/src/protocol.ts'
 import './style.css'
 
 type Entry = { id: number; role: 'user' | 'system' | 'assistant'; text: string; turnId?: string; attemptId?: string;
@@ -26,7 +26,7 @@ function describeMediaError(error: unknown): string {
 }
 
 export default function App() {
-  const [hostSnapshot, setHostSnapshot] = useState<DesktopHostSnapshot | null>(null)
+  const [hostSnapshot, setHostSnapshot] = useState<HostSnapshot | null>(null)
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null)
   const [starting, setStarting] = useState(false)
   const [session, setSession] = useState<SessionStart | null>(null)

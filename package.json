@@ -10,6 +10,8 @@
     "start": "dsh web",
     "start:no-open": "dsh web --no-open",
     "desktop:dev": "node scripts/desktop/launch.mjs",
+    "host:serve": "node --experimental-strip-types apps/host/src/server.ts",
+    "host:ctl": "node --experimental-strip-types apps/host/src/ctl.ts",
     "desktop:build": "node scripts/desktop/build.mjs",
     "desktop:prepare-asr": "node scripts/desktop/prepare-amadeus-asr.mjs",
     "desktop:package": "node scripts/desktop/package.mjs",

@@ -1,5 +1,6 @@
 import type { DialogueEvent } from '../../../../packages/voice-core/src/dialogue.ts'
-import type { DesktopHostSnapshot } from '../../src/desktop-host.ts'
+import type { HostSnapshot } from '../../../host/src/protocol.ts'
+import type { ExportReceipt } from '../../../../packages/app-core/src/exports.ts'
 import type { WorkUiCommand } from '../../../../packages/work-core/src/types.ts'
 import type { VoiceDiagnostics } from '../../../../packages/voice-core/src/diagnostics.ts'
 import type { PetGeometry, PetPreferencePatch, PetSnapshot } from '../../../../packages/desktop-pet/src/types.ts'
@@ -119,11 +120,13 @@ export interface DialogueSmokeReport {
 }
 
 export interface DeskaiBridge {
-  getHostSnapshot(): Promise<DesktopHostSnapshot>
-  onHostSnapshot(listener: (snapshot: DesktopHostSnapshot) => void): () => void
+  getHostSnapshot(): Promise<HostSnapshot>
+  onHostSnapshot(listener: (snapshot: HostSnapshot) => void): () => void
   selectHost(selection: { projectId?: string; taskId?: string; appSessionId?: string }): Promise<void>
   workCommand(command: WorkUiCommand): Promise<unknown>
   openArtifact(id: string, interact: boolean): Promise<unknown>
+  exportArtifact(id: string): Promise<ExportReceipt | null>
+  workDiff(attemptId: string): Promise<string>
   appAction(input: { sessionId: string; action: string; payload: unknown }): Promise<unknown>
   closeApp(id: string): Promise<void>
   openWork(): Promise<WorkStatus>
