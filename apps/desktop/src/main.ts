@@ -11,9 +11,10 @@ import type { CaptureFrame } from '../renderer/src/bridge.d.ts';
 import { DialogueController, type DialogueEvent, type DialoguePreferences } from '../../../packages/voice-core/src/dialogue.ts';
 import { FixtureChatPort } from './fixture-chat.ts';
 import { LocalTtsService, type TtsStatus, type VoiceSelection } from '../../../packages/tts-adapter/src/index.ts';
+import { inspectTtsAssets } from '../../../packages/tts-adapter/src/runtime.ts';
 import { SpeechOutput, type SpeechPlaybackReport } from './speech-output.ts';
 import { OutputTimeline } from '../../../packages/voice-core/src/diagnostics.ts';
-import { defaultPreferences, loadPreferences, savePreferences, mergePreferences, inspectAssets, type DesktopPreferences } from './settings.ts';
+import { defaultPreferences, loadPreferences, savePreferences, mergePreferences, type DesktopPreferences } from './settings.ts';
 import { PetActivity } from '../../../packages/desktop-pet/src/projection.ts';
 import { PET_VARIANTS, type PetGeometry, type PetSnapshot } from '../../../packages/desktop-pet/src/types.ts';
 import { PetWindowManager, petPage } from './pet-window.ts';
@@ -22,15 +23,15 @@ import { WakeGate } from './wake-gate.ts';
 import { WorkWindow } from './work-window.ts';
 import { HostClient } from '../../host/src/client.ts';
 import { dialogueContext } from '../../host/src/context.ts';
-import type { ControlContext, ControlReceipt } from '../../host/src/conversation-control.ts';
+import type { ControlReceipt } from '../../host/src/conversation-control.ts';
 import type { ReferenceSelection } from '../../../packages/voice-core/src/coordination.ts';
 import { hostDirectory } from '../../host/src/state-directory.ts';
 import type { HostSelection, HostSnapshot } from '../../host/src/protocol.ts';
 import type { ExportReceipt } from '../../../packages/app-core/src/exports.ts';
 import { connectHost } from './host-connection.ts';
 import { WorkPlanner } from './work-planner.ts';
+import { DesktopTurnCoordinator } from './turn-coordinator.ts';
 import { ArtifactWindows } from './artifact-window.ts';
-import type { DialogueInput } from '../../../packages/voice-core/src/dialogue.ts';
 import type { WorkUiCommand } from '../../../packages/work-core/src/types.ts';
 import { completionLabel, workExecutionLabel, workOperationLabel, type CompletionAssessment } from '../../../packages/work-core/src/completion.ts';
 import type { AppStateVersion } from '../../../packages/app-core/src/index.ts';
@@ -46,7 +47,6 @@ const rendererRoot = path.join(root, '.cache/desktop-renderer');
 const page = 'deskai://app/index.html';
 const petSmoke = process.argv.includes('--pet-smoke');
 const smokeMode = process.argv.includes('--smoke') || petSmoke;
-const shellSmoke = process.argv.includes('--shell-smoke');
 const dialogueSmoke = smokeMode && process.argv.includes('--dialogue-smoke');
 const ttsSmoke = smokeMode && process.argv.includes('--tts-smoke');
 const realModelSmoke = ttsSmoke && process.argv.includes('--real-model');
@@ -59,17 +59,18 @@ if (smokeMode && !petSmoke && (!fakeMedia || !process.argv.includes('--use-fake-
 protocol.registerSchemesAsPrivileged([{ scheme: 'deskai', privileges: {
   standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true
 } }]);
-if (smokeMode) app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+if (smokeMode) {
+  app.setPath('userData', path.join(root, '.cache/desktop-smoke', randomUUID()));
+  app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+}
 
 let window: BrowserWindow | undefined;
 const workWindow = new WorkWindow();
-const ownedSmokeHost = smokeMode && !process.env.DESKAI_HOST_DIR;
+const ownedSmokeHost = smokeMode;
 let desktopHost: HostClient | undefined;
 let hostPreparing: Promise<HostClient> | undefined;
 let stopHostWatch: (() => void) | undefined;
 let planner: WorkPlanner | undefined;
-let planning = false;
-let planningRevision = 0;
 const artifactWindows = new ArtifactWindows();
 const pendingNotices: string[] = [];
 let speech: LocalDshSpeech | undefined;
@@ -100,12 +101,12 @@ let tts: LocalTtsService | undefined;
 let ttsPreparing: Promise<void> | undefined;
 let recoveringTts: Promise<void> | undefined;
 let ttsStatus: TtsStatus = { state: 'stopped' };
-let voiceSelection: VoiceSelection = { voiceId: 'nagato-normal-v2', referenceId: 'ref-01', voiceRevision: 0 };
+let voiceSelection: VoiceSelection | undefined;
 let voiceOutput: SpeechOutput | undefined;
 let outputBusy = false;
 const ttsMetrics = { pcmChunks: 0, playedSegments: 0, firstPCMAt: 0, voiceFailures: 0 };
 const metrics = { inputFrames: 0, inputSamples: 0, inputFramesDuringPlayback: 0, segments: 0,
-  asrCompleted: 0, asrSeconds: [] as number[], readyTurns: 0, fixtureTranscriptPrefixMatched: null as boolean | null, sessionStarts: 0,
+  asrCompleted: 0, asrSeconds: [] as number[], readyTurns: 0, sessionStarts: 0,
   firstSegment: null as { startSample: number; endSample: number; final: boolean } | null,
   inputTimeline: [] as InputDiagnostic[] };
 let outputActive = false;
@@ -127,14 +128,25 @@ function refreshListeningMode(force = false) {
     : '连续对话中；空闲后自动回到唤醒待机' });
 }
 const outputTimeline = new OutputTimeline();
+const turnCoordinator = new DesktopTurnCoordinator({
+  current: () => dialogue && activeConversation && sessionId ? {
+    dialogue, sessionId, conversationId: activeConversation.id,
+    planner: smokeMode && !realModelSmoke ? undefined : planner,
+  } : undefined,
+  ready: () => preferenceWrite,
+  host: getDesktopHost,
+  requireChat: realModelSmoke,
+  emit: send,
+  announce: announceControl,
+  onIdle: flushHostNotices,
+});
 
 function send(event: object) { if (window && !window.isDestroyed()) window.webContents.send('deskai:event', event); }
 function syncPet() { if (petWindow) petWindow.setActivity(petActivity.snapshot(petWindow.getPreferences())); }
 function showMainWindow() { window?.show(); window?.focus(); }
 function stopCurrentReply() {
-  if (!sessionId || !(planning || dialogue?.isGenerating || outputBusy || outputActive || outputPaused)) return;
-  planningRevision++;
-  void planner?.cancel().catch(() => {});
+  if (!sessionId || !(turnCoordinator.busy || dialogue?.isGenerating || outputBusy || outputActive || outputPaused)) return;
+  void turnCoordinator.cancel().catch(() => {});
   void dialogue?.cancelOutput().catch(() => {});
 }
 function updateTray() {
@@ -158,18 +170,19 @@ function refreshOutput() {
 }
 function updateTtsStatus(update: TtsStatus) {
   ttsStatus = update;
+  if (update.state === 'ready' && ttsPreparing) return;
   if (update.state === 'error') { petActivity.fail(); syncPet(); }
   send({ type: 'tts-status', status: update });
 }
 async function prepareTts(): Promise<void> {
-  if (dialogueSmoke || smokeMode && !process.argv.includes('--tts-smoke')) return;
+  if (smokeMode && !ttsSmoke) return;
   if (ttsPreparing) return ttsPreparing;
   if (tts?.getStatus().state === 'ready') return;
   const service = tts ??= new LocalTtsService(root, updateTtsStatus);
   const work = (async () => {
     await service.start();
     const catalog = service.registry();
-    const selected = catalog.find(row => row.id === preferences.voiceId) ?? catalog.find(row => row.id === 'nagato-normal-v2');
+    const selected = catalog.find(row => row.id === preferences.voiceId) ?? catalog.find(row => row.id === service.getStatus().voiceId);
     if (!selected) throw new Error('VOICE_RESOURCE_NOT_FOUND');
     const referenceId = selected.references.some(row => row.id === preferences.referenceId) ? preferences.referenceId : selected.defaultReferenceId;
     voiceSelection = await service.selectVoice(selected.id, referenceId);
@@ -183,13 +196,16 @@ async function prepareTts(): Promise<void> {
     if (tts === service) tts = undefined;
     await service.dispose();
     throw error;
-  } finally { if (ttsPreparing === work) ttsPreparing = undefined; }
+  } finally {
+    ttsPreparing = undefined;
+    if (tts === service && ttsStatus.state === 'ready') updateTtsStatus(ttsStatus);
+  }
 }
 function attachOutput() {
   const activeDialogue = dialogue;
-  if (!tts || !activeDialogue || ttsStatus.state !== 'ready') return;
+  if (!tts || !activeDialogue || !voiceSelection || ttsStatus.state !== 'ready') return;
   const activeTts = tts;
-  voiceOutput = new SpeechOutput({ sessionId, port: {
+  voiceOutput = new SpeechOutput({ sessionId, selection: { ...voiceSelection, language: preferences.replyLanguage, speed: preferences.speed }, port: {
     synthesize: async (request, onPCM, signal) => {
       const started = performance.now();
       const identity = { sessionId: request.sessionId, turnId: request.turnId, segmentId: request.segmentId, generationId: request.generationId };
@@ -229,7 +245,6 @@ function attachOutput() {
     onFinalSegment: (attemptId, segmentId) => { activeDialogue.finalSegment(attemptId, segmentId); refreshOutput(); },
     onError: (_code, attemptId) => { ttsMetrics.voiceFailures++; if (attemptId) activeDialogue.speechFallback(attemptId); },
   });
-  voiceOutput.setSelection({ ...voiceSelection, language: preferences.replyLanguage, speed: preferences.speed });
 }
 function dialogueEvent(event: DialogueEvent) {
   if (!sessionId) return;
@@ -274,8 +289,7 @@ async function stopSession(retainPetError = false) {
   petActivity.stopSession(retainPetError); syncPet();
   updateTray();
   controller?.stop();
-  planningRevision++;
-  await planner?.cancel(); planner = undefined;
+  await turnCoordinator.cancel(); planner = undefined;
   checkpointConversation();
   const oldDialogue = dialogue;
   const oldOutput = voiceOutput;
@@ -349,14 +363,10 @@ async function closeHostClient() {
   }
 }
 function flushHostNotices() {
-  if (shutdown || !dialogue || planning || voiceSubmitting || controller?.hasPendingInput ||
+  if (shutdown || !dialogue || turnCoordinator.busy || voiceSubmitting || controller?.hasPendingInput ||
       dialogue.isGenerating || outputActive || outputBusy || outputPaused || !pendingNotices.length) return;
   dialogue.announce(pendingNotices.splice(0).join('\n').slice(0, 1800), captureArmed ? 'voice' : 'text');
 }
-function closeReference(conversationId: string, clarificationId: string) {
-  if (conversationId === sessionId) send({ type: 'reference-closed', sessionId: conversationId, clarificationId });
-}
-
 function announceControl(facts: ControlReceipt) {
   let text: string;
   switch (facts.kind) {
@@ -372,66 +382,13 @@ function announceControl(facts: ControlReceipt) {
   flushHostNotices();
 }
 
-async function submitCoordinated(input: DialogueInput, inputId?: string): Promise<{ accepted: boolean }> {
-  await preferenceWrite;
-  const current = dialogue, currentSession = sessionId;
-  const owner = activeConversation;
-  if (!current || !currentSession || !owner || input.isEligible?.() === false) return { accepted: false };
-  if (!input.speculation) current.discardSpeculative();
-  if (smokeMode && !realModelSmoke || !planner) {
-    const host = await getDesktopHost();
-    return current.submit({ ...input, hostContext: dialogueContext(await host.snapshot(), { kind: 'chat' }) });
-  }
-  if (planning) throw new Error('COORDINATOR_BUSY');
-  planning = true;
-  const revision = ++planningRevision;
-  send({ type: 'coordination-state', state: 'planning' });
-  let committed = false;
-  try {
-    const host = await getDesktopHost();
-    const turn = { id: inputId ?? (input.speculation ? `${currentSession}_${input.speculation.inputRevision}` : randomUUID()),
-      conversationId: owner.id, text: input.text };
-    const context = await host.command<ControlContext>({ type: 'plan-context', turn });
-    if (revision !== planningRevision || current !== dialogue || currentSession !== sessionId) return { accepted: false };
-    const decision = await planner.plan(input.text, context.planning);
-    if (revision !== planningRevision || current !== dialogue || currentSession !== sessionId || input.isEligible?.() === false) return { accepted: false };
-    if (realModelSmoke && decision.intent !== 'chat') throw new Error('VOICE_SMOKE_EXPECTED_CHAT');
-    if (decision.intent !== 'chat') current.discardSpeculative(input.speculation);
-    const facts = decision.intent === 'chat' ? { kind: 'chat' as const } : await host.command<ControlReceipt>({ type: 'plan', turn, plan: decision });
-    committed = decision.intent !== 'chat';
-    if (committed) input.onAccepted?.();
-    if (revision !== planningRevision || current !== dialogue || currentSession !== sessionId) return { accepted: committed };
-    if (facts.kind === 'reference-clarification') send({ type: 'reference-card', sessionId: currentSession, card: facts });
-    else if (decision.intent === 'choose') closeReference(currentSession, decision.clarificationId);
-    const result = await current.submit({ ...input, ...(committed ? { onAccepted: undefined, isEligible: undefined, requiresReply: true, characterKnowledge: false } : {}),
-      hostContext: committed ? { ...context.chat, receipt: facts } : context.chat });
-    if (committed && !result.accepted && currentSession === sessionId) announceControl(facts);
-    return { accepted: committed || result.accepted };
-  } catch (error) {
-    if (revision !== planningRevision) return { accepted: committed };
-    send({ type: 'error', code: 'COORDINATION_FAILED', message: '任务协调失败：' + (error instanceof Error ? error.message : String(error)) });
-    return { accepted: committed };
-  } finally {
-    if (input.speculation) current.discardSpeculative(input.speculation);
-    planning = false; send({ type: 'coordination-state', state: 'idle' }); flushHostNotices();
-  }
-}
 ipcMain.handle('deskai:reference-select', async (event, selection: ReferenceSelection) => {
   trusted(event);
-  const owner = activeConversation, liveSession = sessionId;
-  if (!owner || !liveSession) throw new Error('COORDINATION_SESSION_UNAVAILABLE');
-  const facts = await (await getDesktopHost()).command<ControlReceipt>({ type: 'reference-select', conversationId: owner.id, selection });
-  if (owner !== activeConversation || liveSession !== sessionId) return facts;
-  closeReference(liveSession, selection.clarificationId);
-  announceControl(facts);
-  return facts;
+  return turnCoordinator.selectReference(selection);
 });
 ipcMain.handle('deskai:reference-dismiss', async (event, clarificationId: string) => {
   trusted(event);
-  const owner = activeConversation, liveSession = sessionId;
-  if (!owner || !liveSession) return;
-  await (await getDesktopHost()).command({ type: 'reference-dismiss', conversationId: owner.id, clarificationId });
-  closeReference(liveSession, clarificationId);
+  await turnCoordinator.dismissReference(clarificationId);
 });
 ipcMain.handle('deskai:work-open', async event => { trusted(event); return workWindow.open(await getDesktopHost()); });
 ipcMain.handle('deskai:work-status', event => { trusted(event); return desktopHost?.cached()?.runtime ?? { state: 'stopped' }; });
@@ -583,8 +540,6 @@ async function openConversation(requestedId?: string) {
       metrics.segments++;
       if (smokeMode && fakeMedia && metrics.firstSegment === null) {
         metrics.firstSegment = { startSample: segment.startSample, endSample: segment.endSample, final: segment.final };
-        void mkdir(path.join(root, 'outputs/desktop-validation/m1'), { recursive: true }).then(() =>
-          writeFile(path.join(root, 'outputs/desktop-validation/m1/synthetic-first-segment.wav'), encodePcm16Wav(segment.samples)));
       }
     },
     onInputState: state => {
@@ -595,7 +550,7 @@ async function openConversation(requestedId?: string) {
     onCandidate: candidate => {
       const host = desktopHost?.cached();
       if (smokeMode && !realModelSmoke || !captureArmed || candidate.sessionId !== sessionId || !host ||
-          planning || voiceSubmitting || outputActive || outputBusy || outputPaused) return;
+          turnCoordinator.busy || voiceSubmitting || outputActive || outputBusy || outputPaused) return;
       const route = inputRoutes.get(candidate.utteranceIds[0]);
       const preview = smokeMode ? { accepted: true, text: candidate.text } : route && wakeGate.preview(candidate.text, route, performance.now());
       if (!preview?.accepted) return;
@@ -616,9 +571,6 @@ async function openConversation(requestedId?: string) {
     onReady: ready => {
       if (sessionId !== ready.sessionId || !controller?.isEligible(ready.inputRevision, ready.utteranceIds)) return;
       metrics.readyTurns++;
-      if (smokeMode && metrics.fixtureTranscriptPrefixMatched === null) {
-        metrics.fixtureTranscriptPrefixMatched = ready.text.replace(/[\s\p{P}]/gu, '').startsWith('你回来了');
-      }
       if (smokeMode && !dialogueSmoke && !ttsSmoke) {
         send({ type: 'transcript', sessionId, text: ready.text });
         send({ type: 'ready-text', sessionId, text: ready.text, eligible: true });
@@ -650,7 +602,7 @@ async function openConversation(requestedId?: string) {
       voiceSubmitting = true;
       outputTimeline.record('input-submitted', ready);
       const current = controller;
-      void submitCoordinated({ text, source: 'voice', continuationOf: ready.continuationOf,
+      void turnCoordinator.submit({ text, source: 'voice', continuationOf: ready.continuationOf,
         speculation: ready,
         utteranceIds: ready.utteranceIds, isEligible: () => sessionId === ready.sessionId && current.isEligible(ready.inputRevision, ready.utteranceIds),
         onAccepted: () => {
@@ -684,7 +636,6 @@ function sessionDescription() {
   if (!activeConversation) throw new Error('CONVERSATION_NOT_OPEN');
   const record = conversations.get(activeConversation.id);
   return { sessionId, conversation: conversationSummary(record), history: record.history,
-    catalog: [{ voiceId: 'nagato-normal-v2', name: '常态有希 v2' }],
     status: dialogueSmoke ? '本地模拟模型验证' : captureArmed
       ? (wakeGate.snapshot(performance.now()).mode === 'wake' ? '等待唤醒：' + effectiveWakePhrases().join(' / ') : '连续对话中；空闲后自动回到唤醒待机') : '文字对话已就绪' };
 }
@@ -695,7 +646,7 @@ ipcMain.handle('deskai:start', async event => {
   trusted(event);
   await openConversation();
   const startingSession = sessionId;
-  const conversationPreparation = inputRuntimeConfig.conversation.idlePolicy === 'unload' ? undefined : speechRuntime?.prepare().catch(() => {
+  const conversationPreparation = speechRuntime?.prepareForCapture().catch(() => {
     if (sessionId === startingSession) send({ type: 'error', sessionId, code: 'CONVERSATION_ASR_UNAVAILABLE',
       message: '对话识别服务启动失败；文字对话仍可使用，请检查语音运行配置。' });
   });
@@ -719,9 +670,9 @@ ipcMain.handle('deskai:send-text', async (event, value: unknown) => {
   trusted(event);
   const data = value as { sessionId?: string; text?: string; turnId?: string };
   if (!data || data.sessionId !== sessionId || !dialogue || typeof data.text !== 'string' || data.text.length > 4000) throw new Error('INVALID_TEXT_INPUT');
-  return submitCoordinated({ text: data.text, source: captureArmed ? 'voice' : 'text' }, data.turnId);
+  return turnCoordinator.submit({ text: data.text, source: captureArmed ? 'voice' : 'text' }, data.turnId);
 });
-ipcMain.handle('deskai:cancel-turn', async event => { trusted(event); planningRevision++; await planner?.cancel(); await dialogue?.cancelOutput(); refreshOutput(); });
+ipcMain.handle('deskai:cancel-turn', async event => { trusted(event); await turnCoordinator.cancel(); await dialogue?.cancelOutput(); refreshOutput(); });
 ipcMain.handle('deskai:retry-turn', async event => { trusted(event); return dialogue?.retry() ?? { accepted: false }; });
 ipcMain.on('deskai:displayed', (event, value: unknown) => {
   trusted(event);
@@ -751,8 +702,7 @@ ipcMain.handle('deskai:preferences', async (event, value: unknown) => {
       const identityChanged = card.id !== current.persona.id || relation !== current.relationshipMode;
       if (identityChanged) {
         const live = dialogue;
-        planningRevision++;
-        await planner?.cancel();
+        await turnCoordinator.cancel();
         checkpointConversation();
         const replacement = await conversations.create(characters.get(card.id), relation);
         if (current === activeConversation && live === dialogue) {
@@ -764,15 +714,14 @@ ipcMain.handle('deskai:preferences', async (event, value: unknown) => {
           }
         }
       } else if (next.replyLanguage !== preferences.replyLanguage || next.characterKnowledge !== preferences.characterKnowledge) {
-        planningRevision++;
-        await planner?.cancel();
+        await turnCoordinator.cancel();
         await dialogue?.updatePreferences(conversationPreferences(current, next));
       }
     }
     const wakeChanged = JSON.stringify(next.wakePhrases) !== JSON.stringify(preferences.wakePhrases);
     if (!smokeMode) await savePreferences(app.getPath('userData'), next);
     preferences = next;
-    voiceOutput?.setSelection({ ...voiceSelection, language: next.replyLanguage, speed: next.speed });
+    if (voiceSelection) voiceOutput?.setSelection({ ...voiceSelection, language: next.replyLanguage, speed: next.speed });
     if (wakeChanged) { wakeGate.setPhrases(effectiveWakePhrases()); refreshListeningMode(true); }
     refreshOutput();
     return preferences;
@@ -841,9 +790,10 @@ ipcMain.on('deskai:playback', (event, report: unknown) => {
 });
 ipcMain.handle('deskai:playback-fixture', async event => {
   trusted(event);
-  if (!dialogue) throw new Error('SESSION_NOT_ACTIVE');
+  const fixture = process.env.DESKAI_AUDIO_SMOKE_WAV;
+  if (!smokeMode || !fakeMedia || !fixture || !dialogue) throw new Error('PLAYBACK_FIXTURE_UNAVAILABLE');
   const generationId = dialogue.generationId;
-  const wav = new Uint8Array(await readFile(path.join(assetRoot, 'assets/凉宫春日参考语音包/predef_ref/正常有希/01_有希_平静.wav')));
+  const wav = new Uint8Array(await readFile(fixture));
   return { generationId, wav };
 });
 ipcMain.on('deskai:finish-smoke', (event, input: unknown) => {
@@ -862,7 +812,7 @@ ipcMain.on('deskai:finish-smoke', (event, input: unknown) => {
     passed, metrics, versions: process.versions, timestamp: new Date().toISOString(),
     notes: Array.isArray(data.notes) ? data.notes.filter(item => typeof item === 'string').map(item => String(item).slice(0, 400)).slice(0, 10) : [] };
   void (async () => {
-    const dir = path.join(root, 'outputs/desktop-validation/m1');
+    const dir = path.join(root, 'outputs/desktop-validation/audio');
     await mkdir(dir, { recursive: true });
     if (window && !window.isDestroyed()) {
       const screenshot = await window.webContents.capturePage();
@@ -891,7 +841,7 @@ ipcMain.on('deskai:finish-dialogue-smoke', (event, input: unknown) => {
     checks, microphoneFrames: metrics.inputFrames, model: dialogue?.stats, requests: fixturePort?.requests,
     physicalDevicesTested: false, notes: (data.notes ?? []).filter(item => typeof item === 'string').slice(0, 10), timestamp: new Date().toISOString() };
   void (async () => {
-    const dir = path.join(root, 'outputs/desktop-validation/m2');
+    const dir = path.join(root, 'outputs/desktop-validation/dialogue');
     await mkdir(dir, { recursive: true });
     if (window && !window.isDestroyed()) await writeFile(path.join(dir, 'desktop-smoke.png'), (await window.webContents.capturePage()).toPNG());
     await writeFile(path.join(dir, `desktop-smoke-${Date.now()}.json`), JSON.stringify(report, null, 2));
@@ -914,7 +864,7 @@ function maybeFinishTtsSmoke() {
     passed: metrics.asrCompleted > 0 && metrics.inputFramesDuringPlayback > 0 && ttsMetrics.pcmChunks > 0 &&
       ttsMetrics.voiceFailures === 0 && dialogue.stats.modelRequests > 0 && dialogue.stats.modelRequests <= metrics.readyTurns };
   void (async () => {
-    const directory = path.join(root, 'outputs/desktop-validation/m3');
+    const directory = path.join(root, 'outputs/desktop-validation/tts');
     await mkdir(directory, { recursive: true });
     await writeFile(path.join(directory, `desktop-smoke-${Date.now()}.json`), JSON.stringify(report, null, 2));
     if (window && !window.isDestroyed()) await writeFile(path.join(directory, 'desktop-smoke.png'), (await window.webContents.capturePage()).toPNG());
@@ -1096,10 +1046,10 @@ async function runPetSmoke(rendererErrors: string[]): Promise<boolean> {
 app.whenReady().then(async () => {
   if (!hasInstanceLock) return;
   await mkdir(app.getPath('userData'), { recursive: true });
-  if (!smokeMode && !shellSmoke) preferences = await loadPreferences(app.getPath('userData'));
+  if (!smokeMode) preferences = await loadPreferences(app.getPath('userData'));
   wakeGate.setPhrases(effectiveWakePhrases());
-  assetStatus = await inspectAssets(assetRoot);
-  const characterData = smokeMode || shellSmoke ? undefined : app.getPath('userData');
+  assetStatus = await inspectTtsAssets(root, assetRoot);
+  const characterData = smokeMode ? undefined : app.getPath('userData');
   [characters, conversations] = await Promise.all([CharacterStore.open(root, characterData), ConversationArchive.open(characterData)]);
   protocol.handle('deskai', async request => {
     const url = new URL(request.url);
@@ -1138,7 +1088,7 @@ app.whenReady().then(async () => {
   await petWindow.start(false);
   screen.on('display-removed', () => petWindow?.ensureVisible());
   screen.on('display-metrics-changed', () => petWindow?.ensureVisible());
-  window = new BrowserWindow({ width: 960, height: 760, minWidth: 700, minHeight: 560, show: !smokeMode && !shellSmoke,
+  window = new BrowserWindow({ width: 960, height: 760, minWidth: 700, minHeight: 560, show: !smokeMode,
     autoHideMenuBar: true, webPreferences: { preload: path.join(import.meta.dirname, 'preload.cjs'),
       contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true } });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -1154,7 +1104,7 @@ app.whenReady().then(async () => {
     if (details.level === 3 || details.level === 'error') console.error('Renderer smoke:', String(details.message ?? '').slice(0, 500));
   });
   await window.loadURL(page);
-  if (!smokeMode && !shellSmoke) petWindow.showIfVisible();
+  if (!smokeMode) petWindow.showIfVisible();
   if (petSmoke) {
     const rendererErrors: string[] = [];
     petWindow.getWindow()?.webContents.on('console-message', event => {
@@ -1176,17 +1126,6 @@ app.whenReady().then(async () => {
     }
     const icon = nativeImage.createFromBitmap(pixels, { width: 16, height: 16 });
     tray = new Tray(icon); tray.on('double-click', () => { window?.show(); window?.focus(); }); updateTray();
-    if (shellSmoke) {
-      window.close();
-      const report = { timestamp: new Date().toISOString(), packaged: app.isPackaged, trayCreated: !tray.isDestroyed(),
-        closeHidesWindow: !window.isDestroyed() && !window.isVisible(), assetsReady: assetStatus.ready,
-        physicalDevicesTested: false, microphoneOpened: false, modelRequests: 0,
-        passed: !tray.isDestroyed() && !window.isDestroyed() && !window.isVisible() && assetStatus.ready };
-      const directory = path.join(assetRoot, 'outputs/desktop-validation/m4');
-      await mkdir(directory, { recursive: true });
-      await writeFile(path.join(directory, `package-smoke-${Date.now()}.json`), JSON.stringify(report, null, 2));
-      app.quit(); return;
-    }
     powerMonitor.on('suspend', () => {
       send({ type: 'session-ended', sessionId, reason: '系统进入睡眠，已停止采集；唤醒后请重新开始。' });
       void stopSession().then(async () => {

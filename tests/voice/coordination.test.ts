@@ -5,7 +5,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { parseCoordinationPlan } from '../../packages/voice-core/src/coordination.ts';
+import { parseCoordinationPlan, type CoordinationPlan } from '../../packages/voice-core/src/coordination.ts';
+import { DesktopTurnCoordinator } from '../../apps/desktop/src/turn-coordinator.ts';
 import { HostApi } from '../../apps/host/src/api.ts';
 import { LocalHost } from '../../apps/host/src/host.ts';
 import { dialogueContext, taskStatus } from '../../apps/host/src/context.ts';
@@ -15,6 +16,43 @@ import type { ProviderPort, ProviderRequest } from '../../packages/work-core/src
 import type { AcceptanceReceipt } from '../../packages/work-core/src/completion.ts';
 
 const turnFor = (text: string, conversationId = 'conversation'): ControlTurn => ({ id: randomUUID(), conversationId, text });
+
+test('a completed plan cannot execute after the active conversation changes', async () => {
+  const planned = Promise.withResolvers<void>();
+  const decision = Promise.withResolvers<CoordinationPlan>();
+  let conversationId = 'initial-conversation';
+  let accepted = false;
+  const dialogue = {
+    discardSpeculative() {},
+    async submit() { assert.fail('old input reached Chat'); },
+  };
+  const planner = {
+    async plan() { planned.resolve(); return decision.promise; },
+    async cancel() {},
+  };
+  const commands: string[] = [];
+  const coordinator = new DesktopTurnCoordinator({
+    current: () => ({ sessionId: 'live', conversationId, dialogue, planner }),
+    ready: async () => {},
+    host: async () => ({
+      async snapshot() { assert.fail('unexpected fallback'); },
+      async command<T>(command: { type: string }) {
+        commands.push(command.type);
+        return { planning: {}, chat: {} } as T;
+      },
+    }),
+    emit() {}, announce() {}, onIdle() {},
+  });
+  const pending = coordinator.submit({ text: '提交任务', source: 'text', onAccepted: () => { accepted = true; } });
+  await planned.promise;
+  conversationId = 'replacement-conversation';
+  decision.resolve({ intent: 'submit', references: null });
+  assert.deepEqual(await pending, { accepted: false });
+  assert.deepEqual(commands, ['plan-context']);
+  assert.equal(accepted, false);
+  assert.equal(coordinator.busy, false);
+});
+
 async function settle(host: LocalHost, taskId: string) {
   for (let i = 0; i < 150; i++) {
     const { tasks, attempts } = host.work.snapshot();
@@ -171,7 +209,7 @@ test('Work assessment uses actual delivery and persists only explicit acceptance
   };
   let host = await LocalHost.open(stateDir, provider, project);
   async function run(prompt: string, file: string) {
-    const task = host.work.submit({ projectId: host.selectedProjectId, prompt, expectedArtifacts: [file] });
+    const { task } = await host.work.dispatch({ type: 'submit', projectId: host.selectedProjectId, prompt, expectedArtifacts: [file] });
     for (let i = 0; i < 150; i++) {
       const attempt = host.snapshot().work.attempts.find(item => item.taskId === task.id);
       if (attempt?.assessment) return { task, attempt };

@@ -5,11 +5,6 @@ node_modules/
 .conda/
 .cache/
 runtime/
-training/**/logs/
-training/**/features/
-training/**/weights/
-training/**/checkpoints/
-training/**/audio/
 __pycache__/
 apps/desktop/renderer/public/vad/
 apps/desktop/renderer/public/worklets/aec-core.js
@@ -18,8 +13,6 @@ apps/desktop/renderer/public/worklets/aec-LICENSE.txt
 apps/desktop/renderer/public/worklets/aec-THIRD-PARTY-NOTICES.md
 assets/
 outputs/
-release/
-tests/voice/fixtures/*.wav
 .cursor/
 .env
 .env.*
@@ -27,7 +20,6 @@ tests/voice/fixtures/*.wav
 *.key
 training/
 
-# Local agent settings and recoverable historical artifacts
+# Local agent settings
 .codex/
 .codex-remote-attachments/
-archive/

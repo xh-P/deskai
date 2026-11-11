@@ -1,0 +1,39 @@
+---
+config:
+  theme: base
+  htmlLabels: false
+  themeVariables:
+    fontFamily: 'Microsoft YaHei UI, Segoe UI, sans-serif'
+    fontSize: '16px'
+    lineColor: '#607188'
+    edgeLabelBackground: '#f8fafc'
+  flowchart:
+    curve: basis
+    nodeSpacing: 28
+    rankSpacing: 42
+    padding: 16
+---
+flowchart LR
+    Renderer["Electron Renderer<br/>对话 · 角色 · Work 面板<br/>AEC · VAD · PCM 播放"]
+    Cli["Host 命令行"]
+    Desktop["Electron Main<br/>会话协调与归属<br/>voice-core · 语音输出"]
+    Host["独立 Node Host<br/>Work 受理与恢复<br/>引用 · 产物 · 验收 · AUIP"]
+    Voice["桌面模型服务<br/>SenseVoice · Qwen3-ASR<br/>dsh / OpenAI-compatible<br/>角色知识 · GPT-SoVITS v2"]
+    DesktopData[("桌面数据<br/>偏好 · 角色版本 · 会话快照")]
+    Execution["Work 执行与应用<br/>dsh 原生会话 · Git worktree<br/>已登记的 AUIP 应用"]
+    HostData[("Host 数据<br/>操作 · Attempt · 产物 · 回执")]
+
+    Renderer <-->|IPC| Desktop
+    Cli <--> Host
+    Desktop <-->|鉴权 API| Host
+    Desktop <--> Voice
+    Desktop --> DesktopData
+    Host <--> Execution
+    Host --> HostData
+
+    classDef desktop fill:#E6F4EF,stroke:#247868,color:#15332D,stroke-width:1.5px
+    classDef host fill:#E9EFFB,stroke:#3C63A1,color:#182D52,stroke-width:1.5px
+    classDef data fill:#F1F4F8,stroke:#8190A3,color:#24354B
+    class Renderer,Desktop,Voice desktop
+    class Cli,Host,Execution host
+    class DesktopData,HostData data

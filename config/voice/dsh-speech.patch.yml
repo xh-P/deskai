@@ -1,0 +1,34 @@
+# Speech providers for the desktop dsh service.
+- id: tool-working-directory
+  disabled: true
+- id: session-title-llm
+  disabled: true
+- insert:
+    # Same contributions as the installed official voice-input bundle patch.
+    - id: speech-to-text
+      name: '@deepseek-ai/dsh-experimental-speech-to-text'
+      config:
+        defaultProvider: sensevoice-local
+    - id: speech-to-text-sensevoice
+      name: '@deepseek-ai/dsh-experimental-speech-to-text-sensevoice'
+      config:
+        dataRoot: !!js dshHomePath('speech-to-text', 'sensevoice')
+        threads: 4
+        idleTimeoutMs: 0
+        # The Remote below rejects audio longer than 20 s. Renderer/core own
+        # every endpoint inside that interval; provider VAD only gates speech.
+        # Both split triggers must exceed the complete request bound, including
+        # frame quantization. The offline worker flushes at EOF without waiting
+        # for 21 s of wall-clock silence. Threshold/minSpeech retain defaults.
+        maxAudioBytes: 640044 # 44-byte header + 20 s * 16000 Hz * PCM16 mono
+        segmentSeconds: 21
+        minSilenceSeconds: 21
+        vadOnsetPaddingSeconds: 1
+    - id: api-speech-to-text
+      name: '@deepseek-ai/dsh-experimental-api-speech-to-text'
+      config:
+        # Desktop capture splits longer recordings before RPC.
+        maxAudioBytes: 640044
+        maxDurationSeconds: 20
+    - id: ui-voice-input
+      name: '@deepseek-ai/dsh-experimental-client-ui-voice-input'

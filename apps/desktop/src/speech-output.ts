@@ -1,9 +1,9 @@
 import { SentenceStream, type SpokenSentence } from '../../../packages/voice-core/src/sentences.ts';
 import type { DialogueEvent } from '../../../packages/voice-core/src/dialogue.ts';
-import type { LocalTtsService } from '../../../packages/tts-adapter/src/index.ts';
+import type { LocalTtsService, VoiceSelection } from '../../../packages/tts-adapter/src/index.ts';
 
 type Identity = { sessionId: string; turnId: string; attemptId: string; generationId: number; voiceRevision: number; segmentId: string };
-type Selection = { voiceId: string; referenceId?: string; voiceRevision: number; language?: 'auto' | 'zh' | 'ja' | 'all_zh' | 'all_ja' | 'en'; speed?: number };
+type Selection = VoiceSelection & { language?: 'auto' | 'zh' | 'ja' | 'all_zh' | 'all_ja' | 'en'; speed?: number };
 export type SpeechPort = Pick<LocalTtsService, 'synthesize'>;
 export type SpeechPlaybackReport = { sessionId: string; generationId: number; turnId?: string; attemptId?: string; voiceRevision?: number; segmentId?: string; chunkSeq?: number;
   queuedSeconds?: number; playing: boolean; paused: boolean; completed?: boolean; chunkAccepted?: boolean; segmentCompleted?: boolean; errorCode?: string };
@@ -14,13 +14,13 @@ export type SpeechOutputEvent =
   | { type: 'speech-state'; sessionId: string; state: 'idle' | 'buffering' | 'playing' | 'paused' | 'error'; code?: string };
 type Segment = SpokenSentence & Identity & { chunks: Float32Array[]; rate: number; samples: number; complete: boolean; sent: number; received: Set<number> };
 type Attempt = { turnId: string; attemptId: string; generationId: number; stream: SentenceStream; ended: boolean; serial: number; lastId?: string; finalReported: boolean };
-type Options = { sessionId: string; port: SpeechPort; emit: (event: SpeechOutputEvent) => void;
+type Options = { sessionId: string; selection: Selection; port: SpeechPort; emit: (event: SpeechOutputEvent) => void;
   onSegment?: (progress: SpeechProgress) => void; onFinalSegment?: (attemptId: string, segmentId: string) => void;
   onError?: (code: string, attemptId?: string) => void };
 
 /** One CUDA request, at most two bounded sentences, and <=3s acknowledged renderer lookahead. */
 export class SpeechOutput {
-  private selection: Selection = { voiceId: 'nagato-normal-v2', voiceRevision: 0, language: 'auto', speed: 1 };
+  private selection: Selection;
   private attempt?: Attempt;
   private generation = 0;
   private segments: Segment[] = [];
@@ -32,11 +32,15 @@ export class SpeechOutput {
   private sources = new Map<string, 'voice' | 'text'>();
   private invalidated = new Set<string>();
   private readonly options: Options;
-  constructor(options: Options) { this.options = options; }
+  constructor(options: Options) {
+    this.options = options;
+    this.selection = { ...options.selection };
+  }
 
   setSelection(selection: Selection): void {
-    if (selection.voiceRevision !== this.selection.voiceRevision || selection.voiceId !== this.selection.voiceId) this.clear(this.generation);
-    this.selection = { ...this.selection, ...selection };
+    if (selection.voiceRevision !== this.selection.voiceRevision || selection.voiceId !== this.selection.voiceId ||
+        selection.referenceId !== this.selection.referenceId) this.clear(this.generation);
+    this.selection = { ...selection };
   }
   handle(event: DialogueEvent): void {
     if (this.closed) return;
@@ -113,7 +117,7 @@ export class SpeechOutput {
     }
     const settled = Promise.resolve().then(() => { if (controller.signal.aborted) return;
       return this.options.port.synthesize({ sessionId: segment.sessionId, turnId: segment.turnId, generationId: segment.generationId,
-      voiceRevision: segment.voiceRevision, segmentId: segment.segmentId, voiceId: selection.voiceId, referenceId: selection.referenceId ?? 'default',
+      voiceRevision: segment.voiceRevision, segmentId: segment.segmentId, voiceId: selection.voiceId, referenceId: selection.referenceId,
       text: segment.text, language, speed: selection.speed }, pcm => {
       if (controller.signal.aborted || this.attempt !== attempt || this.generation !== segment.generationId) return;
       if (segment.received.has(pcm.chunkSeq)) return;

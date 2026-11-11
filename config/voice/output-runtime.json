@@ -1,0 +1,22 @@
+{
+  "python": ".conda/gsv-v5/python.exe",
+  "repository": "runtime/GPT-SoVITS",
+  "ffmpegBin": "runtime/ffmpeg/bin",
+  "modelDirectory": "assets/凉宫春日模型包.part1",
+  "referenceDirectory": "assets/凉宫春日参考语音包",
+  "registry": "GPT_weights_v2/characters.json",
+  "defaultVoiceId": "nagato-normal-v2",
+  "voiceIds": {
+    "GPT_weights_v2/Haruhi_20250113-e10.ckpt": "haruhi-v2",
+    "GPT_weights_v2/Kyon_20241002-e10.ckpt": "kyon-v2",
+    "GPT_weights_v2/Nagato_Normal_20241002-e10.ckpt": "nagato-normal-v2",
+    "GPT_weights_v2/Nagato_Disappearance_20241002-e10.ckpt": "nagato-disappearance-v2",
+    "GPT_weights_v2/Itsuki_20241002-e10.ckpt": "koizumi-v2",
+    "GPT_weights_v2/Mikuru_20241002-e10.ckpt": "mikuru-v2",
+    "GPT_weights_v2/KyonSister_20241002-e10.ckpt": "kyon-sister-v2",
+    "GPT_weights_v2/Asakura_20241002-e10.ckpt": "asakura-v2",
+    "GPT_weights_v2/Tsuruya_20241002-e10.ckpt": "tsuruya-v2",
+    "GPT_weights_v2/OldMikuru_20241002-e10.ckpt": "mikuru-adult-v2"
+  },
+  "streaming": { "enabled": true, "minChunkLength": 16, "overlapLength": 2 }
+}

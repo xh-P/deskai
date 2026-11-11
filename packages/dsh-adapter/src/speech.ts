@@ -1,10 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { access } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
-import { prepareChatPatch } from './chat-patch.ts';
+import { DESKTOP_DSH_PROFILE, dshHome, prepareChatPatch } from './chat-patch.ts';
 
 export type Preparation = { phase: string; completedBytes?: number; totalBytes?: number; resource?: string };
 export type SpeechCatalog = {
@@ -51,14 +50,14 @@ export class LocalDshSpeech {
     if (!nodeExecutable) throw new Error('STANDALONE_NODE_REQUIRED');
     const childEnv = { ...process.env };
     delete childEnv.ELECTRON_RUN_AS_NODE;
-    const profileDir = path.join(process.env.DSH_HOME ?? path.join(homedir(), '.dsh'), 'profiles/deskai2-voice-m1');
+    const profileDir = path.join(dshHome(), 'profiles', DESKTOP_DSH_PROFILE);
     const chatPatch = await prepareChatPatch(this.root);
     let initialize: string[] = [];
     try { await access(profileDir); } catch { initialize = ['--from-default-profile', 'web']; }
     this.lifetime.signal.throwIfAborted();
     const child = spawn(nodeExecutable, [path.join(this.root, 'node_modules/@deepseek-ai/dsh/lib/bin.js'),
-      '--profile', 'deskai2-voice-m1', ...initialize, '--patch',
-      path.join(this.root, 'config/voice/dsh-m0.patch.yml'), '--patch', chatPatch, '--port', '0', '--no-open'], {
+      '--profile', DESKTOP_DSH_PROFILE, ...initialize, '--patch',
+      path.join(this.root, 'config/voice/dsh-speech.patch.yml'), '--patch', chatPatch, '--port', '0', '--no-open'], {
       cwd: this.root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
       env: childEnv
     });

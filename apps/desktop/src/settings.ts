@@ -1,4 +1,4 @@
-import { access, readFile, writeFile, rename, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, rename, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { DEFAULT_PERSONA_ID, isPersonaId, isRelationshipMode, type ChatPersonaId, type RelationshipMode } from '../../../packages/voice-core/src/persona-catalog.ts';
 import { AEC_MODES, type AecMode } from '../../../packages/voice-core/src/aec-mode.ts';
@@ -11,7 +11,7 @@ export type DesktopPreferences = {
   characterKnowledge: boolean;
 };
 export const defaultPreferences: DesktopPreferences = {
-  personaId: DEFAULT_PERSONA_ID, relationshipMode: 'friend', replyLanguage: 'auto', voiceId: 'nagato-normal-v2', referenceId: '',
+  personaId: DEFAULT_PERSONA_ID, relationshipMode: 'friend', replyLanguage: 'auto', voiceId: '', referenceId: '',
   inputDeviceId: '', outputDeviceId: '', volume: 0.8, speed: 1, closeToTray: true, wakePhrases: null, aecMode: null, characterKnowledge: false,
 };
 /** Only supported UI values are persisted; no arbitrary paths, prompts or credentials. */
@@ -20,7 +20,7 @@ export function mergePreferences(previous: DesktopPreferences, value: unknown): 
   const patch = value as Record<string, unknown>;
   const next = { ...previous };
   for (const [key, item] of Object.entries(patch)) {
-    if (!(key in defaultPreferences)) throw new Error('INVALID_PREFERENCES');
+    if (!Object.hasOwn(defaultPreferences, key)) throw new Error('INVALID_PREFERENCES');
     if (key === 'wakePhrases') {
       if (item !== null && (!Array.isArray(item) || item.length === 0 || item.length > 50 || item.some(p => typeof p !== 'string' || !p.trim() || p.length > 100 || /[\x00-\x1f]/u.test(p)))) throw new Error('INVALID_WAKE_PHRASES');
       Object.assign(next, { wakePhrases: item === null ? null : [...new Set((item as string[]).map(p => p.trim()))] });
@@ -43,7 +43,11 @@ export function mergePreferences(previous: DesktopPreferences, value: unknown): 
   return next;
 }
 export async function loadPreferences(directory: string): Promise<DesktopPreferences> {
-  try { return mergePreferences(defaultPreferences, JSON.parse(await readFile(path.join(directory, 'voice-preferences.json'), 'utf8'))); }
+  try {
+    const saved = JSON.parse(await readFile(path.join(directory, 'voice-preferences.json'), 'utf8'));
+    if (Object.keys(defaultPreferences).every(key => Object.hasOwn(saved, key))) return mergePreferences(defaultPreferences, saved);
+    return { ...defaultPreferences };
+  }
   catch { return { ...defaultPreferences }; }
 }
 export async function savePreferences(directory: string, preferences: DesktopPreferences): Promise<void> {
@@ -52,13 +56,4 @@ export async function savePreferences(directory: string, preferences: DesktopPre
   const temporary = destination + '.tmp';
   await writeFile(temporary, JSON.stringify(preferences, null, 2));
   await rename(temporary, destination);
-}
-export async function inspectAssets(assetRoot: string): Promise<{ ready: boolean; missing: string[] }> {
-  const required = ['.conda/gsv-v5/python.exe', 'runtime/GPT-SoVITS/GPT_SoVITS/TTS_infer_pack/TTS.py',
-    'assets/凉宫春日模型包.part1/GPT_weights_v2/characters.json', 'assets/凉宫春日参考语音包'];
-  const missing: string[] = [];
-  for (const relative of required) {
-    try { await access(path.join(assetRoot, relative)); } catch { missing.push(relative); }
-  }
-  return { ready: missing.length === 0, missing };
 }

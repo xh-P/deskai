@@ -1,28 +1,22 @@
 {
-  "name": "deskai2-deepseek-harness",
+  "name": "deskai2",
   "version": "1.0.0",
   "private": true,
-  "description": "DeepSeek Harness local setup for this workspace",
+  "description": "Local desktop voice, character conversations, and Work Host",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
-    "start": "dsh web",
-    "start:no-open": "dsh web --no-open",
+    "start": "npm run desktop:dev",
     "desktop:dev": "node scripts/desktop/launch.mjs",
     "host:serve": "node --experimental-strip-types apps/host/src/server.ts",
     "host:ctl": "node --experimental-strip-types apps/host/src/ctl.ts",
     "desktop:build": "node scripts/desktop/build.mjs",
     "desktop:prepare-asr": "node scripts/desktop/prepare-amadeus-asr.mjs",
     "desktop:prepare-knowledge": "node scripts/desktop/prepare-character-knowledge.mjs",
-    "desktop:package": "node scripts/desktop/package.mjs",
-    "desktop:test": "node --experimental-strip-types --test tests/voice/core.test.ts tests/voice/interruption-generation.test.ts tests/voice/speculative-chat.test.ts tests/voice/renderer-player.mjs tests/voice/renderer-vad.test.ts tests/voice/m2-core.test.ts tests/voice/m2-dialogue.test.ts tests/voice/m2-dsh.test.ts tests/voice/m3-output.test.ts tests/voice/m3-tts.test.ts tests/voice/m4-settings.test.ts tests/voice/m4-model-route.test.ts tests/voice/pet-projection.test.ts tests/voice/pet-motion.test.ts tests/voice/input-runtime.test.ts tests/voice/chat-runtime.test.ts tests/voice/work-host.test.ts tests/voice/work-provider.test.ts tests/voice/coordination.test.ts tests/app-core/app-core.test.mjs",
+    "desktop:test": "node --experimental-strip-types --test \"tests/**/*.test.*\"",
     "desktop:pet-smoke": "node scripts/desktop/launch.mjs --pet-smoke",
-    "desktop:smoke": "node scripts/desktop/audio-smoke.mjs",
-    "m0:speech": "node scripts/m0/dsh-session-probe.mjs --speech-only",
-    "m2:smoke": "node scripts/m2/desktop-smoke.mjs",
-    "m2:semantics": "node scripts/m2/run-local-cases.mjs",
-    "m3:smoke": "node scripts/desktop/launch.mjs --tts-smoke"
+    "desktop:smoke": "node scripts/desktop/launch.mjs --smoke"
   },
   "dependencies": {
     "@ai-ecoverse/wasm-webrtc-audio-processing": "^2.1.0-2",

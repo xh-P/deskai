@@ -1,33 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { LocalDshSpeech } from './speech.ts';
-import type { ChatPersonaId, RelationshipMode } from '../../voice-core/src/persona-catalog.ts';
-import { buildPersonaContext, DESKTOP_CHAT_PRESET, type Persona } from '../../voice-core/src/prompts.ts';
+import type { ChatAccepted, ChatEvent, ChatSettlement, ChatTurnInput, DialoguePort } from '../../voice-core/src/chat-contract.ts';
+import { DESKTOP_CHAT_PRESET } from '../../voice-core/src/prompts.ts';
+import { buildChatContent } from '../../voice-core/src/chat-context.ts';
 import { readBundledPersona } from '../../voice-core/src/persona-files.ts';
-import type { CharacterLookupSummary, CharacterReference } from '../../voice-core/src/character-reference.ts';
-
-export type { ChatPersonaId, RelationshipMode } from '../../voice-core/src/persona-catalog.ts';
-export interface ChatTurnInput {
-  requestId?: string;
-  text: string;
-  personaId?: ChatPersonaId;
-  persona?: Persona;
-  relationshipMode?: RelationshipMode;
-  visibleHistory?: readonly unknown[];
-  deliveryState?: unknown;
-  mode?: 'voice' | 'text';
-  replyLanguage?: 'auto' | 'zh' | 'ja' | 'en';
-  hostContext?: unknown;
-  characterKnowledge?: boolean;
-  characterReference?: readonly CharacterReference[];
-}
-export type ChatEvent =
-  | { type: 'attempt-start'; attemptId: string; revision: number }
-  | { type: 'text'; attemptId: string; index: number; revision: number; text: string }
-  | { type: 'attempt-end'; attemptId: string; outcome: 'committed' | 'abandoned'; eventType?: string }
-  | { type: 'usage'; usage: unknown }
-  | { type: 'error'; code: string };
-export interface ChatSettlement { sessionId: string; status: 'completed' | 'cancelled' | 'failed'; code?: string }
-export interface ChatAccepted { accepted: true; sessionId: string; completed: Promise<ChatSettlement>; knowledge?: CharacterLookupSummary }
 type ActiveTurn = { sessionId: string; completed: Promise<ChatSettlement>; cancelRequested: boolean; promptAccepted: boolean;
   promptSubmitted: boolean; cancelRpc?: Promise<void>; requestCancel?: () => void; reconnect?: () => Promise<void> };
 
@@ -36,72 +12,8 @@ type FollowValue = { type?: string; cursor?: number; event?: { seq?: number; typ
   assistantStream?: { activeAttempt?: { attemptId?: string; nextIndex?: number } } };
 type StreamFrame = { type?: string; attemptId?: string; revision?: number; index?: number; chunk?: { type?: string; text?: string; usage?: unknown; reason?: { kind?: string; failure?: { code?: string } } }; outcome?: { kind?: string; eventType?: string } };
 
-function row(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('CHAT_CONTEXT_SHAPE');
-  return value as Record<string, unknown>;
-}
-function short(value: unknown, max = 1200): string {
-  if (typeof value !== 'string' || value.length > max) throw new Error('CHAT_CONTEXT_LENGTH');
-  return value;
-}
-function projectionHistory(value: readonly unknown[] | undefined): object[] {
-  if (!value) return [];
-  if (!Array.isArray(value) || value.length > 24) throw new Error('CHAT_CONTEXT_LENGTH');
-  return value.map(item => {
-    const entry = row(item);
-    if (entry.role !== 'user' && entry.role !== 'assistant') throw new Error('CHAT_HISTORY_ROLE');
-    return { role: entry.role, turnId: short(entry.turnId, 120), text: short(entry.text),
-      ...(entry.role === 'assistant' ? { interrupted: entry.interrupted === true } : {}) };
-  });
-}
-function projectionDelivery(value: unknown): object | null {
-  if (value == null) return null;
-  const data = row(value);
-  const source = data.attempts ?? [];
-  if (!Array.isArray(source) || source.length > 32) throw new Error('CHAT_CONTEXT_LENGTH');
-  const attempts = source.map(item => {
-    const attempt = row(item);
-    const segments = attempt.fullyPlayedSegments ?? [];
-    if (!Array.isArray(segments) || segments.length > 16) throw new Error('CHAT_CONTEXT_LENGTH');
-    const played = segments.map(segment => { const s = row(segment); return { segmentId: short(s.segmentId, 120), text: short(s.text) }; });
-    const partial = attempt.partiallyPlayedSegment == null ? undefined : row(attempt.partiallyPlayedSegment);
-    const count = (n: unknown) => Number.isSafeInteger(n) && (n as number) >= 0 ? n : 0;
-    return { attemptId: short(attempt.attemptId, 120), turnId: short(attempt.turnId, 120),
-      action: attempt.action, deliveryMode: attempt.deliveryMode,
-      generatedCharacters: count(attempt.generatedCharacters), unplayedCharacters: count(attempt.unplayedCharacters),
-      fullyPlayedSegments: played,
-      ...(partial ? { partiallyPlayedSegment: { segmentId: short(partial.segmentId, 120), text: short(partial.text) } } : {}),
-      ...(attempt.deliveryMode === 'text' ? { displayed: short(attempt.displayed ?? '') } : {}),
-      interrupted: attempt.interrupted === true };
-  });
-  const question = data.pendingQuestion == null ? undefined : row(data.pendingQuestion);
-  const submitted = data.submittedUtteranceIds;
-  return { attempts,
-    ...(question ? { pendingQuestion: { questionId: short(question.questionId, 120), turnId: short(question.turnId, 120),
-      text: short(question.text, 512), status: question.status } } : {}),
-    ...(Number.isSafeInteger(data.continuationOf) ? { continuationOf: data.continuationOf } : {}),
-    ...(Array.isArray(submitted) ? { submittedUtteranceIds: submitted.filter(n => Number.isSafeInteger(n)).slice(0, 16) } : {}),
-    ...(typeof data.promptVersion === 'string' ? { promptVersion: short(data.promptVersion, 80) } : {}) };
-}
-
-export function buildChatContent(input: ChatTurnInput, persona?: Persona): string {
-  const text = input.text.trim();
-  if (!text || [...text].length > 4000) throw new Error('CHAT_INPUT_LENGTH');
-  const projection = JSON.stringify({
-    kind: 'deskai2-visible-history-v1',
-    mode: input.mode ?? 'voice', replyLanguage: input.replyLanguage ?? 'auto',
-    visibleHistory: projectionHistory(input.visibleHistory), deliveryState: projectionDelivery(input.deliveryState),
-    currentUserText: text,
-    hostContext: input.hostContext ?? null
-  });
-  if ([...projection].length > 16000) throw new Error('CHAT_CONTEXT_LENGTH');
-  const role = persona ? { roleProfile: buildPersonaContext(persona, input.relationshipMode) } : {};
-  const references = input.characterReference?.slice(0, 3).map(({ id, source, locator, text }) => ({ id, source, locator, text })) ?? [];
-  return `以下是桌面应用提供的结构化对话投影。visibleHistory 仅含已接纳用户输入和已交付助手正文：voice 为完整已播句，text 为界面确认已显示文字。deliveryState 只含交付元数据与计数，未播正文不进入模型上下文。请直接回答 currentUserText。\n${projection}\n${JSON.stringify({ ...role, characterReference: references })}`;
-}
-
 /** Uses the authenticated Host already owned by LocalDshSpeech. Each turn is projected into a fresh Session. */
-export class LocalDshChat {
+export class LocalDshChat implements DialoguePort {
   private active?: ActiveTurn;
   private readonly host: LocalDshSpeech;
   private readonly root: string;

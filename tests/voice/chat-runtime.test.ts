@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { OpenAICompatibleChat } from '../../packages/dsh-adapter/src/openai-chat.ts';
-import type { ChatEvent, ChatTurnInput } from '../../packages/dsh-adapter/src/session.ts';
+import type { ChatEvent, ChatTurnInput } from '../../packages/voice-core/src/chat-contract.ts';
 import { DialogueController, type DialogueHistoryEntry } from '../../packages/voice-core/src/dialogue.ts';
 import { CharacterStore, ConversationArchive } from '../../apps/desktop/src/character-store.ts';
 import { CharacterChat, CharacterKnowledge } from '../../apps/desktop/src/character-knowledge.ts';

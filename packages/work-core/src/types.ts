@@ -12,13 +12,13 @@ export interface WorkChanges { before: string; after: string; fileCount: number 
 export interface ProviderBinding { baseline: number; requestIds: string[]; removedIds?: string[] }
 export interface WorkTask { id: string; projectId: string; title: string; prompt: string; authoring?: boolean; expectedArtifacts?: string[]; status: WorkStatus; workspace?: WorkWorkspace; attemptIds: string[]; createdAt: string; updatedAt: string }
 export interface WorkAttempt {
-  id: string; taskId: string; operationId?: string; status: WorkStatus; prompt: string; providerSessionId?: string; binding?: ProviderBinding;
+  id: string; taskId: string; operationId: string; status: WorkStatus; prompt: string; providerSessionId?: string; binding?: ProviderBinding;
   baseline?: WorkBaseline; changes?: WorkChanges; artifactFiles?: { relativePath: string; sha256: string }[]; deliveryError?: string; result?: ProviderResult;
   delivery?: DeliveryEvidence; assessment?: CompletionAssessment; acceptance?: AcceptanceReceipt;
   summary?: string; error?: string; createdAt: string; updatedAt: string;
 }
 export interface WorkEvent { id: string; taskId: string; attemptId: string; time: string; type: string; data: unknown; providerSeq?: number }
-export interface WorkSnapshot { version: 1; projects: WorkProject[]; drafts: WorkDraft[]; tasks: WorkTask[]; attempts: WorkAttempt[]; events: WorkEvent[]; operations?: WorkOperation[] }
+export interface WorkSnapshot { version: 1; projects: WorkProject[]; drafts: WorkDraft[]; tasks: WorkTask[]; attempts: WorkAttempt[]; events: WorkEvent[]; operations: WorkOperation[] }
 
 export type WorkEffectCommand =
   | { type: 'submit'; projectId: string; prompt: string; title?: string; authoring?: boolean; expectedArtifacts?: string[] }
@@ -42,7 +42,7 @@ export type ProviderEvent = (
   | { type: 'artifact'; path: string; data?: unknown }
   | { type: 'artifact-manifest-invalid'; reason: string }
 ) & { providerSeq?: number };
-export interface ProviderRequest { taskId: string; attemptId: string; projectPath: string; prompt: string; requestId?: string; providerSessionId?: string; authoring?: boolean; expectedArtifacts?: string[] }
+export interface ProviderRequest { taskId: string; attemptId: string; projectPath: string; prompt: string; requestId: string; providerSessionId?: string; authoring?: boolean; expectedArtifacts?: string[] }
 export interface ProviderResult {
   providerSessionId?: string; outcome: 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'unknown';
   summary?: string; error?: string; unsettled?: boolean;
@@ -50,7 +50,7 @@ export interface ProviderResult {
 export interface ProviderPort {
   start(request: ProviderRequest, onEvent: (event: ProviderEvent) => void): Promise<ProviderResult>;
   recover?(request: ProviderRequest & { providerSessionId: string; binding: ProviderBinding }, onEvent: (event: ProviderEvent) => void): Promise<ProviderResult>;
-  append(attemptId: string, prompt: string, requestId?: string): Promise<void>;
+  append(attemptId: string, prompt: string, requestId: string): Promise<void>;
   cancel(attemptId: string): Promise<void>;
   reply(attemptId: string, requestId: string, response: unknown): Promise<void>;
 }

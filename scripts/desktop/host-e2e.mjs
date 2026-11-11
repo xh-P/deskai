@@ -30,7 +30,7 @@ if (!process.versions.electron) {
   const { WorkRuntime } = await import('../../.cache/desktop-main/packages/dsh-adapter/src/work-runtime.js');
   const { LocalHost } = await import('../../.cache/desktop-main/apps/host/src/host.js');
   const { WorkPlanner } = await import('../../.cache/desktop-main/apps/desktop/src/work-planner.js');
-  const { createChatPort } = await import('../../.cache/desktop-main/apps/desktop/src/chat-runtime.js');
+  const { createChatRuntime } = await import('../../.cache/desktop-main/apps/desktop/src/chat-runtime.js');
   const temporary = process.env.DESKAI_E2E_TEMP;
   if (!temporary || path.dirname(path.resolve(temporary)).toLowerCase() !== path.resolve(tmpdir()).toLowerCase() || !path.basename(temporary).startsWith('deskai-host-e2e-'))
     throw new Error('Expected a parent-owned temporary probe directory');
@@ -68,7 +68,7 @@ if (!process.versions.electron) {
     await speech.start(); planner = new WorkPlanner(speech, root);
     host = await LocalHost.open(state, new DshWorkProvider(runtime, root), project, runtime);
     if (capabilitiesOnly) {
-      chat = await createChatPort(speech, root);
+      chat = (await createChatRuntime(speech, root)).port;
       report.capabilityAnswers = [];
       for (const text of ['你除了聊天还能做什么？', '你是不是没有 agent 工具，只能对话？']) {
         const { context, command } = await prepare(text);

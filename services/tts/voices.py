@@ -2,21 +2,14 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
+import re
 
-CODE_ROOT = Path(__file__).resolve().parents[2]
-ROOT = Path(os.environ.get("DESKAI_ASSET_ROOT", str(CODE_ROOT))).resolve()
-MODEL_ROOT = ROOT / "assets/凉宫春日模型包.part1"
-REFERENCE_ROOT = ROOT / "assets/凉宫春日参考语音包"
-DEFAULT_VOICE = "nagato-normal-v2"
+VOICE_ID = re.compile(r"[a-z0-9][a-z0-9_-]{0,127}")
 
-VOICE_IDS = {
-    "Haruhi": "haruhi-v2", "Kyon": "kyon-v2", "Itsuki": "koizumi-v2",
-    "Nagato_Normal": DEFAULT_VOICE, "Nagato_Disappearance": "nagato-disappearance-v2",
-    "Mikuru": "mikuru-v2", "OldMikuru": "mikuru-adult-v2",
-    "KyonSister": "kyon-sister-v2", "Asakura": "asakura-v2", "Tsuruya": "tsuruya-v2",
-}
+
+def is_voice_id(value) -> bool:
+    return isinstance(value, str) and VOICE_ID.fullmatch(value) is not None
 
 
 def contained_file(base: Path, relative: str) -> Path:
@@ -26,42 +19,25 @@ def contained_file(base: Path, relative: str) -> Path:
     return path
 
 
-def load_registry() -> dict[str, dict]:
-    rows = json.loads((MODEL_ROOT / "GPT_weights_v2/characters.json").read_text(encoding="utf-8-sig"))
+def load_registry(root: Path, config: dict) -> dict[str, dict]:
+    model_root = root / config["modelDirectory"]
+    reference_root = root / config["referenceDirectory"]
+    rows = json.loads(contained_file(model_root, config["registry"]).read_text(encoding="utf-8-sig"))
     voices = {}
     for row in rows:
-        stem = Path(row["gpt"]).stem.rsplit("_202", 1)[0]
-        voice_id = VOICE_IDS[stem]
-        if voice_id in voices:
-            raise ValueError("Duplicate voice ID")
-        refs = [{**ref, "id": f"ref-{index + 1:02d}", "path": contained_file(REFERENCE_ROOT, ref["file"])}
+        voice_id = config["voiceIds"][Path(row["gpt"]).as_posix()]
+        if not is_voice_id(voice_id) or voice_id in voices:
+            raise ValueError("Invalid or duplicate voice ID")
+        refs = [{**ref, "id": f"ref-{index + 1:02d}", "path": contained_file(reference_root, ref["file"])}
                 for index, ref in enumerate(row["refs"])]
         if not refs:
             raise ValueError("Voice has no reference audio")
         voices[voice_id] = dict(id=voice_id, name=row["name"], version="v2",
                                 defaultReferenceId=refs[0]["id"],
-                                gpt=contained_file(MODEL_ROOT, row["gpt"]),
-                                sovits=contained_file(MODEL_ROOT, row["sovits"]), references=refs)
-    if len(voices) != 10 or DEFAULT_VOICE not in voices:
-        raise ValueError("Expected ten supplied v2 voices including normal Nagato")
-    extra = os.environ.get("DESKAI_TTS_VOICES")
-    if extra:
-        config_path = Path(extra).resolve()
-        for row in json.loads(config_path.read_text(encoding="utf-8-sig")):
-            voice_id, version = row["id"], row["version"]
-            if voice_id in voices or version not in ("v2", "v3"):
-                raise ValueError("Duplicate voice ID or unsupported model version")
-            def resource(value):
-                path = (config_path.parent / value).resolve()
-                if not path.is_file():
-                    raise FileNotFoundError("Voice resource missing")
-                return path
-            refs = [{**ref, "path": resource(ref["path"])} for ref in row["references"]]
-            if not refs or not any(ref["id"] == row["defaultReferenceId"] for ref in refs):
-                raise ValueError("Invalid voice references")
-            voices[voice_id] = dict(id=voice_id, name=row["name"], version=version,
-                defaultReferenceId=row["defaultReferenceId"], gpt=resource(row["gpt"]),
-                sovits=resource(row["sovits"]), references=refs)
+                                gpt=contained_file(model_root, row["gpt"]),
+                                sovits=contained_file(model_root, row["sovits"]), references=refs)
+    if config["defaultVoiceId"] not in voices:
+        raise ValueError("Default voice is missing from the registry")
     return voices
 
 

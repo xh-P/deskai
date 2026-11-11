@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createInputController } from '../../packages/voice-core/src/index.ts';
-import { DialogueController, type DialogueEvent, type DialoguePort } from '../../packages/voice-core/src/dialogue.ts';
-import type { ChatEvent, ChatSettlement, ChatTurnInput } from '../../packages/dsh-adapter/src/session.ts';
+import { DialogueController, type DialogueEvent } from '../../packages/voice-core/src/dialogue.ts';
+import type { ChatEvent, ChatSettlement, ChatTurnInput, DialoguePort } from '../../packages/voice-core/src/chat-contract.ts';
 import { SpeechOutput } from '../../apps/desktop/src/speech-output.ts';
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
@@ -44,7 +44,7 @@ test('resumed speech revokes the first candidate and the matching final turn rel
   const ordinary = new Port(), speculative = new Port();
   const events: DialogueEvent[] = [];
   const synthesis: string[] = [];
-  const output = new SpeechOutput({ sessionId: 's', emit: () => {}, port: {
+  const output = new SpeechOutput({ sessionId: 's', selection: { voiceId: 'v', referenceId: 'r', voiceRevision: 0 }, emit: () => {}, port: {
     async synthesize(request, onPCM) {
       synthesis.push(request.text);
       onPCM({ ...request, requestId: 'pcm', chunkSeq: 0, sampleRate: 32000, channels: 1,

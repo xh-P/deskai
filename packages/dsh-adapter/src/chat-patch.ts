@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { homedir } from 'node:os';
 import { parseDocument } from 'yaml';
@@ -6,6 +7,8 @@ import { DESKTOP_CHAT_PRESET, DESKTOP_CHAT_PROMPT } from '../../voice-core/src/p
 import { COORDINATOR_PRESET, COORDINATOR_PROMPT } from '../../voice-core/src/coordination.ts';
 
 export type SavedModelSelection = { provider: string; model: string; reasoningEffort?: string };
+export const DESKTOP_DSH_PROFILE = 'deskai2-voice';
+export const dshHome = () => process.env.DSH_HOME ?? path.join(homedir(), '.dsh');
 /** YAML is data only. Select one known plugin; arbitrary config never enters our overlay. */
 export function extractModelSelection(text: string): SavedModelSelection | undefined {
   const document = parseDocument(text, { logLevel: 'silent' });
@@ -21,10 +24,8 @@ export function extractModelSelection(text: string): SavedModelSelection | undef
     ...(valid(config.reasoningEffort) ? { reasoningEffort: config.reasoningEffort } : {}) };
 }
 async function savedModelSelection(): Promise<SavedModelSelection | undefined> {
-  const home = process.env.DSH_HOME ?? path.join(homedir(), '.dsh');
-  // Keep an explicit desktop route. Otherwise use the route configured through
-  // the original Web entry. Credentials remain in dsh's shared credential store.
-  for (const relative of ['profiles/deskai2-voice-m1/cordis.patch.yml', 'cordis.patch.yml', 'profiles/web/cordis.patch.yml']) {
+  const home = dshHome();
+  for (const relative of [`profiles/${DESKTOP_DSH_PROFILE}/cordis.patch.yml`, 'cordis.patch.yml', 'profiles/web/cordis.patch.yml']) {
     try {
       const selection = extractModelSelection(await readFile(path.join(home, relative), 'utf8'));
       if (selection) return selection;
@@ -32,7 +33,9 @@ async function savedModelSelection(): Promise<SavedModelSelection | undefined> {
   }
 }
 
-/** Generated overlay is passed to the owned dsh Host; source persona cards remain unchanged. */
+export const chatPatchPath = (root: string) => path.join(root, '.cache/voice/chat.patch.yml');
+
+/** Generated overlay for the desktop chat and planning service. */
 export async function prepareChatPatch(root: string): Promise<string> {
   const entries: object[] = [{ insert: [
     { id: DESKTOP_CHAT_PRESET, title: 'DeskAI2 voice chat', prompt: DESKTOP_CHAT_PROMPT },
@@ -43,8 +46,12 @@ export async function prepareChatPatch(root: string): Promise<string> {
   } })) }];
   const selection = await savedModelSelection();
   if (selection) entries.unshift({ id: 'agent-default-model', config: selection });
-  const out = path.join(root, '.cache/voice/dsh-m2.patch.yml');
+  const out = chatPatchPath(root);
   await mkdir(path.dirname(out), { recursive: true });
-  await writeFile(out, JSON.stringify(entries, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+  const temporary = `${out}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, JSON.stringify(entries, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+    await rename(temporary, out);
+  } finally { await rm(temporary, { force: true }); }
   return out;
 }

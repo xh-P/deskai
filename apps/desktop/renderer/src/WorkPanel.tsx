@@ -88,7 +88,7 @@ export default function WorkPanel({ snapshot, selectedProjectId, selectedTaskId,
   const attempts = task ? snapshot.attempts.filter(item => item.taskId === task.id) : []
   const events = task ? snapshot.events.filter(item => item.taskId === task.id) : []
   const lastAttempt = attempts.at(-1)
-  const lastOperation = task && snapshot.operations?.filter(item => item.taskId === task.id).at(-1)
+  const lastOperation = task && snapshot.operations.filter(item => item.taskId === task.id).at(-1)
   const assessment = lastAttempt?.assessment
   const live = !!task && ['queued', 'running', 'waiting'].includes(task.status)
   const unsettled = lastAttempt?.result?.unsettled === true

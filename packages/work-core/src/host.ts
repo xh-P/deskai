@@ -40,10 +40,11 @@ export class WorkHost {
     this.file = file; this.provider = provider;
     this.options = options;
     this.state = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) as WorkSnapshot :
-      { version: 1, projects: [], drafts: [], tasks: [], attempts: [], events: [] };
+      { version: 1, projects: [], drafts: [], tasks: [], attempts: [], events: [], operations: [] };
     if (this.state.version !== 1 || !Array.isArray(this.state.projects) || !Array.isArray(this.state.tasks) ||
         !Array.isArray(this.state.drafts) || !Array.isArray(this.state.attempts) || !Array.isArray(this.state.events) ||
-        (this.state.operations !== undefined && !Array.isArray(this.state.operations))) throw new Error('WORK_LEDGER_INVALID');
+        !Array.isArray(this.state.operations) ||
+        this.state.attempts.some(attempt => typeof attempt.operationId !== 'string')) throw new Error('WORK_LEDGER_INVALID');
     if (!options.workspaces) this.recover();
   }
   recover(): void {
@@ -81,7 +82,7 @@ export class WorkHost {
   private project(projectId: string): WorkProject { const p = this.state.projects.find(p => p.id === projectId); if (!p) throw new Error('WORK_PROJECT_NOT_FOUND'); return p; }
   private task(taskId: string): WorkTask { const t = this.state.tasks.find(t => t.id === taskId); if (!t) throw new Error('WORK_TASK_NOT_FOUND'); return t; }
   private last(task: WorkTask): WorkAttempt { const a = this.state.attempts.find(a => a.id === task.attemptIds.at(-1)); if (!a) throw new Error('WORK_ATTEMPT_NOT_FOUND'); return a; }
-  private get operations(): WorkOperation[] { return this.state.operations ??= []; }
+  private get operations(): WorkOperation[] { return this.state.operations; }
 
   operation(id: string): WorkOperation | undefined {
     const operation = this.operations.find(item => item.id === id);
@@ -145,34 +146,33 @@ export class WorkHost {
     if (!draft) { draft = { id: id(), projectId: input.projectId, text: '', updatedAt: now() }; this.state.drafts.push(draft); }
     draft.text = input.text; draft.updatedAt = now(); this.save();
   }
-  submit(input: { projectId: string; prompt: string; title?: string; authoring?: boolean; expectedArtifacts?: string[] }, admission?: WorkAdmission): WorkTask {
+  private submit(input: Extract<WorkEffectCommand, { type: 'submit' }>, admission: WorkAdmission): void {
     this.project(input.projectId); const prompt = clean(input.prompt, 100000); const time = now();
     const task: WorkTask = { id: id(), projectId: input.projectId, title: input.title ? clean(input.title, 200) : prompt.slice(0, 80), prompt, status: 'queued', attemptIds: [], createdAt: time, updatedAt: time };
     task.authoring = input.authoring === true;
     task.expectedArtifacts = expectedFiles(input.expectedArtifacts);
-    this.launch(task, prompt, undefined, admission); return structuredClone(task);
+    this.launch(task, prompt, admission);
   }
-  private launch(task: WorkTask, prompt: string, providerSessionId?: string, admission?: WorkAdmission): WorkAttempt {
+  private launch(task: WorkTask, prompt: string, admission: WorkAdmission, providerSessionId?: string): void {
     if (active(task.status) && task.attemptIds.length) throw new Error('WORK_TASK_BUSY');
     if (task.attemptIds.length && this.last(task).result?.unsettled) throw new Error('WORK_PREVIOUS_EXECUTION_UNCONFIRMED');
     if (providerSessionId && this.options.workspaces && !task.workspace) throw new Error('WORK_SESSION_WORKSPACE_UNBOUND');
     const previousAttemptId = task.attemptIds.at(-1);
     const { status, updatedAt } = task;
-    const time = now(); const attempt: WorkAttempt = { id: id(), taskId: task.id, operationId: admission?.id,
+    const time = now(); const attempt: WorkAttempt = { id: id(), taskId: task.id, operationId: admission.id,
       status: 'queued', prompt, providerSessionId, createdAt: time, updatedAt: time };
     if (!previousAttemptId) this.state.tasks.push(task);
     task.attemptIds.push(attempt.id); task.status = 'queued'; task.updatedAt = time; this.state.attempts.push(attempt);
-    if (admission) this.bind(admission, attempt, 'accepted', previousAttemptId);
-    this.event(attempt, 'submitted', { prompt, operationId: admission?.id });
+    this.bind(admission, attempt, 'accepted', previousAttemptId);
+    this.event(attempt, 'submitted', { prompt, operationId: admission.id });
     try { this.save(); } catch (error) {
       this.state.events.pop(); this.state.attempts.pop(); task.attemptIds.pop();
       task.status = status; task.updatedAt = updatedAt;
-      if (admission) this.operations.pop();
+      this.operations.pop();
       if (!previousAttemptId) this.state.tasks.pop();
       throw error;
     }
     this.run(task, attempt, false);
-    return attempt;
   }
 
   private run(task: WorkTask, attempt: WorkAttempt, recovering: boolean) {
@@ -328,8 +328,7 @@ export class WorkHost {
     if (event.type === 'request-resolved') task.status = attempt.status = pendingRequests(this.state).some(item => item.attemptId === attempt.id) ? 'waiting' : 'running';
     this.save();
   }
-  private async control(attempt: WorkAttempt, admission: WorkAdmission | undefined, apply: () => Promise<void>): Promise<void> {
-    if (!admission) { await apply(); this.save(); return; }
+  private async control(attempt: WorkAttempt, admission: WorkAdmission, apply: () => Promise<void>): Promise<void> {
     const operation = this.bind(admission, attempt, 'pending');
     try { this.save(); } catch (error) { this.operations.pop(); throw error; }
     try { await apply(); operation.state = 'acknowledged'; }
@@ -342,47 +341,49 @@ export class WorkHost {
     this.save();
   }
 
-  async append(taskId: string, prompt: string, admission?: WorkAdmission): Promise<void> {
+  private async append(taskId: string, prompt: string, admission: WorkAdmission): Promise<void> {
     const task = this.task(taskId); const attempt = this.last(task); const text = clean(prompt, 100000);
     if (!this.executing.has(attempt.id)) throw new Error('WORK_TASK_NOT_RUNNING');
     await this.control(attempt, admission, async () => {
-      await this.provider.append(attempt.id, text, admission?.id);
-      this.event(attempt, 'input-added', { prompt: text, operationId: admission?.id }); attempt.updatedAt = task.updatedAt = now();
+      await this.provider.append(attempt.id, text, admission.id);
+      this.event(attempt, 'input-added', { prompt: text, operationId: admission.id }); attempt.updatedAt = task.updatedAt = now();
     });
   }
-  continue(taskId: string, prompt: string, admission?: WorkAdmission): WorkAttempt {
+  private continue(taskId: string, prompt: string, admission: WorkAdmission): void {
     const task = this.task(taskId); const previous = this.last(task);
     if (!previous.providerSessionId) throw new Error('WORK_SESSION_UNAVAILABLE');
-    return structuredClone(this.launch(task, clean(prompt, 100000), previous.providerSessionId, admission));
+    this.launch(task, clean(prompt, 100000), admission, previous.providerSessionId);
   }
-  retry(taskId: string, admission?: WorkAdmission): WorkAttempt { const task = this.task(taskId); return structuredClone(this.launch(task, this.last(task).prompt, undefined, admission)); }
-  reattach(taskId: string, admission?: WorkAdmission): WorkAttempt {
+  private retry(taskId: string, admission: WorkAdmission): void {
+    const task = this.task(taskId);
+    this.launch(task, this.last(task).prompt, admission);
+  }
+  private reattach(taskId: string, admission: WorkAdmission): void {
     const task = this.task(taskId); const attempt = this.last(task);
     if (active(task.status) || !attempt.result?.unsettled || !attempt.binding || !attempt.providerSessionId || !this.provider.recover)
       throw new Error('WORK_RECOVERY_UNAVAILABLE');
     const previous = { status: attempt.status, taskTime: task.updatedAt, attemptTime: attempt.updatedAt };
     task.status = attempt.status = 'queued'; attempt.updatedAt = task.updatedAt = now();
-    if (admission) this.bind(admission, attempt, 'accepted');
-    this.event(attempt, 'recovery_requested', { operationId: admission?.id });
+    this.bind(admission, attempt, 'accepted');
+    this.event(attempt, 'recovery_requested', { operationId: admission.id });
     try { this.save(); } catch (error) {
-      this.state.events.pop(); if (admission) this.operations.pop();
+      this.state.events.pop(); this.operations.pop();
       task.status = attempt.status = previous.status; task.updatedAt = previous.taskTime; attempt.updatedAt = previous.attemptTime;
       throw error;
     }
     this.run(task, attempt, true);
-    return structuredClone(attempt);
   }
-  async cancel(taskId: string, admission?: WorkAdmission): Promise<void> {
+  private async cancel(taskId: string, admission: WorkAdmission): Promise<void> {
     const task = this.task(taskId); const attempt = this.last(task);
     if (!active(attempt.status) || !this.running.has(attempt.id) || attempt.result && !attempt.result.unsettled) throw new Error('WORK_TASK_NOT_RUNNING');
     if (!this.executing.has(attempt.id) && attempt.binding) throw new Error('WORK_SESSION_RECONNECTING');
     await this.control(attempt, admission, async () => {
-      this.event(attempt, 'cancel_requested', { operationId: admission?.id }); this.save();
+      this.event(attempt, 'cancel_requested', { operationId: admission.id }); this.save();
       if (this.executing.has(attempt.id)) await this.provider.cancel(attempt.id);
       else if (!attempt.binding) this.cancelled.add(attempt.id);
     });
   }
-  async reply(taskId: string, requestId: string, response: unknown, admission?: WorkAdmission): Promise<void> {
+  private async reply(taskId: string, requestId: string, response: unknown, admission: WorkAdmission): Promise<void> {
     const task = this.task(taskId); const attempt = this.last(task);
     if (!this.executing.has(attempt.id)) throw new Error('WORK_REQUEST_NOT_PENDING');
     const key = `${attempt.id}:${requestId}`;
@@ -392,7 +393,7 @@ export class WorkHost {
     try {
       await this.control(attempt, admission, async () => {
         await this.provider.reply(attempt.id, requestId, response);
-        this.event(attempt, 'reply', { requestId, response, operationId: admission?.id });
+        this.event(attempt, 'reply', { requestId, response, operationId: admission.id });
         const hasPending = pendingRequests(this.state).some(e => e.attemptId === attempt.id);
         if (this.executing.has(attempt.id)) { task.status = attempt.status = hasPending ? 'waiting' : 'running'; attempt.updatedAt = task.updatedAt = now(); }
       });

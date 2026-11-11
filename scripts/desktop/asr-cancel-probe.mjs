@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { LocalDshSpeech } from '../../.cache/desktop-main/packages/dsh-adapter/src/speech.js';
-import { encodePcm16Wav } from '../../.cache/desktop-main/packages/voice-core/src/wav.js';
+import { LocalDshSpeech } from '../../packages/dsh-adapter/src/speech.ts';
+import { encodePcm16Wav } from '../../packages/voice-core/src/wav.ts';
 
 const root = path.resolve(import.meta.dirname, '../..');
+const input = process.argv[2];
+if (!input) throw new Error('Pass a 16 kHz mono PCM16 WAV file.');
+const canonical = await readFile(path.resolve(input));
+assert.ok(canonical.length > 44 && canonical.toString('ascii', 36, 40) === 'data' &&
+  canonical.readUInt32LE(24) === 16000 && canonical.readUInt16LE(22) === 1 && canonical.readUInt16LE(34) === 16,
+  'Expected a canonical 16 kHz mono PCM16 WAV file');
 const states = [];
 const service = new LocalDshSpeech(root, status => {
   if (status.phase && states.at(-1) !== status.phase) states.push(status.phase);
@@ -21,8 +27,6 @@ try {
   }
   report.startupCancellationBeforeAndDuringSpawn = true;
   await service.start();
-  const canonical = await readFile(path.join(root, 'tests/voice/fixtures/m0-sensevoice-zh.wav'));
-  assert.equal(canonical.toString('ascii', 36, 40), 'data');
   const baseline = await service.transcribe(canonical, AbortSignal.timeout(30_000));
   assert.ok(baseline.text.trim());
   const source = new Float32Array((canonical.length - 44) / 2);
@@ -50,7 +54,7 @@ try {
   process.exitCode = 1;
 } finally {
   await service.dispose();
-  const out = path.join(root, 'outputs/desktop-validation/m1');
+  const out = path.join(root, 'outputs/desktop-validation/audio');
   await mkdir(out, { recursive: true });
   await writeFile(path.join(out, 'asr-cancel-probe.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));

@@ -61,7 +61,7 @@ try {
   if (response.status !== 302 || !cookie) throw new Error('Host API authentication failed');
   const provider = new DshWorkProvider(host, root);
   const events = [];
-  const result = await provider.start({ taskId: randomUUID(), attemptId: randomUUID(), projectPath,
+  const result = await provider.start({ taskId: randomUUID(), attemptId: randomUUID(), requestId: randomUUID(), projectPath,
     prompt: '请在当前工作目录创建名为 work-probe.txt 的 UTF-8 文本文件，内容严格为 DESKAI_WORK_PROBE_OK，然后读取该文件确认。只执行这项小任务。' },
   event => { if (event.type === 'artifact' || event.type === 'session') events.push(event); });
   const content = await readFile(path.join(projectPath, 'work-probe.txt'), 'utf8').catch(() => '');

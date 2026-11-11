@@ -23,7 +23,13 @@
   },
   "endpoint": { "candidateWindowMs": 160, "continuationWindowMs": 350, "unfinishedWindowMs": 350, "vadThreshold": 0.5 },
   "conversation": {
-    "provider": "qwen-local", "model": "Qwen/Qwen3-ASR-0.6B", "device": "cuda:0", "idlePolicy": "resident",
+    "provider": "qwen-local",
+    "python": ".conda/qwen-asr/Scripts/python.exe",
+    "model": "Qwen/Qwen3-ASR-0.6B",
+    "device": "cuda:0",
+    "idlePolicy": "resident",
+    "startupTimeoutMs": 120000,
+    "requestTimeoutMs": 30000,
     "inference": { "engine": "cuda_graph", "flashAttention": true, "graphCapacity": 512 }
   }
 }

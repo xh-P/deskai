@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { DialoguePort } from '../../../packages/voice-core/src/dialogue.ts';
+import type { DialoguePort } from '../../../packages/voice-core/src/chat-contract.ts';
 import type { LocalDshSpeech } from '../../../packages/dsh-adapter/src/speech.ts';
 import { LocalDshChat } from '../../../packages/dsh-adapter/src/session.ts';
 import { OpenAICompatibleChat } from '../../../packages/dsh-adapter/src/openai-chat.ts';
@@ -42,8 +42,4 @@ export async function createChatRuntime(host: LocalDshSpeech, root: string, know
   const apiKey = config.apiKeyEnv ? process.env[config.apiKeyEnv] : undefined;
   if (config.apiKeyEnv && !apiKey) throw new Error('MISSING_CREDENTIAL');
   return { port: withKnowledge(new OpenAICompatibleChat(root, { baseUrl: config.baseUrl, model: config.model, apiKey, timeoutMs: config.timeoutMs })) };
-}
-
-export async function createChatPort(host: LocalDshSpeech, root: string): Promise<DialoguePort> {
-  return (await createChatRuntime(host, root)).port;
 }

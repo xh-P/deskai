@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { buildSystemPrompt } from '../../voice-core/src/prompts.ts';
 import { readBundledPersona } from '../../voice-core/src/persona-files.ts';
-import { buildChatContent, type ChatAccepted, type ChatEvent, type ChatSettlement, type ChatTurnInput } from './session.ts';
+import type { ChatAccepted, ChatEvent, ChatSettlement, ChatTurnInput, DialoguePort } from '../../voice-core/src/chat-contract.ts';
+import { buildChatContent } from '../../voice-core/src/chat-context.ts';
 
 export type OpenAIChatConfig = { baseUrl: string; model: string; apiKey?: string; timeoutMs?: number };
 type ActiveTurn = { controller: AbortController; completed: Promise<ChatSettlement>; finish: (settlement: ChatSettlement) => void; sessionId: string; settled: boolean };
 
 /** Direct streaming Chat Completions provider; credentials never enter the renderer or prompt. */
-export class OpenAICompatibleChat {
+export class OpenAICompatibleChat implements DialoguePort {
   private active?: ActiveTurn;
   private readonly root: string;
   private readonly config: OpenAIChatConfig;
@@ -18,7 +19,7 @@ export class OpenAICompatibleChat {
     if (this.active) throw new Error('CHAT_TURN_BUSY');
     const content = buildChatContent(input);
     const card = input.persona ?? await readBundledPersona(this.root, input.personaId);
-    const system = buildSystemPrompt(card, [], input.relationshipMode).text;
+    const system = buildSystemPrompt(card, input.relationshipMode).text;
     const sessionId = randomUUID();
     const attemptId = randomUUID();
     let finish!: (settlement: ChatSettlement) => void;

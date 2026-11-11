@@ -1,38 +1,19 @@
 # DeskAI2
 
-Windows 桌面语音与任务工作台，当前持续迭代源码，不制作新的软件发行包。
+Windows 本地桌面应用，支持语音和文字对话、可编辑角色、按角色检索资料，以及通过独立 Host 委派和验收 Work。桌宠读取会话与播放状态。
 
-## 开发入口
+## 从源码启动
 
-- `npm run desktop:dev` 或 `启动桌面语音对话.cmd`：启动桌面应用。开始语音后采集麦克风，关闭窗口默认隐藏到托盘。
-- `npm run host:serve` 启动独立任务 Host，`npm run host:ctl -- snapshot` 查询项目与任务。桌面退出后 Host 继续运行。
-- `npm run host:ctl -- receipt <操作ID>` 查询该操作绑定的执行与回执。
-- `npm start` 或 `start-deepseek-harness.cmd`：已有 DeepSeek Harness 原生 Web 入口。
-- `npm run desktop:build`：TypeScript 检查与开发构建；`npm run desktop:test`：回归测试。
+准备 Node.js 和项目所需的本地模型资源，然后在仓库根目录运行以下命令。也可双击 [启动桌面语音对话.cmd](./启动桌面语音对话.cmd)。
 
-语音使用 SenseVoice 唤醒 → Qwen3-ASR 对话识别 → 可配置 Chat → GPT-SoVITS v2 原生流式合成。Qwen 默认保持驻留。人格、声音和语言独立；桌宠沿用现有实现。
+```powershell
+npm ci
+npm run desktop:dev
+```
 
-对话可由 AI 委派 dsh 执行后台任务。独立 Host 管理项目、执行恢复、Git 工作区、Diff、产物导出与人工验收。登记的应用可通过 AUIP v0 上报状态并接收声明动作。dsh 默认启用原生自动审查。[Host 与交付](./docs/desktop-voice/host-work-20261112.md) · [Work 验收与 AUIP](./docs/desktop-voice/work-review-auip-20261112.md)
+默认用 SenseVoice 唤醒、Qwen3-ASR 转写连续对话、dsh 生成对话和执行 Work、GPT-SoVITS v2 播报。打开文字会话即可输入，点击「开始语音对话」才开始采集。角色、关系、回复语言、声音和知识检索可分别设置。
 
-同一句话可能指向多个任务时，桌面会显示选择卡。选定后用原话继续，已受理操作可按操作 ID 找回执行回执。[对话引用与 Work 回执](./docs/desktop-voice/work-control-20261112.md)
-
-角色可编辑，会话保存当时的角色版本与关系。选择主线消失后的长门角色后，可以启用随附的《消失》资料检索。索引准备和真实模型对照见[角色编辑与知识检索](./docs/desktop-voice/character-knowledge-20261112.md)。
-
-## 配置与资源
-
-- 默认输入配置：`config/voice/input-runtime.json`；Chat 路由：`config/voice/chat-runtime.json`。界面设置写入应用用户目录，不改源码默认值。
-- 本地 ASR 环境：[说明](./services/asr/README.md)；v2 TTS：[说明](./services/tts/README.md)。
-- Node 版本以 `package.json` 为准；本地 Harness 版本由 lockfile 固定。
-- `assets/`、`runtime/`、`.conda/`、`outputs/` 留在本机，不上传。克隆源码不会自动获得模型和声音资源。
-- 凭据由 Harness 或环境变量管理，不写入仓库。对话和任务文本会发送到所配置的模型服务。
-- 原有 GPT-SoVITS、训练与试听入口继续保留，非本轮改造范围。
-
-## 文档
-
-- [当前方向](./docs/desktop-voice/current-direction.md)
-- [当前文档与历史索引](./docs/desktop-voice/README.md)
-- [独立 Host、执行恢复与交付](./docs/desktop-voice/host-work-20261112.md)
-- [Work 验收与 AUIP 应用协作](./docs/desktop-voice/work-review-auip-20261112.md)
-- [Amadeus 对照基准](./docs/desktop-voice/amadeus-vs-deskai2.md)
-
-自动检查不能替代实际设备上的唤醒、外放双讲、误打断和音质验收。历史目录包不包含本轮源码变化，请使用开发入口验收。
+- [项目架构与数据流](./docs/desktop-voice/architecture.md)
+- [运行、配置与数据位置](./docs/desktop-voice/operations.md)
+- [Amadeus 整合任务清单](./docs/desktop-voice/optimization-backlog.md)
+- [验证与实机验收](./docs/desktop-voice/verification.md)

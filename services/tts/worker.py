@@ -20,7 +20,7 @@ import sys
 import threading
 import time
 
-from voices import DEFAULT_VOICE, ROOT, load_registry, public_registry, select_reference, VOICE_IDS
+from voices import is_voice_id, load_registry, public_registry, select_reference
 
 PROTOCOL_OUT = sys.stdout
 sys.stdout = sys.stderr  # third-party progress must never enter the control channel
@@ -39,20 +39,15 @@ def error_code(exc):
     return type(exc).__name__
 
 
-def activate_runtime() -> None:
-    repo = ROOT / "runtime/GPT-SoVITS"
-    env = ROOT / ".conda/gsv-v5"
+def activate_runtime(root: Path, repo: Path, ffmpeg_bin: Path) -> None:
+    env = Path(sys.prefix)
     for path in reversed([repo, repo / "GPT_SoVITS", repo / "GPT_SoVITS/BigVGAN"]):
         sys.path.insert(0, str(path))
-    dll_paths = [ROOT / "runtime/ffmpeg/bin", env, env / "Scripts", env / "Library/bin", env / "Lib/site-packages/torch/lib"]
+    dll_paths = [ffmpeg_bin, env, env / "Scripts", env / "Library/bin", env / "Lib/site-packages/torch/lib"]
     os.environ["PATH"] = os.pathsep.join(map(str, dll_paths)) + os.pathsep + os.environ.get("PATH", "")
-    # Do not call gsv_v5/common.activate: it mutates the v5 training project.
-    for key in list(os.environ):
-        if key.startswith("GSV_"):
-            del os.environ[key]
     os.environ.update(version="v2", hz="25hz", PYTHONUTF8="1", OMP_NUM_THREADS="4",
-                      TOKENIZERS_PARALLELISM="false", HF_HOME=str(ROOT / ".cache/huggingface"),
-                      TORCH_HOME=str(ROOT / ".cache/torch"), NLTK_DATA=str(ROOT / ".cache/nltk_data"), G2PW="0")
+                      TOKENIZERS_PARALLELISM="false", HF_HOME=str(root / ".cache/huggingface"),
+                      TORCH_HOME=str(root / ".cache/torch"), NLTK_DATA=str(root / ".cache/nltk_data"), G2PW="0")
     os.chdir(repo)
     from tools.portable_runtime import activate
     activate(change_cwd=True)
@@ -66,8 +61,8 @@ class Job:
 
 
 def validate_synthesis(message: dict) -> dict:
-    if not isinstance(message.get("voiceId"), str):
-        raise ValueError("Unknown voice")
+    if not is_voice_id(message.get("voiceId")):
+        raise ValueError("Invalid voice ID")
     speed = message.get("speed", 1.0)
     if type(speed) not in (int, float) or not 0.5 <= speed <= 2.0:
         raise ValueError("Speed must be 0.5..2.0")
@@ -91,8 +86,11 @@ def pack_pcm(header: dict, pcm: bytes) -> bytes:
 
 
 class Service:
-    def __init__(self, state_dir: Path):
+    def __init__(self, state_dir: Path, root: Path, config: dict):
         self.state_dir = state_dir
+        self.root = root
+        self.repository = root / config["repository"]
+        self.ffmpeg_bin = root / config["ffmpegBin"]
         self.pipeline = None
         self.voice = None
         self.job = None
@@ -101,12 +99,14 @@ class Service:
         self.stop = asyncio.Event()
         self.load_error = None
         self.load_seconds = None
-        self.registry = load_registry()
-        self.streaming = os.environ.get("DESKAI_TTS_STREAMING", "1") == "1"
-        self.min_chunk_length = int(os.environ.get("DESKAI_TTS_MIN_CHUNK_LENGTH", "16"))
-        self.overlap_length = int(os.environ.get("DESKAI_TTS_OVERLAP_LENGTH", "2"))
-        if self.min_chunk_length < 1 or self.overlap_length < 1:
-            raise ValueError("Streaming lengths must be positive")
+        self.registry = load_registry(root, config)
+        self.default_voice = config["defaultVoiceId"]
+        streaming = config["streaming"]
+        self.streaming = streaming["enabled"]
+        self.min_chunk_length = streaming["minChunkLength"]
+        self.overlap_length = streaming["overlapLength"]
+        if type(self.streaming) is not bool or any(type(n) is not int or n < 1 for n in (self.min_chunk_length, self.overlap_length)):
+            raise ValueError("Invalid streaming settings")
         self.reference = None
         self.revision = 0
         self.state = "loading"
@@ -117,15 +117,15 @@ class Service:
 
     def load(self) -> None:
         started = time.perf_counter()
-        activate_runtime()
+        activate_runtime(self.root, self.repository, self.ffmpeg_bin)
         import torch
         from GPT_SoVITS.TTS_infer_pack.TTS import TTS, TTS_Config
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA_UNAVAILABLE")
         torch.set_num_threads(4)
-        self.voice = self.registry[DEFAULT_VOICE]
+        self.voice = self.registry[self.default_voice]
         self.reference = select_reference(self.voice)
-        pretrained = ROOT / "runtime/GPT-SoVITS/GPT_SoVITS/pretrained_models"
+        pretrained = self.repository / "GPT_SoVITS/pretrained_models"
         config = dict(version="v2", device="cuda", is_half=True,
                       t2s_weights_path=str(self.voice["gpt"]), vits_weights_path=str(self.voice["sovits"]),
                       bert_base_path=str(pretrained / "chinese-roberta-wwm-ext-large"),
@@ -147,7 +147,7 @@ class Service:
 
     def status(self) -> dict:
         return dict(state="error" if self.load_error else self.state,
-                    version=self.voice["version"] if self.voice else None, voiceId=self.voice["id"] if self.voice else DEFAULT_VOICE,
+                    version="v2", voiceId=self.voice["id"] if self.voice else self.default_voice,
                     referenceId=self.reference["id"] if self.reference else None, voiceRevision=self.revision,
                     loadSeconds=self.load_seconds,
                     busy=self.job is not None, error=self.load_error)
@@ -158,7 +158,7 @@ class Service:
                     ref_audio_path=str(ref["path"]), prompt_text=ref["text"], prompt_lang=ref.get("language", "all_ja"),
                     text_split_method="cut0", batch_size=1, split_bucket=False,
                     parallel_infer=True, use_cuda_graph=True, use_flash_attention=False,
-                    streaming_mode=self.streaming and self.voice["version"] == "v2",
+                    streaming_mode=self.streaming,
                     min_chunk_length=self.min_chunk_length, overlap_length=self.overlap_length,
                     fragment_interval=0.0, speed_factor=message.get("speed", 1.0),
                     top_k=15, top_p=1.0, temperature=1.0, seed=1234, repetition_penalty=1.35)
@@ -378,12 +378,12 @@ class Service:
                 self.stop.set()
 
 
-async def serve(state_dir: Path):
+async def serve(state_dir: Path, root: Path, config: dict):
     import websockets
     token = os.environ.get("DESKAI_TTS_TOKEN", "")
     if len(token) < 32:
         raise RuntimeError("DESKAI_TTS_TOKEN must contain at least 32 characters")
-    service = Service(state_dir)
+    service = Service(state_dir, root, config)
     async with websockets.serve(service.handler, "127.0.0.1", 0, max_size=16384, max_queue=4,
                                 write_limit=65536, compression=None) as server:
         print(json.dumps(dict(v=1, event="listening", host="127.0.0.1", port=server.sockets[0].getsockname()[1])),
@@ -406,5 +406,8 @@ async def serve(state_dir: Path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--state-dir", type=Path, required=True)
+    parser.add_argument("--asset-root", type=Path, required=True)
+    parser.add_argument("--config", type=Path, required=True)
     arguments = parser.parse_args()
-    asyncio.run(serve(arguments.state_dir.resolve()))
+    config = json.loads(arguments.config.read_text(encoding="utf-8-sig"))
+    asyncio.run(serve(arguments.state_dir.resolve(), arguments.asset_root.resolve(), config))

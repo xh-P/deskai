@@ -3,8 +3,9 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { access, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import WebSocket from 'ws';
+import { loadTtsRuntime } from './runtime.ts';
 
-export type VoiceInfo = { id: string; name: string; version: 'v2' | 'v3'; defaultReferenceId: string; references: { id: string; name: string }[] };
+export type VoiceInfo = { id: string; name: string; version: 'v2'; defaultReferenceId: string; references: { id: string; name: string }[] };
 export type VoiceSelection = { voiceId: string; referenceId: string; voiceRevision: number };
 export type TtsStatus = { state: 'starting' | 'loading' | 'warming' | 'switching' | 'ready' | 'error' | 'stopped'; code?: string } & Partial<VoiceSelection>;
 export type SynthesisRequest = VoiceSelection & { sessionId: string; turnId: string; generationId: number; segmentId: string;
@@ -42,18 +43,18 @@ export function decodePCMFrame(raw: Uint8Array, requestId: string, expected: Syn
   return { ...header, pcm: Uint8Array.from(bytes.subarray(4 + length)) } as PCMChunk;
 }
 
-function parseRegistry(value: unknown): VoiceInfo[] {
+function parseRegistry(value: unknown, defaultVoiceId: string): VoiceInfo[] {
   if (!Array.isArray(value) || !value.length) throw new Error('INVALID_TTS_REGISTRY');
   const ids = new Set<string>();
   for (const row of value) {
-    if (!row || !identifier(row.id) || ids.has(row.id) || typeof row.name !== 'string' || !['v2', 'v3'].includes(row.version) ||
+    if (!row || !identifier(row.id) || ids.has(row.id) || typeof row.name !== 'string' || row.version !== 'v2' ||
         !Array.isArray(row.references) || !row.references.length || row.references.length > 100 ||
         row.references.some((r: { id?: unknown; name?: unknown }) => !r || !identifier(r.id) || typeof r.name !== 'string') ||
         new Set(row.references.map((r: { id: string }) => r.id)).size !== row.references.length ||
         !row.references.some((r: { id: string }) => r.id === row.defaultReferenceId)) throw new Error('INVALID_TTS_REGISTRY');
     ids.add(row.id);
   }
-  if (!ids.has('nagato-normal-v2')) throw new Error('INVALID_TTS_REGISTRY');
+  if (!ids.has(defaultVoiceId)) throw new Error('INVALID_TTS_REGISTRY');
   return value as VoiceInfo[];
 }
 
@@ -95,14 +96,14 @@ export class LocalTtsService {
   private async initialize(): Promise<VoiceInfo[]> {
     this.status({ state: 'starting' });
     const assetRoot = path.resolve(process.env.DESKAI_ASSET_ROOT ?? this.root);
-    const python = process.env.DESKAI_TTS_PYTHON ?? path.join(assetRoot, '.conda/gsv-v5/python.exe');
+    const runtime = await loadTtsRuntime(this.root, assetRoot);
     const worker = path.join(this.root, 'services/tts/worker.py');
-    await Promise.all([access(python), access(worker)]);
+    await Promise.all([access(runtime.executable), access(worker)]);
     const stateDir = path.join(this.root, '.cache/desktop-voice/tts');
     await mkdir(stateDir, { recursive: true });
     if (this.stopped) throw new Error('TTS_STOPPED');
     const token = randomBytes(32).toString('hex');
-    const child = spawn(python, ['-u', worker, '--state-dir', stateDir], { cwd: this.root, windowsHide: true,
+    const child = spawn(runtime.executable, ['-u', worker, '--state-dir', stateDir, '--asset-root', assetRoot, '--config', runtime.file], { cwd: this.root, windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, DESKAI_ASSET_ROOT: assetRoot,
         DESKAI_TTS_TOKEN: token, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' } });
     this.child = child;
@@ -149,7 +150,7 @@ export class LocalTtsService {
       if (this.stopped) throw new Error('TTS_STOPPED');
       this.update(await this.call('status', {}, ['status'], 10_000));
     }
-    this.catalog = parseRegistry((await this.call('registry', {}, ['registry'], 10_000)).voices);
+    this.catalog = parseRegistry((await this.call('registry', {}, ['registry'], 10_000)).voices, runtime.defaultVoiceId);
     return this.registry();
   }
   private waitFor(id: string, terminal: string[], timeout: number): Promise<Frame> {

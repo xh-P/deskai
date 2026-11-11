@@ -1,5 +1,4 @@
-import type { ChatAccepted, ChatEvent, ChatTurnInput } from '../../dsh-adapter/src/session.ts';
-import type { DialoguePort } from './dialogue.ts';
+import type { ChatAccepted, ChatEvent, ChatTurnInput, DialoguePort } from './chat-contract.ts';
 import type { Ready } from './index.ts';
 
 export type SpeculationIdentity = Pick<Ready, 'sessionId' | 'inputRevision'>;

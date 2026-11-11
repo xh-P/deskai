@@ -1,13 +1,12 @@
-import { DeliveryLedger, PROMPT_VERSION } from './m2.ts';
-import type { DeliveryMode, ReplyLanguage } from './m2.ts';
+import { DeliveryLedger, type DeliveryMode } from './delivery.ts';
 import { localDecision } from './policy.ts';
 import { cleanSpeech } from './sentences.ts';
 import { SpeculativeChat, type SpeculationDiagnostic, type SpeculationIdentity } from './speculative-chat.ts';
-import type { ChatAccepted, ChatEvent, ChatPersonaId, ChatSettlement, ChatTurnInput, RelationshipMode } from '../../dsh-adapter/src/session.ts';
-import type { Persona } from './prompts.ts';
+import type { ChatAccepted, ChatEvent, ChatSettlement, ChatTurnInput, DialoguePort } from './chat-contract.ts';
+import type { ChatPersonaId, RelationshipMode } from './persona-catalog.ts';
+import { PROMPT_VERSION, type Persona, type ReplyLanguage } from './prompts.ts';
 import type { CharacterLookupSummary } from './character-reference.ts';
 
-export type DialoguePort = { runTurn(input: ChatTurnInput, event: (event: ChatEvent) => void): Promise<ChatAccepted>; cancel(): Promise<ChatSettlement | undefined> };
 export type DialoguePreferences = { personaId: ChatPersonaId; persona?: Persona; relationshipMode?: RelationshipMode;
   replyLanguage: ReplyLanguage; voiceId: string; characterKnowledge?: boolean };
 export type DialogueInput = { text: string; source: DeliveryMode; continuationOf?: number; utteranceIds?: number[]; hostContext?: unknown;
@@ -188,7 +187,7 @@ export class DialogueController {
     if (this.closed || this.isGenerating || !text.trim()) return;
     this.discardSpeculative();
     const turnId = `notice-${++this.serial}`, attemptId = `${turnId}-delivery`, generation = ++this.generation;
-    this.ledger.startAttempt(attemptId, turnId, { v: 1, action: 'SPEAK', reason: 'direct_request', expectsReply: false }, source);
+    this.ledger.startAttempt(attemptId, turnId, source, false);
     this.ledger.appendGenerated(attemptId, text);
     if (source === 'voice') this.outputAttempt = { id: turnId, epoch: this.epoch, generation,
       input: { text: '', source }, port: this.port, accepted: true, canceled: false, attempts: [attemptId], attemptId, finished: true };
@@ -205,7 +204,7 @@ export class DialogueController {
       if (state.attemptId && state.attemptId !== event.attemptId) this.abandon(state);
       state.attemptId = event.attemptId;
       state.attempts.push(event.attemptId);
-      this.ledger.startAttempt(event.attemptId, state.id, { v: 1, action: 'SPEAK', reason: 'direct_request', expectsReply: true }, state.input.source);
+      this.ledger.startAttempt(event.attemptId, state.id, state.input.source, true);
       this.emit({ type: 'decision', turnId: state.id, generationId: state.generation, action: 'SPEAK', local: false });
       return;
     }
@@ -347,13 +346,13 @@ export class DialogueController {
     const history: DialogueHistoryEntry[] = [...this.priorHistory];
     for (const user of this.userHistory.slice(-10)) {
       history.push(user);
-      for (const attempt of attempts.filter(item => item.turnId === user.turnId && item.action === 'SPEAK')) {
+      for (const attempt of attempts.filter(item => item.turnId === user.turnId)) {
         const text = attempt.deliveryMode === 'text' ? attempt.displayed : attempt.fullyPlayedSegments.map(segment => segment.text).join('');
         if (text) history.push({ role: 'assistant', turnId: user.turnId, text, interrupted: attempt.interrupted });
       }
     }
     const compact = attempts.slice(-8).map(attempt => ({ attemptId: attempt.attemptId, turnId: attempt.turnId,
-      action: attempt.action, deliveryMode: attempt.deliveryMode, generatedCharacters: attempt.generated.length,
+      deliveryMode: attempt.deliveryMode, generatedCharacters: attempt.generated.length,
       unplayedCharacters: attempt.unplayed.length, fullyPlayedSegments: attempt.fullyPlayedSegments,
       partiallyPlayedSegment: attempt.partiallyPlayedSegment,
       ...(attempt.deliveryMode === 'text' ? { displayed: attempt.displayed } : {}), interrupted: attempt.interrupted }));

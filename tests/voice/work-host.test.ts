@@ -20,7 +20,8 @@ test('work ledger persists facts, replies and continues the native session', asy
   };
   try {
     const host = new WorkHost(file, provider); const project = host.createProject({ name: 'Example', path: dir });
-    host.saveDraft({ projectId: project.id, text: 'Draft' }); const task = host.submit({ projectId: project.id, prompt: 'Build' });
+    host.saveDraft({ projectId: project.id, text: 'Draft' });
+    const { task } = await host.dispatch({ type: 'submit', projectId: project.id, prompt: 'Build' });
     await new Promise(resolve => setImmediate(resolve));
     notify({ type: 'session', providerSessionId: 'native-1' });
     const command = { type: 'append' as const, taskId: task.id, prompt: 'Add details' };
@@ -36,8 +37,9 @@ test('work ledger persists facts, replies and continues the native session', asy
     assert.equal(host.snapshot().events.some(event => event.type === 'input-added'), true);
     notify({ type: 'question', requestId: 'q1', text: 'Which?' });
     assert.equal(host.snapshot().tasks[0].status, 'waiting');
-    await host.reply(task.id, 'q1', { answer: 'A' }); assert.equal(replies.length, 1);
-    await assert.rejects(host.reply(task.id, 'q1', 'again'));
+    await host.dispatch({ type: 'reply', taskId: task.id, requestId: 'q1', response: { answer: 'A' } });
+    assert.equal(replies.length, 1);
+    await assert.rejects(host.dispatch({ type: 'reply', taskId: task.id, requestId: 'q1', response: 'again' }));
     notify({ type: 'question', requestId: 'q2', text: 'Native answer?' });
     notify({ type: 'permission', requestId: 'p1', text: 'Native approval?' });
     notify({ type: 'request-resolved', requestId: 'q2' });
@@ -45,12 +47,13 @@ test('work ledger persists facts, replies and continues the native session', asy
     assert.equal(pendingRequests(host.snapshot()).length, 1);
     notify({ type: 'request-resolved', requestId: 'p1' });
     assert.equal(host.snapshot().tasks[0].status, 'running');
-    await assert.rejects(host.reply(task.id, 'q2', 'already answered'));
+    await assert.rejects(host.dispatch({ type: 'reply', taskId: task.id, requestId: 'q2', response: 'already answered' }));
     notify({ type: 'artifact', path: 'out.txt' });
     assert.equal(host.authorizeArtifact(task.id, dir, 'out.txt'), true);
     assert.equal(host.authorizeArtifact(task.id, dir, 'other.txt'), false);
     finish({ outcome: 'completed', summary: 'Done' }); await new Promise(resolve => setImmediate(resolve));
-    host.continue(task.id, 'Refine'); await new Promise(resolve => setImmediate(resolve));
+    await host.dispatch({ type: 'continue', taskId: task.id, prompt: 'Refine' });
+    await new Promise(resolve => setImmediate(resolve));
     assert.equal(requests[1].providerSessionId, 'native-1');
     const restored = new WorkHost(file, provider).snapshot();
     assert.equal(restored.drafts[0].text, 'Draft'); assert.equal(restored.tasks[0].status, 'interrupted');
@@ -68,12 +71,12 @@ test('uncertain provider failure is not completion and failed append is not reco
   try {
     const host = new WorkHost(path.join(dir, 'work.json'), provider);
     const project = host.createProject({ name: 'Example', path: dir });
-    const task = host.submit({ projectId: project.id, prompt: 'Do work' });
+    const { task } = await host.dispatch({ type: 'submit', projectId: project.id, prompt: 'Do work' });
     await new Promise(resolve => setImmediate(resolve));
-    await assert.rejects(host.append(task.id, 'More'), /not ready/);
     const command = { type: 'append' as const, taskId: task.id, prompt: 'After reconnect' };
     const receipt = await host.dispatch(command, { id: 'uncertain-append' });
     assert.equal(receipt.operation.state, 'unknown');
+    assert.equal(receipt.operation.error, 'not ready');
     assert.deepEqual(await host.dispatch(command, { id: 'uncertain-append' }), receipt);
     assert.equal(host.snapshot().events.some(event => event.type === 'input-added'), false);
     rejectRun(new Error('connection lost')); await new Promise(resolve => setImmediate(resolve));

@@ -14,15 +14,10 @@ type Connection = { origin: string; apiCookie: string; browserCookie: string; pi
 type Mux = { socket: WebSocket; streams: Map<string, (frame: DshFollowFrame) => void> };
 
 export async function loadWorkOptions(root: string): Promise<WorkOptions> {
-  try {
-    const config = JSON.parse(await readFile(path.join(root, 'config/work-runtime.json'), 'utf8'));
-    if (typeof config?.profile !== 'string' || !config.profile.trim() || typeof config.workspace !== 'string' || !config.workspace.trim())
-      throw new Error('INVALID_WORK_CONFIG');
-    return { profile: config.profile.trim(), cwd: path.resolve(root, config.workspace) };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { profile: 'web', cwd: root };
-    throw error;
-  }
+  const config = JSON.parse(await readFile(path.join(root, 'config/work-runtime.json'), 'utf8'));
+  if (typeof config?.profile !== 'string' || !config.profile.trim() || typeof config.workspace !== 'string' || !config.workspace.trim())
+    throw new Error('INVALID_WORK_CONFIG');
+  return { profile: config.profile.trim(), cwd: path.resolve(root, config.workspace) };
 }
 
 function alive(pid: number): boolean {

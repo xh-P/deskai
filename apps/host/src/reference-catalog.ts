@@ -39,7 +39,7 @@ export function referenceCatalog(snapshot: HostSnapshot, focus: HostSelection, c
   const { work } = snapshot;
   const projects = new Map(work.projects.map(project => [project.id, project]));
   const tasks = new Map(work.tasks.map(task => [task.id, task]));
-  const current = work.operations?.filter(operation => operation.conversationId === conversationId).at(-1);
+  const current = work.operations.filter(operation => operation.conversationId === conversationId).at(-1);
   const currentTask = current && tasks.get(current.taskId);
   const rows: ReferenceCandidate[] = [];
   for (const project of work.projects) rows.push({ kind: 'project', token: `project:${project.id}`, id: project.id, label: project.name,

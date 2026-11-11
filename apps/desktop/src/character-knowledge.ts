@@ -2,10 +2,9 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
-import type { DialoguePort } from '../../../packages/voice-core/src/dialogue.ts';
+import type { ChatEvent, ChatTurnInput, DialoguePort } from '../../../packages/voice-core/src/chat-contract.ts';
 import { DEFAULT_PERSONA_ID, isPersonaId } from '../../../packages/voice-core/src/persona-catalog.ts';
 import type { CharacterLookup, CharacterReference } from '../../../packages/voice-core/src/character-reference.ts';
-import type { ChatEvent, ChatTurnInput } from '../../../packages/dsh-adapter/src/session.ts';
 
 type WorkerReply = { id: number; hits?: CharacterReference[]; nearestDistance?: number | null; error?: string };
 type Waiter = (value: WorkerReply) => void;

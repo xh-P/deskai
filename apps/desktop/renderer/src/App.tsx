@@ -157,7 +157,7 @@ export default function App() {
     if (existing) return Promise.resolve(existing)
     return new Promise((resolve, reject) => {
       const listener = (event: DialogueEvent) => { if (predicate(event)) { clearTimeout(timer); dialogueWaiters.current.delete(listener); resolve(event) } }
-      const timer = setTimeout(() => { dialogueWaiters.current.delete(listener); reject(new Error('M2 smoke 等待对话事件超时')) }, timeout)
+      const timer = setTimeout(() => { dialogueWaiters.current.delete(listener); reject(new Error('对话冒烟等待事件超时')) }, timeout)
       dialogueWaiters.current.add(listener)
     })
   }, [])
@@ -221,10 +221,10 @@ export default function App() {
       const send = async (text: string) => {
         const mark = dialogueEvents.current.length
         const result = await window.deskai.sendText({ sessionId: opened.sessionId, text })
-        if (!result.accepted) throw new Error(`M2 smoke 未接受文本：${text}`)
+        if (!result.accepted) throw new Error(`对话冒烟未接受文本：${text}`)
         return mark
       }
-      const speakMark = await send('M2: speak')
+      const speakMark = await send('smoke: speak')
       const speakDone = await waitDialogue(speakMark, e => e.type === 'assistant-state' && e.state === 'complete')
       await new Promise(resolve => setTimeout(resolve, 150))
       const assistantText = speakDone.type === 'assistant-state'
@@ -240,19 +240,19 @@ export default function App() {
       await waitDialogue(silentMark, e => e.type === 'model-state' && e.state === 'silent')
       await new Promise(resolve => setTimeout(resolve, 100))
       checks.localQuietNoBubble = count() === beforeQuiet
-      const shortMark = await send('M2: short')
+      const shortMark = await send('smoke: short')
       const shortDone = await waitDialogue(shortMark, e => e.type === 'assistant-state' && e.state === 'complete')
       checks.shortAnswerWorked = shortDone.type === 'assistant-state' && dialogueEvents.current.slice(shortMark)
         .some(e => e.type === 'assistant-delta' && e.attemptId === shortDone.attemptId)
-      const malformedMark = await send('M2: malformed')
+      const malformedMark = await send('smoke: retry')
       await waitDialogue(malformedMark, e => e.type === 'error' && e.code === 'CHAT_FIXTURE_FAILURE')
       const retryMark = dialogueEvents.current.length
       const retry = await window.deskai.retryTurn()
-      if (!retry.accepted) throw new Error('M2 smoke 显式重试未接受')
+      if (!retry.accepted) throw new Error('对话冒烟显式重试未接受')
       const retryDone = await waitDialogue(retryMark, e => e.type === 'assistant-state' && e.state === 'complete')
       checks.retryWorked = retryDone.type === 'assistant-state' && dialogueEvents.current.slice(retryMark)
         .some(e => e.type === 'assistant-delta' && e.attemptId === retryDone.attemptId)
-      const longMark = await send('M2: long')
+      const longMark = await send('smoke: long')
       await waitDialogue(longMark, e => e.type === 'assistant-delta')
       const cancelMark = dialogueEvents.current.length
       await window.deskai.cancelTurn()
@@ -670,8 +670,9 @@ export default function App() {
       <span>桌宠状态：{petStateLabel} · 位置可拖动调整</span>
     </section>
     <section className="preferences" aria-label="对话设置">
-      <label>角色声音<select value={preferences?.voiceId ?? 'nagato-normal-v2'} disabled={!voices.length || starting} onChange={event => void changeSetting({ voiceId: event.target.value, referenceId: '' })}>
-        {voices.length ? voices.map(voice => <option key={voice.id} value={voice.id}>{voice.name}</option>) : <option value="nagato-normal-v2">常态有希 v2</option>}
+      <label>角色声音<select value={selectedVoice?.id ?? ''} disabled={!voices.length || starting} onChange={event => void changeSetting({ voiceId: event.target.value, referenceId: '' })}>
+        {!selectedVoice && <option value="" disabled>等待声音资源</option>}
+        {voices.map(voice => <option key={voice.id} value={voice.id}>{voice.name}</option>)}
       </select></label>
       <label>参考语气<select value={preferences?.referenceId || selectedVoice?.defaultReferenceId || ''} disabled={!selectedVoice || starting} onChange={event => void changeSetting({ referenceId: event.target.value })}>
         {(selectedVoice?.references ?? []).map(ref => <option key={ref.id} value={ref.id}>{ref.name}</option>)}

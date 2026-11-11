@@ -4,9 +4,9 @@ import { BargeInDetector, type VadFrame } from '../../apps/desktop/renderer/src/
 import { rms } from '../../apps/desktop/renderer/src/echo-guard.ts';
 import { loadInputRuntimeConfig } from '../../apps/desktop/src/speech-runtime.ts';
 import { SpeechOutput, type SpeechOutputEvent, type SpeechPort } from '../../apps/desktop/src/speech-output.ts';
-import { DialogueController, type DialoguePort } from '../../packages/voice-core/src/dialogue.ts';
+import { DialogueController } from '../../packages/voice-core/src/dialogue.ts';
 import { INPUT_RATE, VAD_FRAME_SAMPLES } from '../../packages/voice-core/src/input-config.ts';
-import type { ChatEvent, ChatSettlement } from '../../packages/dsh-adapter/src/session.ts';
+import type { ChatEvent, ChatSettlement, DialoguePort } from '../../packages/voice-core/src/chat-contract.ts';
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 const { interruption, endpoint } = await loadInputRuntimeConfig(process.cwd());
@@ -81,7 +81,8 @@ test('repeated interruption clears each generation once and the next PCM waits f
   };
   const speechEvents: SpeechOutputEvent[] = [];
   const progress: number[] = [];
-  const output = new SpeechOutput({ sessionId: 's', port: speechPort, emit: event => speechEvents.push(event),
+  const output = new SpeechOutput({ sessionId: 's', selection: { voiceId: 'v', referenceId: 'r', voiceRevision: 0 },
+    port: speechPort, emit: event => speechEvents.push(event),
     onSegment: segment => { if (segment.completed) progress.push(segment.generationId); } });
   const dialogue = new DialogueController(port, { personaId: 'assistant-neutral', replyLanguage: 'auto', voiceId: 'v' },
     event => output.handle(event));

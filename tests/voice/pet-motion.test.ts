@@ -16,17 +16,16 @@ test('pet motion follows its own mode without changing system preference', () =>
   assert.throws(() => mergePetPreferences(defaultPetPreferences, { motionMode: 'forced' }), /INVALID_PET_MOTION_MODE/);
 });
 
-test('old pet settings keep appearance and gain gentle motion; switching persists independently', async () => {
+test('incomplete pet settings are discarded and current motion changes persist independently', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'deskai-pet-motion-'));
   try {
     await writeFile(path.join(directory, 'pet-settings.json'), JSON.stringify({
       variant: 'witch-normal', size: 300, visible: false, alwaysOnTop: false,
       position: { x: 120, y: -40 },
     }));
-    const old = await loadPetPreferences(directory);
-    assert.deepEqual(old, { variant: 'witch-normal', size: 300, visible: false, alwaysOnTop: false,
-      motionMode: 'gentle', position: { x: 120, y: -40 } });
-    await savePetPreferences(directory, mergePetPreferences(old, { motionMode: 'system' }));
+    assert.deepEqual(await loadPetPreferences(directory), defaultPetPreferences);
+    const current = { ...defaultPetPreferences, variant: 'witch-normal' as const, position: { x: 120, y: -40 } };
+    await savePetPreferences(directory, mergePetPreferences(current, { motionMode: 'system' }));
     const saved = JSON.parse(await readFile(path.join(directory, 'pet-settings.json'), 'utf8'));
     assert.equal(saved.motionMode, 'system');
     assert.equal(saved.variant, 'witch-normal');

@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { ProviderBinding, ProviderEvent, ProviderPort, ProviderRequest, ProviderResult } from '../../work-core/src/types.ts';
@@ -298,7 +297,7 @@ export class DshWorkProvider implements ProviderPort {
     await active.cancelNative?.();
   }
 
-  async append(attemptId: string, prompt: string, requestId?: string): Promise<void> {
+  async append(attemptId: string, prompt: string, requestId: string): Promise<void> {
     const active = this.active.get(attemptId);
     if (!active?.sessionId || !active.connected || !active.acceptingInput || active.cancelRequested) throw new Error('WORK_SESSION_NOT_READY');
     if (!prompt.trim()) throw new Error('WORK_INPUT_EMPTY');
@@ -306,7 +305,7 @@ export class DshWorkProvider implements ProviderPort {
     if (active.cancelRequested) await active.cancelNative?.();
   }
 
-  private async submitPrompt(active: Active, prompt: string, requestId: string = randomUUID()): Promise<void> {
+  private async submitPrompt(active: Active, prompt: string, requestId: string): Promise<void> {
     active.requestIds.add(requestId);
     try { active.saveBinding(); }
     catch (error) { active.requestIds.delete(requestId); throw error; }

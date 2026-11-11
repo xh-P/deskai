@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { DshWorkProvider, type DshWorkTransport } from '../../packages/dsh-adapter/src/work-provider.ts';
 import type { ProviderBinding, ProviderEvent } from '../../packages/work-core/src/types.ts';
 
-const request = { taskId: 'task', attemptId: 'attempt', projectPath: process.cwd(), prompt: 'Build' };
+const request = { taskId: 'task', attemptId: 'attempt', requestId: 'submit-operation', projectPath: process.cwd(), prompt: 'Build' };
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 async function until(check: () => boolean): Promise<void> {
   for (let i = 0; i < 100 && !check(); i++) await tick();
@@ -47,7 +47,7 @@ test('cancel removes only this attempt’s accepted and in-flight queued prompts
   const provider = new DshWorkProvider(host, process.cwd());
   const run = provider.start(request, () => {});
   await until(() => queue.length === 2);
-  const append = provider.append(request.attemptId, 'Extra');
+  const append = provider.append(request.attemptId, 'Extra', 'append-operation');
   await until(() => appendSubmitted);
   const cancel = provider.cancel(request.attemptId);
   releaseAppend();
@@ -97,7 +97,7 @@ test('cancel repeats after an in-flight append becomes the next live turn', asyn
   let settled = false;
   const run = provider.start(request, () => {}).then(value => { settled = true; return value; });
   await until(() => seq === 2);
-  const append = provider.append(request.attemptId, 'Extra');
+  const append = provider.append(request.attemptId, 'Extra', 'append-operation');
   await until(() => appendSubmitted);
   const cancel = provider.cancel(request.attemptId);
   await until(() => cancelCalls === 1);

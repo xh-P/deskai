@@ -27,25 +27,15 @@ export function mergePetPreferences(previous: PetPreferences, value: unknown): P
 }
 
 export async function loadPetPreferences(userData: string): Promise<PetPreferences> {
-  let saved: unknown;
-  try { saved = JSON.parse(await readFile(petSettingsPath(userData), 'utf8')); }
-  catch { return { ...defaultPetPreferences }; }
-  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return { ...defaultPetPreferences };
-  const value = saved as Record<string, unknown>;
-  let preferences = { ...defaultPetPreferences };
   try {
-    const patch = Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'position'));
-    preferences = mergePetPreferences(preferences, patch);
+    const saved = JSON.parse(await readFile(petSettingsPath(userData), 'utf8'));
+    if (!Object.keys(defaultPetPreferences).every(key => Object.hasOwn(saved, key))) return { ...defaultPetPreferences };
+    const { position, ...patch } = saved;
+    if (position !== null && (!Number.isInteger(position?.x) || !Number.isInteger(position?.y) ||
+        Math.abs(position.x) >= 100000 || Math.abs(position.y) >= 100000)) return { ...defaultPetPreferences };
+    const preferences = mergePetPreferences(defaultPetPreferences, patch);
+    return { ...preferences, position: position === null ? null : { x: position.x, y: position.y } };
   } catch { return { ...defaultPetPreferences }; }
-  const position = value.position;
-  if (position && typeof position === 'object' && !Array.isArray(position)) {
-    const coordinates = position as Record<string, unknown>;
-    if (Number.isInteger(coordinates.x) && Number.isInteger(coordinates.y) &&
-        Math.abs(coordinates.x as number) < 100000 && Math.abs(coordinates.y as number) < 100000) {
-      preferences.position = { x: coordinates.x as number, y: coordinates.y as number };
-    }
-  }
-  return preferences;
 }
 
 export async function savePetPreferences(userData: string, preferences: PetPreferences): Promise<void> {

@@ -1,11 +1,10 @@
-import type { DialoguePort } from '../../../packages/voice-core/src/dialogue.ts';
-import type { ChatAccepted, ChatEvent, ChatSettlement, ChatTurnInput } from '../../../packages/dsh-adapter/src/session.ts';
+import type { ChatAccepted, ChatEvent, ChatSettlement, ChatTurnInput, DialoguePort } from '../../../packages/voice-core/src/chat-contract.ts';
 
-/** Used only when both explicit smoke and dialogue-smoke switches are present. */
+/** Scripted response stream for simulated desktop validation. */
 export class FixtureChatPort implements DialoguePort {
   private number = 0;
   private active?: { finish: (value: ChatSettlement) => void; timer?: ReturnType<typeof setTimeout>; sessionId: string };
-  private malformedCount = 0;
+  private failureCount = 0;
   readonly requests: { text: string; personaId: string | undefined; replyLanguage: string | undefined; pendingQuestion?: string }[] = [];
 
   async runTurn(input: ChatTurnInput, emit: (event: ChatEvent) => void): Promise<ChatAccepted> {
@@ -18,10 +17,10 @@ export class FixtureChatPort implements DialoguePort {
     const active = { finish, sessionId, timer: undefined as ReturnType<typeof setTimeout> | undefined };
     this.active = active;
     let text = '已连接。这段回复只用于本地界面验证。要继续吗？';
-    if (input.text === 'M2: short') text = '继续。';
-    const failOnce = input.text === 'M2: malformed' && ++this.malformedCount === 1;
-    if (input.text === 'M2: malformed') text = '重试成功。';
-    if (input.text === 'M2: long') text = '这是一段可取消的模拟回复。'.repeat(30);
+    if (input.text === 'smoke: short') text = '继续。';
+    const failOnce = input.text === 'smoke: retry' && ++this.failureCount === 1;
+    if (input.text === 'smoke: retry') text = '重试成功。';
+    if (input.text === 'smoke: long') text = '这是一段可取消的模拟回复。'.repeat(30);
     emit({ type: 'attempt-start', attemptId, revision: 1 });
     let offset = 0, index = 0;
     const step = () => {
@@ -40,7 +39,7 @@ export class FixtureChatPort implements DialoguePort {
         emit({ type: 'attempt-end', attemptId, outcome: 'committed', eventType: 'assistant/message' });
         this.active = undefined;
         finish({ sessionId, status: 'completed' });
-      } else active.timer = setTimeout(step, input.text === 'M2: long' ? 70 : 8);
+      } else active.timer = setTimeout(step, input.text === 'smoke: long' ? 70 : 8);
     };
     active.timer = setTimeout(step, 20);
     return { accepted: true, sessionId, completed };

@@ -17,11 +17,8 @@ def main():
     try:
         with contextlib.redirect_stdout(sys.stderr):
             import soundfile as sf
-            model = QwenEngine(
-                os.environ.get('DESKAI_QWEN_MODEL', 'Qwen/Qwen3-ASR-0.6B'),
-                os.environ.get('DESKAI_QWEN_DEVICE', 'cuda:0'),
-                **json.loads(os.environ.get('DESKAI_QWEN_INFERENCE', '{}')),
-            )
+            config = json.loads(os.environ['DESKAI_QWEN_RUNTIME'])
+            model = QwenEngine(config['model'], config['device'], **config['inference'])
     except Exception:
         send({'startupError': 'QWEN_ASR_INITIALIZATION_FAILED'})
         raise

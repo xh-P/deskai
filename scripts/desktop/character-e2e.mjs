@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { LocalDshSpeech } from '../../packages/dsh-adapter/src/speech.ts';
+import { chatPatchPath } from '../../packages/dsh-adapter/src/chat-patch.ts';
 import { DialogueController } from '../../packages/voice-core/src/dialogue.ts';
 import { CharacterKnowledge } from '../../apps/desktop/src/character-knowledge.ts';
 import { CharacterStore, ConversationArchive } from '../../apps/desktop/src/character-store.ts';
@@ -52,7 +53,7 @@ try {
   report.provider = config.provider;
   if (config.provider === 'dsh-session') {
     await service.start();
-    const patch = JSON.parse(await readFile(path.join(root, '.cache/voice/dsh-m2.patch.yml'), 'utf8'));
+    const patch = JSON.parse(await readFile(chatPatchPath(root), 'utf8'));
     const route = patch.find(entry => entry.id === 'agent-default-model')?.config;
     if (route) report.model = { provider: route.provider, model: route.model, reasoningEffort: route.reasoningEffort };
   } else report.model = { model: config.model };

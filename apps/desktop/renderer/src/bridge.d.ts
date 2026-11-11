@@ -39,16 +39,10 @@ export interface RuntimeInfo {
   voiceDiagnostics?: VoiceDiagnostics
 }
 
-export interface VoiceCatalogEntry {
-  voiceId: string
-  name: string
-}
-
 export interface SessionStart {
   sessionId: string
   conversation: ConversationSummary
   history: DialogueHistoryEntry[]
-  catalog: VoiceCatalogEntry[]
   status: string
 }
 
