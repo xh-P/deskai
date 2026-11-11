@@ -1,5 +1,6 @@
 import { readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { DshWorkTelemetry } from './work-telemetry.ts';
 import type { ProviderBinding, ProviderEvent, ProviderPort, ProviderRequest, ProviderResult } from '../../work-core/src/types.ts';
 import { APP_AUTHORING_GUIDE } from '../../app-core/src/authoring.ts';
 import { errorMessage, followDshSession, within, type DshEvent, type DshWorkTransport } from './session-feed.ts';
@@ -89,20 +90,8 @@ export class DshWorkProvider implements ProviderPort {
     const end = new Promise<ProviderResult>(resolve => { resolveEnd = resolve; });
     let latestSummary = '';
     const settle = (result: ProviderResult) => { if (!settled) { settled = true; resolveEnd(result); } };
-    const questionCallIds = new Set<string>();
-    let activity = '';
-    let activityTimer: NodeJS.Timeout | undefined;
-    const flushActivity = () => {
-      if (activityTimer) clearTimeout(activityTimer);
-      activityTimer = undefined;
-      if (activity) { const text = activity; activity = ''; emit({ type: 'activity', text }); }
-    };
-    const queueActivity = (chunk: string) => {
-      activity += chunk;
-      activityTimer ??= setTimeout(() => {
-        try { flushActivity(); } catch (error) { settle(sessionResult('unknown', errorMessage(error), true)); }
-      }, 250);
-    };
+    const questions = new Map<string, { turn: number; requestIds: string[]; data: unknown }>();
+    const telemetry = new DshWorkTelemetry((entry, providerSeq) => emit({ type: 'trace', entry, providerSeq }));
     const sessionResult = (outcome: ProviderResult['outcome'], error?: string, unsettled?: boolean): ProviderResult => ({
       ...(active.sessionId ? { providerSessionId: active.sessionId } : {}), outcome,
       ...(latestSummary ? { summary: latestSummary.slice(-4000) } : {}), ...(error ? { error } : {}), ...(unsettled ? { unsettled } : {})
@@ -113,6 +102,8 @@ export class DshWorkProvider implements ProviderPort {
       if (!active.requestIds.size || active.cancelRequested && !active.cancelDone) return;
       const results = [...active.requestIds].map(settledRequest);
       if (results.some(result => result === undefined)) return;
+      if (active.cancelDone) { settle(sessionResult('cancelled')); return; }
+      if (questions.size) return;
       const firstIncomplete = results.find(result => result?.outcome !== 'completed');
       const outcome = firstIncomplete?.outcome ?? 'completed';
       settle(sessionResult(outcome, firstIncomplete?.error));
@@ -162,6 +153,7 @@ export class DshWorkProvider implements ProviderPort {
     const ownedTurn = () => active.currentTurn !== undefined && [...active.enteredTurns.values()].includes(active.currentTurn);
     let unknownToolOutcome = false;
     const handle = (event: DshEvent) => {
+      telemetry.event(event, ownedTurn());
       const report = (value: ProviderEvent) => emit({ ...value, providerSeq: event.seq });
       const data = event.data ?? {};
       if (event.type === 'turn/start') {
@@ -171,8 +163,14 @@ export class DshWorkProvider implements ProviderPort {
       }
       if (event.type === 'user/message') {
         const source = record(data.source);
-        if (source?.kind === 'user-question-reply' && typeof source.callId === 'string' && questionCallIds.delete(source.callId))
-          report({ type: 'request-resolved', requestId: source.callId });
+        if (source?.kind === 'user-question-reply' && typeof source.callId === 'string' && active.currentTurn !== undefined) {
+          const question = questions.get(source.callId);
+          if (question) {
+            for (const id of question.requestIds) active.enteredTurns.set(id, active.currentTurn);
+            questions.delete(source.callId);
+            report({ type: 'request-resolved', requestId: source.callId });
+          }
+        }
         if (typeof source?.rpcId === 'string' && active.requestIds.has(source.rpcId) && active.currentTurn !== undefined) {
           active.enteredTurns.set(source.rpcId, active.currentTurn);
           report({ type: 'request-admitted', requestId: source.rpcId });
@@ -186,8 +184,11 @@ export class DshWorkProvider implements ProviderPort {
             : reason?.kind === 'interrupted' ? 'interrupted' : 'failed';
           const error = unknownToolOutcome ? 'WORK_TOOL_OUTCOME_UNKNOWN' : outcome === 'failed' ? String(record(reason?.error)?.code ?? reason?.kind ?? 'WORK_TURN_FAILED') : undefined;
           active.endedTurns.set(data.turn, { outcome, error });
+          if (outcome !== 'completed') for (const [callId, question] of questions) {
+            if (question.turn === data.turn) questions.delete(callId);
+          }
           if (active.currentTurn === data.turn) active.currentTurn = undefined;
-          flushActivity(); settleKnown();
+          settleKnown();
         }
         return;
       }
@@ -196,33 +197,33 @@ export class DshWorkProvider implements ProviderPort {
         const summary = textBlocks(data.message);
         if (summary) latestSummary = summary;
       } else if (event.type === 'tool/call') {
-        flushActivity();
         const name = typeof data.name === 'string' ? data.name : 'tool';
-        report({ type: 'activity', text: `dsh: ${name}`, data: { eventType: event.type, callId: data.callId } });
         if (/ask_user_question/i.test(name) && typeof data.callId === 'string') {
-          questionCallIds.add(data.callId);
           let argumentsValue: unknown;
           try { argumentsValue = JSON.parse(String(data.arguments ?? '{}')); } catch { argumentsValue = {}; }
-          report({ type: 'question', requestId: data.callId, text: 'dsh 需要你的回答', data: argumentsValue });
+          const turn = active.currentTurn!;
+          const requestIds = [...active.enteredTurns].filter(([, owner]) => owner === turn).map(([id]) => id);
+          questions.set(data.callId, { turn, requestIds, data: argumentsValue });
+          report({ type: 'question', requestId: data.callId, text: 'dsh 需要你的回答', data: argumentsValue, answerable: false });
         }
       } else if (event.type === 'approval/asked') {
-        flushActivity();
         report({ type: 'permission', requestId: String(data.id ?? ''), text: String(data.reason ?? data.toolName ?? 'dsh 需要授权'), data });
       } else if (event.type === 'approval/decided') {
         if (typeof data.id === 'string') report({ type: 'request-resolved', requestId: data.id });
       } else if (event.type === 'tool/result') {
-        flushActivity();
         const message = record(data.message);
         const toolError = record(data.error);
         if (toolError?.code === 'TOOL_OUTCOME_UNKNOWN') unknownToolOutcome = true;
-        if (typeof message?.toolCallId === 'string' && questionCallIds.has(message.toolCallId) && toolError?.code !== 'TOOL_OUTCOME_UNKNOWN') {
+        if (typeof message?.toolCallId === 'string' && questions.has(message.toolCallId)) {
           const content = Array.isArray(message.content) ? message.content : [];
-          const pending = content.some(block => {
+          const pending = toolError?.code === 'TOOL_OUTCOME_UNKNOWN' || content.some(block => {
             const row = record(block);
             if (row?.type !== 'text' || typeof row.text !== 'string') return false;
             try { return record(JSON.parse(row.text))?.pending === true; } catch { return false; }
           });
-          if (!pending) { questionCallIds.delete(message.toolCallId); report({ type: 'request-resolved', requestId: message.toolCallId }); }
+          if (pending) report({ type: 'question', requestId: message.toolCallId, text: 'dsh 等待你的答复',
+            data: questions.get(message.toolCallId)?.data, answerable: true });
+          else { questions.delete(message.toolCallId); report({ type: 'request-resolved', requestId: message.toolCallId }); }
         }
         if (toolError?.code === 'AUTO_REVIEW_DENIED') report({ type: 'activity', text: `Auto review 拒绝了 ${String(message?.toolCallId ?? 'tool')}`, data: { code: 'AUTO_REVIEW_DENIED' } });
       }
@@ -233,7 +234,8 @@ export class DshWorkProvider implements ProviderPort {
       if (active.cancelRequested && !binding) return sessionResult('cancelled');
       if (request.providerSessionId) active.sessionId = request.providerSessionId;
       else {
-        const created = await this.host.sessionCall<{ sessionId: string }>('session/create', { cwd: request.projectPath });
+        const created = await this.host.sessionCall<{ sessionId: string }>('session/create',
+          { cwd: request.projectPath, agentPreset: this.host.agentPreset });
         if (!created.sessionId) throw new Error('WORK_CREATE_FAILED');
         active.sessionId = created.sessionId;
       }
@@ -241,8 +243,10 @@ export class DshWorkProvider implements ProviderPort {
       let snapshotReady!: () => void;
       const snapshot = new Promise<void>(resolve => { snapshotReady = resolve; });
       void followDshSession(this.host, active.sessionId, request.projectPath, binding?.baseline, feed.signal, {
+        baseline: events => telemetry.seed(events),
         ready: (opening, reattached) => {
           active.connected = true; active.baseline ??= opening.cursor;
+          if (ownedTurn() && opening.assistantStream?.activeAttempt) telemetry.restore(opening.assistantStream.activeAttempt);
           if (binding) active.acceptingInput = true;
           snapshotReady();
           settleKnown();
@@ -252,10 +256,7 @@ export class DshWorkProvider implements ProviderPort {
             settle(sessionResult('unknown', 'WORK_NATIVE_REQUEST_NOT_CONFIRMED', true));
         },
         event: handle,
-        assistant: frame => {
-          const chunk = record(frame.chunk);
-          if (ownedTurn() && frame.type === 'chunk' && chunk?.type === 'text-delta' && typeof chunk.text === 'string') queueActivity(chunk.text);
-        },
+        assistant: frame => { if (ownedTurn()) telemetry.assistant(frame); },
         disconnected: () => { active.connected = false; }
       }).catch(error => settle(sessionResult(active.requestIds.size ? 'unknown' : 'failed', errorMessage(error), !!active.requestIds.size)));
       await Promise.race([snapshot, end]);
@@ -285,7 +286,7 @@ export class DshWorkProvider implements ProviderPort {
       feed.abort();
       if (active.cancelTimer) clearTimeout(active.cancelTimer);
       this.active.delete(request.attemptId);
-      flushActivity();
+      telemetry.close();
     }
   }
 

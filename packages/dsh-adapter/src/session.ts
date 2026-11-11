@@ -4,11 +4,12 @@ import type { ChatAccepted, ChatEvent, ChatSettlement, ChatTurnInput, DialoguePo
 import { DESKTOP_CHAT_PRESET } from '../../voice-core/src/prompts.ts';
 import { buildChatContent } from '../../voice-core/src/chat-context.ts';
 import { readBundledPersona } from '../../voice-core/src/persona-files.ts';
+import type { DshEvent } from './session-feed.ts';
 type ActiveTurn = { sessionId: string; completed: Promise<ChatSettlement>; cancelRequested: boolean; promptAccepted: boolean;
   promptSubmitted: boolean; cancelRpc?: Promise<void>; requestCancel?: () => void; reconnect?: () => Promise<void> };
 
 type MuxFrame = { type?: string; value?: FollowValue; error?: { code?: string } };
-type FollowValue = { type?: string; cursor?: number; event?: { seq?: number; type?: string; data?: unknown }; frame?: StreamFrame;
+type FollowValue = { type?: string; cursor?: number; event?: DshEvent; frame?: StreamFrame;
   assistantStream?: { activeAttempt?: { attemptId?: string; nextIndex?: number } } };
 type StreamFrame = { type?: string; attemptId?: string; revision?: number; index?: number; chunk?: { type?: string; text?: string; usage?: unknown; reason?: { kind?: string; failure?: { code?: string } } }; outcome?: { kind?: string; eventType?: string } };
 
@@ -22,7 +23,8 @@ export class LocalDshChat implements DialoguePort {
     this.host = host; this.root = root; this.options = options;
   }
 
-  async runTurn(input: ChatTurnInput, onEvent: (event: ChatEvent) => void): Promise<ChatAccepted> {
+  async runTurn(input: ChatTurnInput, onEvent: (event: ChatEvent) => void,
+      observe?: (sessionId: string, event: DshEvent) => void): Promise<ChatAccepted> {
     if (this.active) throw new Error('CHAT_TURN_BUSY');
     const preset = this.options.preset ?? DESKTOP_CHAT_PRESET;
     let finish!: (value: ChatSettlement) => void;
@@ -101,6 +103,7 @@ export class LocalDshChat implements DialoguePort {
         const seq = item.event?.seq ?? -1;
         if (seq <= baseline || seq <= lastDurable) return;
         lastDurable = seq;
+        if (item.event) observe?.(active.sessionId, item.event);
         // Durable assistant/message is audit history only. Never emit its text for playback.
         if (item.event?.type === 'turn/end') settle(failedCode ? 'failed' : active.cancelRequested ? 'cancelled' : 'completed', failedCode);
         return;

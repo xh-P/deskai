@@ -10,12 +10,14 @@ import type { WorkRuntime } from '../../../packages/dsh-adapter/src/work-runtime
 import type { HostCommand, HostSelection, HostSnapshot } from './protocol.ts';
 import { verifyWorkDelivery } from './work-delivery.ts';
 import { ConversationControl } from './conversation-control.ts';
+import { WorkTraceFeed } from './work-trace.ts';
 
 /** Shared Work and application state, independent of the client lifecycle. */
 export class LocalHost {
   readonly work: WorkHost;
   readonly artifacts: ArtifactRegistry;
   readonly apps: AppHost;
+  readonly trace: WorkTraceFeed;
   private readonly control: ConversationControl;
   private readonly exports: ArtifactExports;
   private readonly runtime?: WorkRuntime;
@@ -30,8 +32,10 @@ export class LocalHost {
       authorize: (taskId, workDir, relativePath, attemptId) => this.work.authorizeArtifact(taskId, workDir, relativePath, attemptId) });
     this.work = new WorkHost(path.join(directory, 'work-ledger.json'), provider, {
       workspaces: new Workspaces(directory), registerArtifact: (input, sha256) => this.artifacts.registerArtifact(input, sha256),
-      verifyDelivery: (task, attempt, claims) => verifyWorkDelivery(this.artifacts, task, attempt, claims)
+      verifyDelivery: (task, attempt, claims) => verifyWorkDelivery(this.artifacts, task, attempt, claims),
+      trace: (taskId, attemptId, event) => this.trace.observe(taskId, attemptId, event)
     });
+    this.trace = new WorkTraceFeed(taskId => this.work.history(taskId));
     this.exports = new ArtifactExports(path.join(directory, 'exports'), this.artifacts);
     this.apps = new AppHost(this.artifacts);
     this.control = new ConversationControl(this.work, this.apps, () => ({ snapshot: this.snapshot(), focus: { ...this.focus } }), receipt => this.showWorkReceipt(receipt));
@@ -41,7 +45,7 @@ export class LocalHost {
     await host.artifacts.load(); await host.exports.load();
     if (!host.work.snapshot().projects.length) host.work.createProject({ name: path.basename(workspace), path: workspace });
     host.selectedProjectId = host.work.snapshot().projects[0].id;
-    host.work.subscribe(() => host.changed());
+    host.work.subscribe(() => { host.trace.changed(); host.changed(); });
     host.apps.subscribe(sessions => {
       if (!sessions.some(app => app.id === host.selectedAppId && app.status === 'connected'))
         host.selectedAppId = sessions.filter(app => app.status === 'connected').at(-1)?.id ?? '';
@@ -86,7 +90,7 @@ export class LocalHost {
         return;
       }
       case 'plan-context': return this.control.begin(input.turn);
-      case 'plan': return this.control.execute(input.turn, input.plan);
+      case 'plan': return this.control.execute(input.turn, input.plan, input.requests);
       case 'reference-select': return this.control.choose(input.conversationId, input.selection);
       case 'reference-dismiss': return this.control.dismiss(input.conversationId, input.clarificationId);
       case 'work-receipt': {
@@ -94,6 +98,7 @@ export class LocalHost {
         if (!receipt) throw new Error('WORK_OPERATION_NOT_FOUND');
         return receipt;
       }
+      case 'work-trace-page': return this.trace.page(input.taskId, input.before);
       case 'diff': return this.work.diff(input.attemptId);
       case 'artifact-preview': {
         const { artifact, bytes } = await this.artifacts.readVerified(input.artifactId);

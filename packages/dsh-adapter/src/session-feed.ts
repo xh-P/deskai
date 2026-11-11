@@ -1,14 +1,17 @@
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-export type DshEvent = { seq: number; type: string; data?: Record<string, unknown> };
+export type DshEvent = { seq: number; time?: number; type: string; data?: Record<string, unknown> };
 type Entry = { type: 'event'; event: DshEvent };
 type History = { records: Entry[]; hasMore: boolean };
-export type DshSnapshot = History & { type: 'snapshot'; cursor: number; header: { cwd?: string; id: string }; projections?: { values?: Record<string, unknown> } };
+export type DshActiveStream = { attemptId: string; turn: number; step: number; nextIndex: number; stream: unknown[] };
+export type DshSnapshot = History & { type: 'snapshot'; cursor: number; header: { cwd?: string; id: string };
+  projections?: { values?: Record<string, unknown> }; assistantStream?: { activeAttempt?: DshActiveStream } };
 type Item = Entry | DshSnapshot | { type: 'assistant-stream'; frame: Record<string, unknown> };
 export type DshFollowFrame = { type?: string; value?: unknown; error?: { code?: string } };
 
 export interface DshWorkTransport {
+  readonly agentPreset?: string;
   ensureHost(): Promise<{ state: string; code?: string }>;
   call<T>(endpoint: string, args: object): Promise<T>;
   sessionCall<T>(endpoint: string, request: object): Promise<T>;
@@ -24,6 +27,7 @@ export async function within<T>(promise: Promise<T>, ms: number, error: string):
 }
 
 type Handlers = {
+  baseline?: (events: DshEvent[]) => void;
   ready: (snapshot: DshSnapshot, reattached: boolean) => void;
   event: (event: DshEvent) => void;
   assistant: (frame: Record<string, unknown>) => void;
@@ -67,6 +71,7 @@ export async function followDshSession(host: DshWorkTransport, sessionId: string
       if (opening.type !== 'snapshot' || !Number.isSafeInteger(opening.cursor)) throw new Error('WORK_INVALID_SNAPSHOT');
       if (opening.header?.id !== sessionId || !opening.header.cwd || path.relative(cwd, opening.header.cwd)) throw new Error('WORK_SESSION_PROJECT_MISMATCH');
       const reattached = cursor !== undefined;
+      handlers.baseline?.((opening.records ?? []).filter(record => record.event.seq <= (cursor ?? opening.cursor)).map(record => record.event));
       if (!reattached) cursor = opening.cursor;
       else if (opening.cursor < cursor!) throw new Error('WORK_SESSION_CURSOR_REGRESSED');
       else if (opening.cursor > cursor!) {

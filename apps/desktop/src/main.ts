@@ -70,6 +70,7 @@ const ownedSmokeHost = smokeMode;
 let desktopHost: HostClient | undefined;
 let hostPreparing: Promise<HostClient> | undefined;
 let stopHostWatch: (() => void) | undefined;
+let workTraceWatch: { id: number; stop?: () => void } | undefined;
 let planner: WorkPlanner | undefined;
 const artifactWindows = new ArtifactWindows();
 const pendingNotices: string[] = [];
@@ -339,17 +340,18 @@ async function getDesktopHost(): Promise<HostClient> {
 function publishHostSnapshot(snapshot: HostSnapshot, seen: Set<string>) {
   if (window && !window.isDestroyed()) {
     window.webContents.send('deskai:host-snapshot', snapshot);
-    window.webContents.send('deskai:work-status', snapshot.runtime);
   }
   for (const event of snapshot.work.events) {
     if (seen.has(event.id)) continue;
     seen.add(event.id);
     if (!['settled', 'permission', 'question'].includes(event.type)) continue;
-    const data = event.data as { outcome?: string; assessment?: CompletionAssessment };
+    const data = event.data as { outcome?: string; assessment?: CompletionAssessment; answerable?: boolean };
+    if (event.type === 'question' && data.answerable === true) continue;
     const label = snapshot.work.tasks.find(task => task.id === event.taskId)?.title ?? '后台任务';
     const state = data.outcome === 'completed' ? `执行已结束，${completionLabel(data.assessment)}` :
       ({ failed: '执行失败', cancelled: '已取消', interrupted: '已中断', unknown: '结果尚不确定' } as Record<string,string>)[data.outcome ?? ''] ?? '有更新';
-    const text = event.type === 'settled' ? `${label}，${state}。` : label + '需要你的答复，请查看任务面板。';
+    const text = event.type === 'settled' ? `${label}，${state}。`
+      : `${label}需要你${event.type === 'permission' ? '授权' : '答复'}，请查看工作台。`;
     pendingNotices.push(text);
     send({ type: 'host-notice', text });
   }
@@ -357,6 +359,7 @@ function publishHostSnapshot(snapshot: HostSnapshot, seen: Set<string>) {
 }
 async function closeHostClient() {
   stopHostWatch?.();
+  stopWorkTrace();
   if (ownedSmokeHost) {
     const host = await (hostPreparing ?? Promise.resolve(desktopHost)).catch(() => undefined);
     await host?.command({ type: 'shutdown' }).catch(() => {});
@@ -391,8 +394,29 @@ ipcMain.handle('deskai:reference-dismiss', async (event, clarificationId: string
   await turnCoordinator.dismissReference(clarificationId);
 });
 ipcMain.handle('deskai:work-open', async event => { trusted(event); return workWindow.open(await getDesktopHost()); });
-ipcMain.handle('deskai:work-status', event => { trusted(event); return desktopHost?.cached()?.runtime ?? { state: 'stopped' }; });
 ipcMain.handle('deskai:host-snapshot', async event => { trusted(event); return (await getDesktopHost()).snapshot(); });
+function stopWorkTrace(id?: number) {
+  if (!workTraceWatch || id !== undefined && workTraceWatch.id !== id) return;
+  workTraceWatch.stop?.();
+  workTraceWatch = undefined;
+}
+ipcMain.handle('deskai:work-trace-watch', async (event, taskId: string, id: number) => {
+  trusted(event);
+  if (typeof taskId !== 'string' || !taskId || taskId.length > 128 || !Number.isSafeInteger(id)) throw new Error('WORK_TRACE_INVALID');
+  stopWorkTrace();
+  const watch: NonNullable<typeof workTraceWatch> = { id };
+  workTraceWatch = watch;
+  const host = await getDesktopHost();
+  if (workTraceWatch !== watch || shutdown) return;
+  watch.stop = host.watchWorkTrace(taskId,
+    update => { if (workTraceWatch === watch && !event.sender.isDestroyed()) event.sender.send('deskai:work-trace', id, update); },
+    () => { if (workTraceWatch === watch && !event.sender.isDestroyed()) event.sender.send('deskai:work-trace', id, { type: 'disconnected', taskId }); });
+});
+ipcMain.handle('deskai:work-trace-unwatch', (event, id: number) => { trusted(event); stopWorkTrace(id); });
+ipcMain.handle('deskai:work-trace-page', async (event, taskId: string, before: string) => {
+  trusted(event);
+  return (await getDesktopHost()).command({ type: 'work-trace-page', taskId, before });
+});
 ipcMain.handle('deskai:host-select', async (event, selection: HostSelection) => {
   trusted(event); return (await getDesktopHost()).command({ ...selection, type: 'select' });
 });
@@ -400,8 +424,7 @@ async function executeWorkCommand(command: WorkUiCommand) {
   const host = await getDesktopHost();
   if (command.type !== 'native-open') return host.command({ type: 'work', command });
   const { work } = await host.snapshot();
-  const task = work.tasks.find(item => item.id === command.taskId);
-  const nativeId = work.attempts.find(attempt => attempt.id === task?.attemptIds.at(-1))?.providerSessionId;
+  const nativeId = work.attempts.find(attempt => attempt.taskId === command.taskId && attempt.id === command.attemptId)?.providerSessionId;
   if (!nativeId) throw new Error('WORK_SESSION_UNAVAILABLE');
   const status = await workWindow.open(host, nativeId);
   if (status.state !== 'ready') throw new Error(status.code ?? 'WORK_SESSION_UI_UNAVAILABLE');
@@ -1088,7 +1111,7 @@ app.whenReady().then(async () => {
   await petWindow.start(false);
   screen.on('display-removed', () => petWindow?.ensureVisible());
   screen.on('display-metrics-changed', () => petWindow?.ensureVisible());
-  window = new BrowserWindow({ width: 960, height: 760, minWidth: 700, minHeight: 560, show: !smokeMode,
+  window = new BrowserWindow({ width: 1320, height: 860, minWidth: 700, minHeight: 560, show: !smokeMode,
     autoHideMenuBar: true, webPreferences: { preload: path.join(import.meta.dirname, 'preload.cjs'),
       contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true } });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));

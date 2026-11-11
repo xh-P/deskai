@@ -3,8 +3,10 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { mkdir, realpath, rename, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
+import type { WorkTraceFrame } from '../../../packages/work-core/src/telemetry.ts';
 
 export const HOST_DESCRIPTOR = 'local-api.json';
+type WatchTrace = (taskId: string, after: string | undefined, send: (frame: WorkTraceFrame) => void) => () => void;
 export type HostDescriptor = { url: string; token: string };
 
 /** Local API clients have a separate bearer capability; application tickets cannot use it. */
@@ -15,9 +17,11 @@ export class HostApi {
   private snapshot?: () => unknown;
   private activeCommands = new Set<Promise<unknown>>();
   private ready = false;
+  private readonly workEvents = new WebSocketServer({ noServer: true, maxPayload: 1024 });
   private broadcasting = false;
 
-  async start(directory: string, snapshot: () => unknown, command: (input: unknown) => Promise<unknown>, initialize: () => Promise<void> = async () => {}) {
+  async start(directory: string, snapshot: () => unknown, command: (input: unknown) => Promise<unknown>,
+      initialize: () => Promise<void> = async () => {}, watchTrace?: WatchTrace) {
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const canonical = await realpath(directory);
     const key = process.platform === 'win32' ? canonical.toLowerCase() : canonical;
@@ -50,10 +54,25 @@ export class HostApi {
       } catch (error) { response.writeHead(400); response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) })); }
     });
     this.server.on('upgrade', (request, socket, head) => {
-      if (!authenticated(request) || !this.ready || request.url !== '/events') { socket.destroy(); return; }
-      this.events.handleUpgrade(request, socket, head, peer => {
+      if (!authenticated(request) || !this.ready) { socket.destroy(); return; }
+      if (request.url === '/events') {
+        this.events.handleUpgrade(request, socket, head, peer => {
+          peer.on('error', () => peer.terminate());
+          peer.send(JSON.stringify(snapshot()));
+        });
+        return;
+      }
+      if (!watchTrace || !request.url?.startsWith('/work-events?')) { socket.destroy(); return; }
+      const query = new URLSearchParams(request.url.slice('/work-events?'.length));
+      this.workEvents.handleUpgrade(request, socket, head, peer => {
         peer.on('error', () => peer.terminate());
-        peer.send(JSON.stringify(snapshot()));
+        try {
+          const stop = watchTrace(query.get('task') ?? '', query.get('after') ?? undefined, frame => {
+            if (peer.bufferedAmount > 16 * 1024 * 1024) peer.terminate();
+            else if (peer.readyState === WebSocket.OPEN) peer.send(JSON.stringify(frame));
+          });
+          peer.once('close', stop);
+        } catch { peer.close(1008, 'WORK_TRACE_UNAVAILABLE'); }
       });
     });
     try {
@@ -94,6 +113,7 @@ export class HostApi {
   async close() {
     await this.quiesce();
     for (const peer of this.events.clients) peer.terminate();
+    for (const peer of this.workEvents.clients) peer.terminate();
     if (this.descriptor) await rm(this.descriptor, { force: true });
     this.server?.closeAllConnections();
     if (this.server?.listening) await new Promise<void>(resolve => this.server!.close(() => resolve()));

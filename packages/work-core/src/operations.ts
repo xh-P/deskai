@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { WorkAttempt, WorkEffectCommand, WorkTask } from './types.ts';
+import type { WorkDelegation } from './telemetry.ts';
 
 export interface WorkOperation {
   id: string;
@@ -10,13 +11,14 @@ export interface WorkOperation {
   previousAttemptId?: string;
   conversationId?: string;
   optionId?: string;
+  delegation?: WorkDelegation;
   acceptedAt: string;
   state: 'accepted' | 'pending' | 'acknowledged' | 'unknown';
   nativeRequestId?: string;
   error?: string;
 }
 
-export type WorkAdmission = Pick<WorkOperation, 'id' | 'kind' | 'signature' | 'conversationId' | 'optionId'>;
+export type WorkAdmission = Pick<WorkOperation, 'id' | 'kind' | 'signature' | 'conversationId' | 'optionId' | 'delegation'>;
 export interface WorkOperationReceipt {
   kind: 'work-operation';
   operation: Pick<WorkOperation, 'id' | 'kind' | 'taskId' | 'attemptId' | 'previousAttemptId' | 'state' | 'acceptedAt' | 'error'>;

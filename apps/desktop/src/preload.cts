@@ -1,11 +1,28 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
+let traceSequence = 0;
+
 contextBridge.exposeInMainWorld('deskai', Object.freeze({
   getRuntime: () => ipcRenderer.invoke('deskai:runtime'),
   getHostSnapshot: () => ipcRenderer.invoke('deskai:host-snapshot'),
   selectHost: (selection: unknown) => ipcRenderer.invoke('deskai:host-select', selection),
   workCommand: (command: unknown) => ipcRenderer.invoke('deskai:work-command', command),
   workDiff: (attemptId: string) => ipcRenderer.invoke('deskai:work-diff', attemptId),
+  workTracePage: (taskId: string, before: string) => ipcRenderer.invoke('deskai:work-trace-page', taskId, before),
+  watchWorkTrace: (taskId: string, callback: (update: unknown) => void) => {
+    const id = ++traceSequence;
+    let active = true;
+    const listener = (_: unknown, subscription: number, update: unknown) => { if (subscription === id) callback(update); };
+    ipcRenderer.on('deskai:work-trace', listener);
+    void ipcRenderer.invoke('deskai:work-trace-watch', taskId, id).catch(() => {
+      if (active) callback({ type: 'disconnected', taskId });
+    });
+    return () => {
+      active = false;
+      ipcRenderer.removeListener('deskai:work-trace', listener);
+      void ipcRenderer.invoke('deskai:work-trace-unwatch', id).catch(() => {});
+    };
+  },
   openArtifact: (id: string, interact: boolean) => ipcRenderer.invoke('deskai:artifact-open', id, interact),
   exportArtifact: (id: string) => ipcRenderer.invoke('deskai:artifact-export', id),
   appAction: (input: unknown) => ipcRenderer.invoke('deskai:app-action', input),
@@ -17,12 +34,6 @@ contextBridge.exposeInMainWorld('deskai', Object.freeze({
     return () => ipcRenderer.removeListener('deskai:host-snapshot', listener);
   },
   openWork: () => ipcRenderer.invoke('deskai:work-open'),
-  getWorkStatus: () => ipcRenderer.invoke('deskai:work-status'),
-  onWorkStatus: (callback: (status: unknown) => void) => {
-    const listener = (_: unknown, status: unknown) => callback(status);
-    ipcRenderer.on('deskai:work-status', listener);
-    return () => ipcRenderer.removeListener('deskai:work-status', listener);
-  },
   startSession: () => ipcRenderer.invoke('deskai:start'),
   openConversation: (id?: string) => ipcRenderer.invoke('deskai:open-conversation', id),
   listConversations: () => ipcRenderer.invoke('deskai:conversations'),

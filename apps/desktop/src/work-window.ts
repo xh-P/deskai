@@ -47,16 +47,16 @@ export class WorkWindow {
     const selected = await window.webContents.executeJavaScript(`(async () => {
       const target = ${JSON.stringify(`session:${sessionId}`)};
       const until = Date.now() + 20000;
-      let expanded = 0;
       while (Date.now() < until) {
         const row = [...document.querySelectorAll('[data-row-key]')].find(el => el.getAttribute('data-row-key') === target);
         if (row) {
-          row.click();
-          await new Promise(resolve => setTimeout(resolve, 250));
           if (row.getAttribute('aria-selected') === 'true') return true;
+          row.click();
+        } else {
+          const group = document.querySelector('[data-row-key^="workspace:"][aria-expanded="false"]');
+          const more = document.querySelector('[data-row-key^="overflow:"][aria-expanded="false"]');
+          (group ?? more)?.click();
         }
-        const overflow = [...document.querySelectorAll('[data-row-key^="overflow:"]')].find(el => el.textContent && /展开|更多|show|more|expand/i.test(el.textContent));
-        if (overflow && expanded < 50) { overflow.click(); expanded++; }
         await new Promise(resolve => setTimeout(resolve, 200));
       }
       return false;

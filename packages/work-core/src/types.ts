@@ -1,5 +1,6 @@
 import type { AcceptanceReceipt, CompletionAssessment, DeliveryEvidence } from './completion.ts';
 import type { WorkOperation } from './operations.ts';
+import type { NativeTrace } from './telemetry.ts';
 
 export type WorkStatus = 'queued' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'unknown';
 export interface WorkProject { id: string; name: string; path: string; createdAt: string }
@@ -19,6 +20,7 @@ export interface WorkAttempt {
 }
 export interface WorkEvent { id: string; taskId: string; attemptId: string; time: string; type: string; data: unknown; providerSeq?: number }
 export interface WorkSnapshot { version: 1; projects: WorkProject[]; drafts: WorkDraft[]; tasks: WorkTask[]; attempts: WorkAttempt[]; events: WorkEvent[]; operations: WorkOperation[] }
+export type WorkHistory = { task: WorkTask; attempts: WorkAttempt[]; events: WorkEvent[]; operations: WorkOperation[] };
 
 export type WorkEffectCommand =
   | { type: 'submit'; projectId: string; prompt: string; title?: string; authoring?: boolean; expectedArtifacts?: string[] }
@@ -30,14 +32,16 @@ export type WorkUiCommand = WorkEffectCommand
   | { type: 'project-create'; name: string; path: string }
   | { type: 'draft-save'; projectId: string; text: string }
   | { type: 'accept' | 'recheck'; taskId: string; attemptId: string }
-  | { type: 'native-open'; taskId: string };
+  | { type: 'native-open'; taskId: string; attemptId: string };
 
 export type ProviderEvent = (
   | { type: 'session'; providerSessionId: string }
   | { type: 'binding'; binding: ProviderBinding }
   | { type: 'request-admitted'; requestId: string }
   | { type: 'activity'; text: string; data?: unknown }
-  | { type: 'permission' | 'question'; requestId: string; text: string; data?: unknown }
+  | { type: 'trace'; entry: NativeTrace }
+  | { type: 'permission'; requestId: string; text: string; data?: unknown }
+  | { type: 'question'; requestId: string; text: string; data?: unknown; answerable?: boolean }
   | { type: 'request-resolved'; requestId: string }
   | { type: 'artifact'; path: string; data?: unknown }
   | { type: 'artifact-manifest-invalid'; reason: string }

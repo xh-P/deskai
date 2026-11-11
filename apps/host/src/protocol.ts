@@ -5,6 +5,7 @@ import type { WorkRuntimeStatus } from '../../../packages/dsh-adapter/src/work-r
 import type { CoordinationPlan, ReferenceSelection } from '../../../packages/voice-core/src/coordination.ts';
 import type { WorkSnapshot, WorkUiCommand } from '../../../packages/work-core/src/types.ts';
 import type { ControlTurn } from './conversation-control.ts';
+import type { PlannerRequest } from '../../../packages/work-core/src/telemetry.ts';
 
 export interface HostSnapshot {
   work: WorkSnapshot;
@@ -23,7 +24,8 @@ export type HostCommand =
   | { type: 'work-receipt'; operationId: string }
   | ({ type: 'select' } & HostSelection)
   | { type: 'plan-context'; turn: ControlTurn }
-  | { type: 'plan'; turn: ControlTurn; plan: CoordinationPlan }
+  | { type: 'plan'; turn: ControlTurn; plan: CoordinationPlan; requests?: PlannerRequest[] }
+  | { type: 'work-trace-page'; taskId: string; before: string }
   | { type: 'reference-select'; conversationId: string; selection: ReferenceSelection }
   | { type: 'reference-dismiss'; conversationId: string; clarificationId: string }
   | { type: 'diff'; attemptId: string }

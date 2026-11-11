@@ -63,8 +63,8 @@ export function referenceCatalog(snapshot: HostSnapshot, focus: HostSelection, c
   for (const event of pendingRequests(work)) {
     if (event.type !== 'question') continue;
     const task = tasks.get(event.taskId);
-    const value = event.data as { requestId?: string; text?: string; data?: unknown };
-    if (!task || !value.requestId) continue;
+    const value = event.data as { requestId?: string; text?: string; data?: unknown; answerable?: boolean };
+    if (!task || !value.requestId || value.answerable === false) continue;
     rows.push({ kind: 'question', token: `question:${event.id}`, id: event.id, label: value.text ?? task.title, aliases: [task.title],
       parentLabel: task.title, projectId: task.projectId, taskId: task.id, attemptId: event.attemptId, requestId: value.requestId, question: value.data });
   }

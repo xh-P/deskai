@@ -1,4 +1,5 @@
 {
   "profile": "web",
-  "workspace": "."
+  "workspace": ".",
+  "questionWaitSeconds": 5
 }

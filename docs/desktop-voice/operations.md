@@ -33,6 +33,12 @@ npm run host:ctl -- shutdown
 
 当前账本要求每个 Attempt 有操作 ID，并持久化 `operations`。使用旧源码进程时先让当前任务结束，再关闭旧 Host。当前版本使用新建的现行格式账本。设置文件缺少现行字段时使用默认值。
 
+## 实时 Work 工作台
+
+工作台从主窗口的「工作」进入。选中项目与任务后可查看实时轨迹，在「执行记录」切换 Attempt。向上滚动暂停跟随，使用「加载更早」读取旧记录。窄窗通过「详情」查看模型指标、输入请求和交付。
+
+Work 会话使用 `deskai-work` dsh 预设。默认等待问题进入可在桌面答复的阶段为 5 秒，可在 [Work 配置](../../config/work-runtime.json)修改 `questionWaitSeconds`。原生前台提问、授权或完整会话从「原生会话」打开。升级仍在运行的源码 Host 时，等任务结算后执行 `npm run host:ctl -- shutdown`，再启动桌面应用以载入新订阅接口和预设。
+
 ## 验证入口
 
 ```powershell

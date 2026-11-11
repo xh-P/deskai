@@ -5,6 +5,7 @@ import type { HostClient } from '../../host/src/client.ts';
 import { dialogueContext } from '../../host/src/context.ts';
 import type { ControlContext, ControlReceipt } from '../../host/src/conversation-control.ts';
 import type { WorkPlanner } from './work-planner.ts';
+import type { PlannerRequest } from '../../../packages/work-core/src/telemetry.ts';
 
 type Session = {
   sessionId: string;
@@ -72,12 +73,13 @@ export class DesktopTurnCoordinator {
       };
       const context = await host.command<ControlContext>({ type: 'plan-context', turn });
       if (!eligible()) return { accepted: false };
-      const decision = await planner.plan(input.text, context.planning);
+      const requests: PlannerRequest[] = [];
+      const decision = await planner.plan(input.text, context.planning, request => requests.push(request));
       if (!eligible()) return { accepted: false };
       if (this.options.requireChat && decision.intent !== 'chat') throw new Error('VOICE_SMOKE_EXPECTED_CHAT');
       if (decision.intent !== 'chat') dialogue.discardSpeculative(input.speculation);
       const facts = decision.intent === 'chat' ? { kind: 'chat' as const }
-        : await host.command<ControlReceipt>({ type: 'plan', turn, plan: decision });
+        : await host.command<ControlReceipt>({ type: 'plan', turn, plan: decision, requests });
       committed = decision.intent !== 'chat';
       if (committed) input.onAccepted?.();
       if (!current()) return { accepted: committed };

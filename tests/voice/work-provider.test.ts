@@ -63,7 +63,7 @@ test('cancel repeats after an in-flight append becomes the next live turn', asyn
   let appendSubmitted = false;
   let cancelCalls = 0;
   let seq = 0;
-  const event = (type: string, data: unknown) => frame({ type: 'item', value: { type: 'event', event: { seq: ++seq, type, data } } });
+  const event = (type: string, data: unknown) => frame({ type: 'item', value: { type: 'event', event: { seq: ++seq, time: Date.now(), type, data } } });
   const host = {
     ensureHost: async () => ({ state: 'ready' }),
     sessionFollow: async (_args: unknown, onFrame: (value: unknown) => void) => {
@@ -140,19 +140,35 @@ test('native decisions resolve pending requests and text deltas are batched', as
   event('approval/asked', { id: 'approval', reason: 'May I?' });
   event('approval/decided', { id: 'approval', outcome: 'allowed-once' });
   event('tool/result', { message: { toolCallId: 'question', content: [{ type: 'text', text: '{"pending":true}' }] } });
+  event('turn/end', { turn: 1, reason: { kind: 'completed' } });
   await tick();
   assert.deepEqual(events.filter(e => e.type === 'request-resolved').map(e => e.requestId), ['approval']);
+  assert.deepEqual(events.filter(e => e.type === 'question').map(e => e.answerable), [false, true]);
+  event('turn/start', { turn: 2 });
+  event('step/start', { turn: 2, step: 1 });
   event('user/message', { source: { kind: 'user-question-reply', callId: 'question' } });
-  event('tool/result', { message: { toolCallId: 'unrelated', content: [] } });
+  event('request/header', { header: { config: { provider: 'dsh', model: 'fixture', reasoningEffort: 'high' } } });
   await tick();
   assert.deepEqual(events.filter(e => e.type === 'request-resolved').map(e => e.requestId), ['approval', 'question']);
-  for (const text of ['a', 'b', 'c']) frame({ type: 'item', value: { type: 'assistant-stream', frame: { type: 'chunk', chunk: { type: 'text-delta', text } } } });
+  const stream = (data: object) => frame({ type: 'item', value: { type: 'assistant-stream',
+    frame: { attemptId: 'stream-1', time: Date.now(), ...data } } });
+  stream({ type: 'start', turn: 2, step: 1 });
+  ['a', 'b', 'c'].forEach((text, index) => stream({ type: 'chunk', index, chunk: { type: 'text-delta', text } }));
   await new Promise(resolve => setTimeout(resolve, 300));
-  assert.deepEqual(events.filter(e => e.type === 'activity').map(e => e.text), ['dsh: ask_user_question', 'abc']);
-  frame({ type: 'item', value: { type: 'assistant-stream', frame: { type: 'chunk', chunk: { type: 'text-delta', text: 'd' } } } });
-  event('turn/end', { turn: 1, reason: { kind: 'completed' } });
+  const models = () => events.filter(e => e.type === 'trace').filter(e => e.entry.kind === 'model');
+  assert.deepEqual(models().map(e => e.entry.text), ['', 'abc']);
+  stream({ type: 'chunk', index: 3, chunk: { type: 'text-delta', text: 'd' } });
+  event('assistant/attempt', { turn: 2, step: 1,
+    stream: [{ type: 'text-chunks', time0: Date.now(), index: 0, dt: [], texts: ['abcd'] }] });
+  event('llm/retry-started', { turn: 2, step: 1, retry: 1 });
+  event('assistant/message', { turn: 2, step: 1, message: { content: [{ type: 'text', text: 'answer' }] },
+    usage: { inputTokens: 30, outputTokens: 4, cacheReadTokens: 70 } });
+  event('turn/end', { turn: 2, reason: { kind: 'completed' } });
   assert.equal((await run).outcome, 'completed');
-  assert.deepEqual(events.filter(e => e.type === 'activity').map(e => e.text), ['dsh: ask_user_question', 'abc', 'd']);
+  assert.deepEqual(models().map(e => e.entry.text), ['', 'abc', 'abcd', 'answer']);
+  assert.deepEqual(models().filter(e => e.providerSeq !== undefined).map(e => e.entry.state), ['interrupted', 'completed']);
+  assert.equal(new Set(models().map(e => e.entry.key)).size, 2);
+  assert.equal(models().at(-1)?.entry.metrics?.usage?.cacheReadTokens, 70);
 });
 
 test('dsh replays a socket gap and reattaches the same request after Host restart', async () => {

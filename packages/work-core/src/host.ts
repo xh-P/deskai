@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { ProviderEvent, ProviderPort, ProviderRequest, ProviderResult, WorkAttempt, WorkEffectCommand, WorkEvent, WorkProject, WorkSnapshot, WorkTask } from './types.ts';
+import type { ProviderEvent, ProviderPort, ProviderRequest, ProviderResult, WorkAttempt, WorkEffectCommand, WorkEvent, WorkHistory, WorkProject, WorkSnapshot, WorkTask } from './types.ts';
 import { pendingRequests } from './requests.ts';
 import { relativeInside, workspacesOverlap, type Workspaces } from './workspace.ts';
 import { assessCompletion, expectedFiles, type AcceptanceReceipt, type CompletionAssessment, type DeliveryEvidence, type DeliveryFailure } from './completion.ts';
@@ -20,6 +20,7 @@ type WorkHostOptions = {
   workspaces?: Workspaces;
   registerArtifact?: (input: ArtifactInput, expectedSha256: string) => Promise<unknown>;
   verifyDelivery?: (task: WorkTask, attempt: WorkAttempt, claims: string[]) => Promise<DeliveryEvidence>;
+  trace?: (taskId: string, attemptId: string, event: Extract<ProviderEvent, { type: 'trace' }>) => void;
 };
 
 /** Host-owned ledger. Only this class mutates work state; the provider owns execution. */
@@ -66,14 +67,21 @@ export class WorkHost {
     this.closing = true;
     await Promise.allSettled(this.localOperations);
   }
-  snapshot(): WorkSnapshot { return structuredClone(this.state); }
+  snapshot(): WorkSnapshot {
+    return structuredClone({ ...this.state, events: this.state.events.filter(event => event.type !== 'trace') });
+  }
+  history(taskId: string): WorkHistory {
+    const task = this.task(taskId);
+    return { task, attempts: this.state.attempts.filter(attempt => attempt.taskId === taskId),
+      events: this.state.events.filter(event => event.taskId === taskId), operations: this.operations.filter(op => op.taskId === taskId) };
+  }
   subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  private save(): void {
+  private save(notify = true): void {
     mkdirSync(path.dirname(this.file), { recursive: true });
     const temp = `${this.file}.${id()}.tmp`;
     writeFileSync(temp, JSON.stringify(this.state), { encoding: 'utf8', flush: true });
     renameSync(temp, this.file);
-    for (const listener of this.listeners) { try { listener(); } catch { /* Client notification cannot affect the ledger. */ } }
+    if (notify) for (const listener of this.listeners) { try { listener(); } catch { /* Client notification cannot affect the ledger. */ } }
   }
   private event(attempt: WorkAttempt, type: string, data: unknown, providerSeq?: number): WorkEvent {
     const event = { id: id(), taskId: attempt.taskId, attemptId: attempt.id, time: now(), type, data, providerSeq };
@@ -106,7 +114,7 @@ export class WorkHost {
 
   /** Persist the exact Work/Attempt binding before execution or a provider RPC. */
   async dispatch(command: WorkEffectCommand, input: { id?: string; expectedAttemptId?: string;
-      origin?: Pick<WorkAdmission, 'conversationId' | 'optionId' | 'signature'> } = {}): Promise<WorkOperationReceipt> {
+      origin?: Pick<WorkAdmission, 'conversationId' | 'optionId' | 'signature' | 'delegation'> } = {}): Promise<WorkOperationReceipt> {
     const operationId = input.id ?? id();
     assertOperationId(operationId);
     const signature = input.origin?.signature ?? operationSignature({ command, expectedAttemptId: input.expectedAttemptId });
@@ -115,7 +123,8 @@ export class WorkHost {
     if (this.closing) throw new Error('WORK_HOST_STOPPING');
     if (command.type !== 'submit' && input.expectedAttemptId !== undefined && this.last(this.task(command.taskId)).id !== input.expectedAttemptId)
       throw new Error('WORK_TARGET_ATTEMPT_CHANGED');
-    const admission: WorkAdmission = { id: operationId, kind: command.type, signature, conversationId: input.origin?.conversationId, optionId: input.origin?.optionId };
+    const admission: WorkAdmission = { id: operationId, kind: command.type, signature, conversationId: input.origin?.conversationId,
+      optionId: input.origin?.optionId, delegation: input.origin?.delegation };
     switch (command.type) {
       case 'submit': this.submit(command, admission); break;
       case 'continue': this.continue(command.taskId, command.prompt, admission); break;
@@ -315,6 +324,14 @@ export class WorkHost {
     }
     if (event.type === 'binding') { attempt.binding = structuredClone(event.binding); this.save(); return; }
     if (event.providerSeq !== undefined && this.state.events.some(item => item.attemptId === attempt.id && item.providerSeq === event.providerSeq && item.type === event.type)) return;
+    if (event.type === 'trace') {
+      if (event.providerSeq !== undefined) {
+        this.event(attempt, event.type, event.entry, event.providerSeq);
+        this.save(false);
+      }
+      this.options.trace?.(task.id, attempt.id, event);
+      return;
+    }
     if (event.type === 'session' && attempt.providerSessionId === event.providerSessionId) return;
     if (event.type === 'artifact' && this.state.events.some(item => item.attemptId === attempt.id && item.type === 'artifact' && (item.data as { path: string }).path === event.path)) return;
     if (event.type === 'session') attempt.providerSessionId = event.providerSessionId;
@@ -389,6 +406,7 @@ export class WorkHost {
     const key = `${attempt.id}:${requestId}`;
     const pending = pendingRequests(this.state).find(e => e.type === 'question' && e.attemptId === attempt.id && (e.data as { requestId?: string })?.requestId === requestId);
     if (!pending || this.replying.has(key)) throw new Error('WORK_REQUEST_NOT_PENDING');
+    if ((pending.data as { answerable?: boolean }).answerable === false) throw new Error('WORK_QUESTION_USE_NATIVE_SESSION');
     this.replying.add(key);
     try {
       await this.control(attempt, admission, async () => {

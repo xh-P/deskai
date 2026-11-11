@@ -1,6 +1,6 @@
 # Live2D 角色与实时 Work 工作台
 
-2026-11-12 设计。I 与 J 待实施。角色以主播式 Live2D 为目标，工作台从用户查看和接手任务的流程重新设计。壁纸搁置。
+2026-11-12 设计。J 工作台已实施，I 的 Live2D 接入和联合实机验收待完成。壁纸搁置。[J 验证记录](./verification.md#j-实时-work-工作台)
 
 ## I. Live2D 角色
 
@@ -35,9 +35,9 @@
 
 ### 事件和指标
 
-现有 Host 推送 Work 快照，Provider 适配器已能按原生请求和轮次恢复执行。当前面板能看任务与部分活动。它尚未拿到调度器和执行器的完整交换、逐请求用量与原生工具时间线。[Host API](../../apps/host/src/api.ts) · [原生会话恢复](../../packages/dsh-adapter/src/session-feed.ts) · [现有执行事件投影](../../packages/dsh-adapter/src/work-provider.ts)
+Host 提供独立的逐任务轨迹订阅。Provider 适配器按原生请求和轮次恢复执行，工作台从受理回执和 dsh 原生事件投影双方交流、逐请求用量和工具时间线。[Host API](../../apps/host/src/api.ts) · [原生会话恢复](../../packages/dsh-adapter/src/session-feed.ts) · [Work 轨迹](../../apps/host/src/work-trace.ts)
 
-- **双方交流**从 DeskAI 调度器到 dsh 执行器开始。展示用户委派、调度意图与所选目标、Host 受理回执、发往执行器的任务、执行器回复与提问、用户或调度器的补充，以及结果回传。每条事件标出发送方、接收方和时间。真实子代理消息用原生会话与成员 ID 补入同一任务时间线。
+- **双方交流**展示用户委派、调度意图与所选目标、Host 受理回执、发往执行器的任务、执行器回复与提问、用户或调度器的补充，以及结果回传。调度记录在 Host 受理后归入任务。时间线标出参与方和时间。若后续接入 Agent Teams，需以实际原生成员与会话 ID 归属成员交流。
 - **执行状态**根据 Host 的 Work 与 Attempt 状态，以及 dsh 的轮次、步骤、工具、权限与提问事件推进。工具调用可展开对应结果和耗时。提供方终态、产物核验与用户验收各显示实际结果。只有执行器提供总量时才显示百分比。
 - **思考深度**按调度与执行的每次模型请求显示模型和记录中的 `thinking`、`reasoningEffort`。面板区分请求档位与提供方明确回报的值。有记录时显示推理 token、首 token 时间、生成与工具耗时。过程详情使用公开计划、可见回复和提供方明确输出的摘要。
 - **缓存命中**从模型调用的用量读取。锁定版 dsh 将用量写入 `assistant/message.usage`，`TokenUsage` 中未缓存输入、`cacheReadTokens` 与 `cacheWriteTokens` 是互斥计数。分母按有完整口径的输入 token 合计计算，命中率为缓存读取量除以该合计。使用 DeepSeek Chat Completions 原始用量时，以 `prompt_cache_hit_tokens / prompt_tokens` 计算。工作台显示单次、累计和已上报请求数，区分明确的零与未上报。原生流暂未送出用量时显示等待，最终记录更新同一调用的指标。[DeepSeek 用量字段](https://api-docs.deepseek.com/api/create-chat-completion/)
@@ -63,4 +63,4 @@ Host 用 `conversationId`、`operationId`、Task、Attempt、原生会话与请�
 3. **J3 重做桌面面板。** 用真实数据构建任务导航、实时轨迹和详情。支持取消、补充、回答、查看原生会话、Diff 与验收。用并行任务检查选择和滚动保持稳定，再以新工作台替换旧面板。
 4. **J4 联合验收。** 两条真实任务并行，其中一条暂停等待输入后继续，另一条完成并核验产物。重开面板、断线重连后，时间线可追溯且统计一致。核对缺失用量提示、授权入口和长时间线滚动。最后在 Live2D、播报和活跃任务同时运行时做基础冒烟和实机检查。
 
-现阶段已核对 DeskAI2 源码、安装的 dsh 组合及公开上游资料。目标模型与许可、当前模型路由的实际用量覆盖率、插件运行结果和同机性能留待 I1、I3、J1、J4 验证。
+J1 至 J3 的实现、J4 的真实任务及桌面验证见[验证记录](./verification.md#j-实时-work-工作台)。目标模型、许可和 Live2D 同机表现由 I1 与 I3 验收。

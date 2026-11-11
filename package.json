@@ -21,6 +21,7 @@
   "dependencies": {
     "@ai-ecoverse/wasm-webrtc-audio-processing": "^2.1.0-2",
     "@deepseek-ai/dsh": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
     "@ricky0123/vad-web": "0.0.31",
     "onnxruntime-web": "1.22.0",
     "react": "19.3.1",

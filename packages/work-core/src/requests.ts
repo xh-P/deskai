@@ -8,8 +8,13 @@ export function pendingRequests(state: WorkSnapshot): WorkEvent[] {
 }
 
 export function unresolvedRequests(events: WorkEvent[]): WorkEvent[] {
-  const resolved = new Set(events.filter(event => event.type === 'reply' || event.type === 'request-resolved')
-    .map(event => `${event.attemptId}:${(event.data as { requestId?: string })?.requestId}`));
-  return events.filter(event => (event.type === 'permission' || event.type === 'question') &&
-    !resolved.has(`${event.attemptId}:${(event.data as { requestId?: string })?.requestId}`));
+  const pending = new Map<string, WorkEvent>();
+  for (const event of events) {
+    const requestId = (event.data as { requestId?: string } | undefined)?.requestId;
+    if (!requestId) continue;
+    const key = `${event.attemptId}:${requestId}`;
+    if (event.type === 'permission' || event.type === 'question') pending.set(key, event);
+    else if (event.type === 'reply' || event.type === 'request-resolved') pending.delete(key);
+  }
+  return [...pending.values()];
 }

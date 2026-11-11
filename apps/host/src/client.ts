@@ -5,6 +5,7 @@ import WebSocket from 'ws';
 import { HOST_DESCRIPTOR, type HostDescriptor } from './api.ts';
 import type { HostCommand, HostSnapshot } from './protocol.ts';
 import { isWorkEffect } from '../../../packages/work-core/src/operations.ts';
+import type { WorkTraceFrame } from '../../../packages/work-core/src/telemetry.ts';
 
 class HostResponseError extends Error {}
 
@@ -51,18 +52,43 @@ export class HostClient {
   }
 
   watch(changed: (snapshot: HostSnapshot) => void): () => void {
+    return this.subscribe<HostSnapshot>(() => '/events', snapshot => {
+      this.online = true;
+      this.latest = snapshot;
+      changed(snapshot);
+    }, () => { this.online = false; });
+  }
+
+  watchWorkTrace(taskId: string, changed: (frame: WorkTraceFrame) => void, disconnected: () => void): () => void {
+    let cursor: string | undefined;
+    return this.subscribe<WorkTraceFrame>(() => {
+      const query = new URLSearchParams({ task: taskId });
+      if (cursor) query.set('after', cursor);
+      return `/work-events?${query}`;
+    }, frame => {
+      if (frame.taskId !== taskId || frame.type !== 'snapshot' && (frame.type !== 'delta' || frame.after !== cursor)) {
+        cursor = undefined;
+        throw new Error('WORK_TRACE_SEQUENCE_GAP');
+      }
+      cursor = frame.cursor;
+      changed(frame);
+    }, disconnected);
+  }
+
+  private subscribe<T>(route: () => string, changed: (value: T) => void, disconnected: () => void): () => void {
     let stopped = false;
     let socket: WebSocket | undefined;
     let retry: NodeJS.Timeout | undefined;
     const reconnect = () => {
-      this.online = false;
-      if (!stopped) retry = setTimeout(() => void connect(), 750);
+      if (stopped) return;
+      disconnected();
+      retry = setTimeout(() => void connect(), 750);
     };
     const connect = async () => {
       try {
         const { url, token } = await this.discover();
         if (stopped) return;
-        const peer = new WebSocket(`${url.replace('http:', 'ws:')}/events`, {
+        const peer = new WebSocket(url.replace('http:', 'ws:') + route(), {
           headers: { authorization: `Bearer ${token}` }, handshakeTimeout: 3000
         });
         socket = peer;
@@ -70,12 +96,8 @@ export class HostClient {
         peer.once('close', reconnect);
         peer.on('message', raw => {
           if (stopped) return;
-          let snapshot: HostSnapshot;
-          try { snapshot = JSON.parse(raw.toString()) as HostSnapshot; }
+          try { changed(JSON.parse(raw.toString()) as T); }
           catch { peer.terminate(); return; }
-          this.online = true;
-          this.latest = snapshot;
-          changed(snapshot);
         });
       } catch { reconnect(); }
     };

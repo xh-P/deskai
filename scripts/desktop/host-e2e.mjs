@@ -27,7 +27,7 @@ if (!process.versions.electron) {
   app.on('window-all-closed', () => {});
   const { LocalDshSpeech } = await import('../../.cache/desktop-main/packages/dsh-adapter/src/speech.js');
   const { DshWorkProvider } = await import('../../.cache/desktop-main/packages/dsh-adapter/src/work-provider.js');
-  const { WorkRuntime } = await import('../../.cache/desktop-main/packages/dsh-adapter/src/work-runtime.js');
+  const { loadWorkOptions, WorkRuntime } = await import('../../.cache/desktop-main/packages/dsh-adapter/src/work-runtime.js');
   const { LocalHost } = await import('../../.cache/desktop-main/apps/host/src/host.js');
   const { WorkPlanner } = await import('../../.cache/desktop-main/apps/desktop/src/work-planner.js');
   const { createChatRuntime } = await import('../../.cache/desktop-main/apps/desktop/src/chat-runtime.js');
@@ -37,7 +37,7 @@ if (!process.versions.electron) {
   const project = path.join(temporary, 'project'); await mkdir(project);
   app.setPath('userData', temporary); await app.whenReady();
   const state = path.join(temporary, 'host');
-  const runtime = new WorkRuntime(root, { profile: 'web', cwd: project }, path.join(state, 'dsh-runtime.json'));
+  const runtime = new WorkRuntime(root, { ...await loadWorkOptions(root), cwd: project }, path.join(state, 'dsh-runtime.json'));
   const speech = new LocalDshSpeech(root);
   let host, browser, planner, chat;
   const report = { timestamp: new Date().toISOString(), realPlanner: true, realDsh: true, appAuthoredByDsh: !capabilitiesOnly, physicalAudioTested: false, passed: false };

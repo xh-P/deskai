@@ -30,7 +30,7 @@ async function serve() {
     runtime = new WorkRuntime(root, options, path.join(state, 'dsh-runtime.json'), () => host?.changed());
     host = await LocalHost.open(state, new DshWorkProvider(runtime, root), options.cwd, runtime);
     host.subscribe(() => api.broadcast());
-  }).catch(async error => {
+  }, (taskId, after, send) => host.trace.subscribe(taskId, after, send)).catch(async error => {
     await host?.close(); await runtime?.dispose();
     throw error;
   });

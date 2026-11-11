@@ -7,6 +7,7 @@ import { parseCoordinationPlan, type CoordinationPlan, type ReferenceClarificati
   type ReferenceSelection } from '../../../packages/voice-core/src/coordination.ts';
 import { dialogueContext, planningContext, taskStatus } from './context.ts';
 import { referenceCatalog, resolveReference, type ReferenceCandidate, type ReferenceCatalog } from './reference-catalog.ts';
+import { parsePlannerRequests, type PlannerRequest } from '../../../packages/work-core/src/telemetry.ts';
 import type { HostSelection, HostSnapshot } from './protocol.ts';
 
 export type ControlTurn = { id: string; conversationId: string; text: string };
@@ -16,8 +17,8 @@ export type ControlReceipt = WorkOperationReceipt | ReferenceClarification | Ret
 export type ControlContext = { planning: ReturnType<typeof planningContext>; chat: ReturnType<typeof dialogueContext> };
 type Choice = { card: ReferenceClarification; candidates: Map<string, ReferenceCandidate>; plan: ReferencePlan; signature: string;
   selected?: { optionId: string; receipt: Promise<ControlReceipt> } };
-type FrozenTurn = { turn: ControlTurn; expiresAt: number; catalog: ReferenceCatalog; context: ControlContext;
-  decision?: { signature: string; receipt: Promise<ControlReceipt> }; choice?: Choice };
+type FrozenTurn = { turn: ControlTurn; beganAt: number; expiresAt: number; catalog: ReferenceCatalog; context: ControlContext;
+  requests?: PlannerRequest[]; decision?: { signature: string; receipt: Promise<ControlReceipt> }; choice?: Choice };
 
 const referenceLifetimeMs = 5 * 60_000;
 
@@ -53,7 +54,8 @@ export class ConversationControl {
     const pendingId = this.pending.get(turn.conversationId);
     const context = { planning: planningContext(snapshot, catalog, pendingId ? this.turns.get(pendingId)?.choice?.card : undefined),
       chat: dialogueContext(snapshot, { kind: 'chat' }) };
-    this.turns.set(turn.id, { turn: { ...turn }, expiresAt: Date.now() + referenceLifetimeMs, catalog, context });
+    const beganAt = Date.now();
+    this.turns.set(turn.id, { turn: { ...turn }, beganAt, expiresAt: beganAt + referenceLifetimeMs, catalog, context });
     return context;
   }
 
@@ -61,7 +63,7 @@ export class ConversationControl {
     if (entry.turn.conversationId !== turn.conversationId || entry.turn.text !== turn.text) throw new Error('COORDINATION_TURN_CONFLICT');
   }
 
-  async execute(turn: ControlTurn, proposal: CoordinationPlan): Promise<ControlReceipt> {
+  async execute(turn: ControlTurn, proposal: CoordinationPlan, requests?: PlannerRequest[]): Promise<ControlReceipt> {
     assertOperationId(turn?.id); assertOperationId(turn.conversationId);
     const plan = parseCoordinationPlan(JSON.stringify(proposal));
     const signature = operationSignature({ source: 'conversation', turn, plan });
@@ -78,6 +80,7 @@ export class ConversationControl {
         return { kind: 'reference-missing', message: '这次选择已结束，请重新说出要操作的对象。' };
       return entry.decision.receipt;
     }
+    entry.requests = parsePlannerRequests(requests);
     const receipt = this.applyProposal(entry, plan, signature);
     entry.decision = { signature, receipt };
     return receipt;
@@ -85,7 +88,7 @@ export class ConversationControl {
 
   private async applyProposal(entry: FrozenTurn, plan: CoordinationPlan, signature: string): Promise<ControlReceipt> {
     if (plan.intent === 'chat') return { kind: 'chat' };
-    if (plan.intent === 'choose') return this.choose(entry.turn.conversationId, plan);
+    if (plan.intent === 'choose') return this.choose(entry.turn.conversationId, plan, entry.requests);
     const result = resolveReference(entry.catalog, plan, entry.turn.text);
     if (result.kind === 'missing') return { kind: 'reference-missing', message: '没有定位到对象。请说出项目、任务或应用的名称。' };
     if (result.kind === 'choose') {
@@ -104,7 +107,7 @@ export class ConversationControl {
     return this.apply(entry, plan, signature, result.kind === 'selected' ? result.target : undefined);
   }
 
-  async choose(conversationId: string, selection: ReferenceSelection): Promise<ControlReceipt> {
+  async choose(conversationId: string, selection: ReferenceSelection, requests: PlannerRequest[] = []): Promise<ControlReceipt> {
     assertOperationId(conversationId); assertOperationId(selection?.clarificationId); assertOperationId(selection.optionId);
     const original = this.work.operation(selection.clarificationId);
     if (original) {
@@ -123,6 +126,7 @@ export class ConversationControl {
     const target = choice.candidates.get(selection.optionId);
     if (!target) throw new Error('COORDINATION_OPTION_INVALID');
     this.pending.delete(conversationId);
+    entry.requests = [...entry.requests ?? [], ...requests];
     const receipt = this.apply(entry, choice.plan, choice.signature, target, selection.optionId);
     choice.selected = { optionId: selection.optionId, receipt };
     return receipt;
@@ -155,7 +159,8 @@ export class ConversationControl {
       case 'reply': command = { type: 'reply', taskId, requestId: target.requestId!, response: plan.response }; break;
     }
     const receipt = await this.work.dispatch(command, { id: turn.id, expectedAttemptId: target.attemptId,
-      origin: { signature, conversationId: turn.conversationId, optionId } });
+      origin: { signature, conversationId: turn.conversationId, optionId,
+        delegation: { at: entry.beganAt, text: turn.text, target: target.label, requests: entry.requests ?? [] } } });
     this.selected(receipt);
     return receipt;
   }

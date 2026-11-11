@@ -10,8 +10,7 @@ import { DEFAULT_PERSONA_ID } from '../../../../packages/voice-core/src/persona-
 import type { PetPreferencePatch, PetSnapshot } from '../../../../packages/desktop-pet/src/types.ts'
 import { aecCaptureOptions } from '../../../../packages/voice-core/src/aec-mode.ts'
 import { PcmPlayer } from './player'
-import WorkPanel from './WorkPanel'
-import ApplicationsPanel from './ApplicationsPanel'
+import Workbench from './workbench/Workbench'
 import CharacterEditor from './CharacterEditor'
 import type { HostSnapshot } from '../../../host/src/protocol.ts'
 import './style.css'
@@ -32,6 +31,8 @@ function describeMediaError(error: unknown): string {
 }
 
 export default function App() {
+  const [page, setPage] = useState<'dialogue' | 'work' | 'character'>('dialogue')
+  const [theme, setTheme] = useState(() => localStorage.getItem('deskai-theme') === 'light' ? 'light' : 'dark')
   const [hostSnapshot, setHostSnapshot] = useState<HostSnapshot | null>(null)
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null)
   const [starting, setStarting] = useState(false)
@@ -56,9 +57,12 @@ export default function App() {
   const [petSnapshot, setPetSnapshot] = useState<PetSnapshot | null>(null)
   const [preferenceNote, setPreferenceNote] = useState('')
   const [wakeDraft, setWakeDraft] = useState('')
-  const [workState, setWorkState] = useState('stopped')
   const [ttsState, setTtsState] = useState('尚未准备')
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('deskai-theme', theme)
+  }, [theme])
   const captureRef = useRef<Capture | null>(null)
   const outputRef = useRef<Output | null>(null)
   const preferencesRef = useRef<Preferences | null>(null)
@@ -94,12 +98,6 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = window.deskai.onPetSnapshot(setPetSnapshot)
     void window.deskai.getPetSnapshot().then(setPetSnapshot).catch(() => {})
-    return unsubscribe
-  }, [])
-
-  useEffect(() => {
-    const unsubscribe = window.deskai.onWorkStatus(status => setWorkState(status.state))
-    void window.deskai.getWorkStatus().then(status => setWorkState(status.state)).catch(() => {})
     return unsubscribe
   }, [])
 
@@ -284,10 +282,14 @@ export default function App() {
         && after.preferences.personaId === 'assistant-neutral' && after.preferences.replyLanguage === 'ja'
       checks.noMicrophoneOpened = !microphoneOpened.current && !captureRef.current
       const host = await window.deskai.getHostSnapshot()
-      for (let i = 0; i < 50 && !document.querySelector('section[aria-label="工作任务"]'); i++)
+      setPage('work')
+      const artifactsButton = () => document.querySelector<HTMLButtonElement>('.wb-sidebar-actions button[aria-haspopup="dialog"]:enabled')
+      for (let i = 0; i < 50 && !artifactsButton(); i++)
         await new Promise(resolve => setTimeout(resolve, 100))
+      artifactsButton()?.click()
+      await new Promise(resolve => setTimeout(resolve, 100))
       checks.hostPanelsReady = host.work.projects.length > 0 && !!document.querySelector('section[aria-label="工作任务"]')
-        && !!document.querySelector('section[aria-label="产物与应用协作"]')
+        && !!document.querySelector('dialog[open] section[aria-label="产物与应用协作"]')
     } catch (cause) { notes.push(describeMediaError(cause)) }
     window.deskai.finishDialogueSmoke({ simulated: true, checks, notes })
   }, [waitDialogue])
@@ -644,142 +646,149 @@ export default function App() {
   const petStateLabel = ({ off: '未开始', listening: '倾听', recognizing: '识别', thinking: '思考', speaking: '说话',
     paused: '暂停', waiting: '等待', silent: '安静', error: '异常' } as Record<string, string>)[petSnapshot?.state ?? 'off']
 
-  return <main className="shell">
-    <header><div><h1>DeskAI 语音对话</h1><p>当前声音：{selectedVoiceName}</p></div><span className="stage">桌面应用 · 桌宠版</span></header>
-    <section className="summary" aria-live="polite">
-      <div><small>语音服务</small><strong>{serviceState}</strong></div>
-      <div><small>麦克风</small><strong>{captureState}</strong></div>
-      <div><small>输入状态</small><strong>{inputLabel}</strong></div>
-      <div><small>播放</small><strong>{playback}</strong></div>
-    </section>
-    <section className="preferences" aria-label="桌宠设置">
-      <label>桌宠造型<select value={petSnapshot?.variant ?? 'uniform-chibi'} onChange={event => changePet({ variant: event.target.value as PetSnapshot['variant'] })}>
-        <option value="uniform-chibi">校服 · Q 版</option><option value="uniform-normal">校服 · 原作比例</option>
-        <option value="witch-chibi">魔法服 · Q 版</option><option value="witch-normal">魔法服 · 原作比例</option>
-      </select></label>
-      <label>桌宠高度 {petSnapshot?.size ?? 220} px<input aria-label="桌宠高度" type="range" min="120" max="360" step="10" value={petSnapshot?.size ?? 220} onChange={event => changePet({ size: Number(event.target.value) })} /></label>
-      <label>桌宠显示<select value={String(petSnapshot?.visible ?? true)} onChange={event => changePet({ visible: event.target.value === 'true' })}>
-        <option value="true">显示</option><option value="false">隐藏</option>
-      </select></label>
-      <label>桌宠置顶<select value={String(petSnapshot?.alwaysOnTop ?? true)} onChange={event => changePet({ alwaysOnTop: event.target.value === 'true' })}>
-        <option value="true">保持置顶</option><option value="false">普通窗口层级</option>
-      </select></label>
-      <label>桌宠动画<select value={petSnapshot?.motionMode ?? 'gentle'} onChange={event => changePet({ motionMode: event.target.value as PetSnapshot['motionMode'] })}>
-        <option value="gentle">轻微动画</option><option value="system">跟随系统</option>
-      </select></label>
-      <span>桌宠状态：{petStateLabel} · 位置可拖动调整</span>
-    </section>
-    <section className="preferences" aria-label="对话设置">
-      <label>角色声音<select value={selectedVoice?.id ?? ''} disabled={!voices.length || starting} onChange={event => void changeSetting({ voiceId: event.target.value, referenceId: '' })}>
-        {!selectedVoice && <option value="" disabled>等待声音资源</option>}
-        {voices.map(voice => <option key={voice.id} value={voice.id}>{voice.name}</option>)}
-      </select></label>
-      <label>参考语气<select value={preferences?.referenceId || selectedVoice?.defaultReferenceId || ''} disabled={!selectedVoice || starting} onChange={event => void changeSetting({ referenceId: event.target.value })}>
-        {(selectedVoice?.references ?? []).map(ref => <option key={ref.id} value={ref.id}>{ref.name}</option>)}
-      </select></label>
-      <label>人格 / 角色<select value={roleId} disabled={!runtime || starting} onChange={event => void changeSetting({ personaId: event.target.value })}>
-        {runtime?.personas.map(persona => <option key={persona.id} value={persona.id}>{persona.displayName}</option>)}
-      </select></label>
-      {role?.relationships && <label>关系模式<select aria-label="关系模式" value={relation} disabled={starting} onChange={event => void changeSetting({ relationshipMode: event.target.value as Preferences['relationshipMode'] })}>
-        <option value="friend">{role.relationships.friend}</option><option value="kyon">{role.relationships.kyon}</option>
-      </select></label>}
-      <label>回复语言<select value={preferences?.replyLanguage ?? 'auto'} onChange={event => void changeSetting({ replyLanguage: event.target.value as ReplyLanguage })}>
-        <option value="auto">自动跟随</option><option value="zh">中文</option><option value="ja">日语</option><option value="en">英语</option>
-      </select></label>
-      <span>模型：{modelState === 'planning' ? '正在理解任务' : modelState === 'waiting' ? '等待续句' : modelState === 'silent' ? '本轮保持安静' : modelState === 'generating' ? '正在回复' : modelState === 'cancelling' ? '正在停止' : modelState === 'error' ? '回复出错' : '空闲'}</span>
-    </section>
-    {runtime && <CharacterEditor characters={runtime.personas} selectedId={roleId} onError={showError}
-      onSaved={async () => setRuntime(await window.deskai.getRuntime())} />}
-    {preferenceNote && <p className="hint">{preferenceNote}</p>}
-    <details className="settings"><summary>声音与设备设置 · 合成服务：{ttsLabel}</summary>
-      <div className="preferences">
-        <label>唤醒词（逗号或换行分隔）<textarea aria-label="唤醒词" value={wakeDraft} onChange={event => setWakeDraft(event.target.value)} placeholder={(runtime?.defaultWakePhrases ?? []).join('，')} /></label>
-        <button className="secondary" onClick={() => { const phrases = wakeDraft.split(/[,，\n]+/u).map(p => p.trim()).filter(Boolean); void changeSetting({ wakePhrases: phrases.length ? phrases : null }) }}>保存唤醒词</button>
-        <button className="secondary" onClick={() => { setWakeDraft(''); void changeSetting({ wakePhrases: null }) }}>恢复默认唤醒词</button>
-        <label>回声与降噪<select value={preferences?.aecMode ?? ''} onChange={event => void changeSetting({ aecMode: (event.target.value || null) as Preferences['aecMode'] })}>
-          <option value="">跟随默认</option><option value="off">关闭</option><option value="browser">浏览器回声消除</option><option value="browser-ns">浏览器回声消除与降噪</option><option value="webrtc">WebRTC AEC（试验）</option><option value="webrtc-ns">WebRTC AEC 与降噪（试验）</option>
-        </select></label>
-        <label>输入设备<select value={preferences?.inputDeviceId ?? ''} onChange={event => void changeSetting({ inputDeviceId: event.target.value })}>
-          <option value="">系统默认麦克风</option>{devices.filter(device => device.kind === 'audioinput' && device.deviceId !== 'default').map((device, i) => <option key={device.deviceId || i} value={device.deviceId}>{device.label || `输入设备 ${i + 1}`}</option>)}
-        </select></label>
-        <label>输出设备<select value={preferences?.outputDeviceId ?? ''} onChange={event => void changeSetting({ outputDeviceId: event.target.value })}>
-          <option value="">系统默认扬声器</option>{devices.filter(device => device.kind === 'audiooutput' && device.deviceId !== 'default').map((device, i) => <option key={device.deviceId || i} value={device.deviceId}>{device.label || `输出设备 ${i + 1}`}</option>)}
-        </select></label>
-        <label>音量 {Math.round((preferences?.volume ?? 0.8) * 100)}%<input aria-label="音量" type="range" min="0" max="1" step="0.05" value={preferences?.volume ?? 0.8} onChange={event => void changeSetting({ volume: Number(event.target.value) })} /></label>
-        <label>语速<select value={preferences?.speed ?? 1} onChange={event => void changeSetting({ speed: Number(event.target.value) })}>
-          {[0.6, 0.8, 1, 1.2, 1.4, 1.6].map(value => <option key={value} value={value}>{value}×</option>)}
-        </select></label>
-        <label>关闭主窗口<select value={String(preferences?.closeToTray ?? true)} onChange={event => void changeSetting({ closeToTray: event.target.value === 'true' })}>
-          <option value="true">隐藏到托盘（会话继续）</option><option value="false">退出并释放服务</option>
-        </select></label>
-        <button className="secondary" onClick={() => void window.deskai.retrySpeech().then(() => window.deskai.getRuntime()).then(setRuntime).catch(cause => setError(describeMediaError(cause)))}>恢复语音服务</button>
+  return <>
+    <header className="desktop-bar">
+      <div className="desktop-brand"><span aria-hidden="true">D</span>DeskAI</div>
+      <nav aria-label="桌面导航">
+        <button type="button" aria-current={page === 'dialogue' ? 'page' : undefined} onClick={() => setPage('dialogue')}>对话</button>
+        <button type="button" aria-current={page === 'work' ? 'page' : undefined} onClick={() => setPage('work')}>工作</button>
+        <button type="button" aria-current={page === 'character' ? 'page' : undefined} onClick={() => setPage('character')}>角色</button>
+      </nav>
+      <button type="button" className="theme-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+        aria-label={theme === 'dark' ? '切换浅色主题' : '切换深色主题'}>{theme === 'dark' ? '浅色' : '深色'}</button>
+    </header>
+    <main>
+      <div hidden={page !== 'work'}><Workbench snapshot={hostSnapshot} /></div>
+      <div hidden={page !== 'character'} className="shell role-shell">
+        <header className="view-heading"><h1>角色与声音</h1><p>{role?.displayName ?? ''} · {selectedVoiceName}</p></header>
+        <section className="preferences" aria-label="桌宠设置">
+          <label>桌宠造型<select value={petSnapshot?.variant ?? 'uniform-chibi'} onChange={event => changePet({ variant: event.target.value as PetSnapshot['variant'] })}>
+            <option value="uniform-chibi">校服 · Q 版</option><option value="uniform-normal">校服 · 原作比例</option>
+            <option value="witch-chibi">魔法服 · Q 版</option><option value="witch-normal">魔法服 · 原作比例</option>
+          </select></label>
+          <label>桌宠高度 {petSnapshot?.size ?? 220} px<input aria-label="桌宠高度" type="range" min="120" max="360" step="10" value={petSnapshot?.size ?? 220} onChange={event => changePet({ size: Number(event.target.value) })} /></label>
+          <label>桌宠显示<select value={String(petSnapshot?.visible ?? true)} onChange={event => changePet({ visible: event.target.value === 'true' })}>
+            <option value="true">显示</option><option value="false">隐藏</option>
+          </select></label>
+          <label>桌宠置顶<select value={String(petSnapshot?.alwaysOnTop ?? true)} onChange={event => changePet({ alwaysOnTop: event.target.value === 'true' })}>
+            <option value="true">保持置顶</option><option value="false">普通窗口层级</option>
+          </select></label>
+          <label>桌宠动画<select value={petSnapshot?.motionMode ?? 'gentle'} onChange={event => changePet({ motionMode: event.target.value as PetSnapshot['motionMode'] })}>
+            <option value="gentle">轻微动画</option><option value="system">跟随系统</option>
+          </select></label>
+          <span>桌宠状态：{petStateLabel} · 位置可拖动调整</span>
+        </section>
+        <section className="preferences" aria-label="对话设置">
+          <label>角色声音<select value={selectedVoice?.id ?? ''} disabled={!voices.length || starting} onChange={event => void changeSetting({ voiceId: event.target.value, referenceId: '' })}>
+            {!selectedVoice && <option value="" disabled>等待声音资源</option>}
+            {voices.map(voice => <option key={voice.id} value={voice.id}>{voice.name}</option>)}
+          </select></label>
+          <label>参考语气<select value={preferences?.referenceId || selectedVoice?.defaultReferenceId || ''} disabled={!selectedVoice || starting} onChange={event => void changeSetting({ referenceId: event.target.value })}>
+            {(selectedVoice?.references ?? []).map(ref => <option key={ref.id} value={ref.id}>{ref.name}</option>)}
+          </select></label>
+          <label>人格 / 角色<select value={roleId} disabled={!runtime || starting} onChange={event => void changeSetting({ personaId: event.target.value })}>
+            {runtime?.personas.map(persona => <option key={persona.id} value={persona.id}>{persona.displayName}</option>)}
+          </select></label>
+          {role?.relationships && <label>关系模式<select aria-label="关系模式" value={relation} disabled={starting} onChange={event => void changeSetting({ relationshipMode: event.target.value as Preferences['relationshipMode'] })}>
+            <option value="friend">{role.relationships.friend}</option><option value="kyon">{role.relationships.kyon}</option>
+          </select></label>}
+          <label>回复语言<select value={preferences?.replyLanguage ?? 'auto'} onChange={event => void changeSetting({ replyLanguage: event.target.value as ReplyLanguage })}>
+            <option value="auto">自动跟随</option><option value="zh">中文</option><option value="ja">日语</option><option value="en">英语</option>
+          </select></label>
+          <span>模型：{modelState === 'planning' ? '正在理解任务' : modelState === 'waiting' ? '等待续句' : modelState === 'silent' ? '本轮保持安静' : modelState === 'generating' ? '正在回复' : modelState === 'cancelling' ? '正在停止' : modelState === 'error' ? '回复出错' : '空闲'}</span>
+        </section>
+        {runtime && <CharacterEditor characters={runtime.personas} selectedId={roleId} onError={showError}
+          onSaved={async () => setRuntime(await window.deskai.getRuntime())} />}
+        {preferenceNote && <p className="hint">{preferenceNote}</p>}
+        <details className="settings"><summary>声音与设备设置 · 合成服务：{ttsLabel}</summary>
+          <div className="preferences">
+            <label>唤醒词（逗号或换行分隔）<textarea aria-label="唤醒词" value={wakeDraft} onChange={event => setWakeDraft(event.target.value)} placeholder={(runtime?.defaultWakePhrases ?? []).join('，')} /></label>
+            <button className="secondary" onClick={() => { const phrases = wakeDraft.split(/[,，\n]+/u).map(p => p.trim()).filter(Boolean); void changeSetting({ wakePhrases: phrases.length ? phrases : null }) }}>保存唤醒词</button>
+            <button className="secondary" onClick={() => { setWakeDraft(''); void changeSetting({ wakePhrases: null }) }}>恢复默认唤醒词</button>
+            <label>回声与降噪<select value={preferences?.aecMode ?? ''} onChange={event => void changeSetting({ aecMode: (event.target.value || null) as Preferences['aecMode'] })}>
+              <option value="">跟随默认</option><option value="off">关闭</option><option value="browser">浏览器回声消除</option><option value="browser-ns">浏览器回声消除与降噪</option><option value="webrtc">WebRTC AEC（试验）</option><option value="webrtc-ns">WebRTC AEC 与降噪（试验）</option>
+            </select></label>
+            <label>输入设备<select value={preferences?.inputDeviceId ?? ''} onChange={event => void changeSetting({ inputDeviceId: event.target.value })}>
+              <option value="">系统默认麦克风</option>{devices.filter(device => device.kind === 'audioinput' && device.deviceId !== 'default').map((device, i) => <option key={device.deviceId || i} value={device.deviceId}>{device.label || `输入设备 ${i + 1}`}</option>)}
+            </select></label>
+            <label>输出设备<select value={preferences?.outputDeviceId ?? ''} onChange={event => void changeSetting({ outputDeviceId: event.target.value })}>
+              <option value="">系统默认扬声器</option>{devices.filter(device => device.kind === 'audiooutput' && device.deviceId !== 'default').map((device, i) => <option key={device.deviceId || i} value={device.deviceId}>{device.label || `输出设备 ${i + 1}`}</option>)}
+            </select></label>
+            <label>音量 {Math.round((preferences?.volume ?? 0.8) * 100)}%<input aria-label="音量" type="range" min="0" max="1" step="0.05" value={preferences?.volume ?? 0.8} onChange={event => void changeSetting({ volume: Number(event.target.value) })} /></label>
+            <label>语速<select value={preferences?.speed ?? 1} onChange={event => void changeSetting({ speed: Number(event.target.value) })}>
+              {[0.6, 0.8, 1, 1.2, 1.4, 1.6].map(value => <option key={value} value={value}>{value}×</option>)}
+            </select></label>
+            <label>关闭主窗口<select value={String(preferences?.closeToTray ?? true)} onChange={event => void changeSetting({ closeToTray: event.target.value === 'true' })}>
+              <option value="true">隐藏到托盘（会话继续）</option><option value="false">退出并释放服务</option>
+            </select></label>
+            <button className="secondary" onClick={() => void window.deskai.retrySpeech().then(() => window.deskai.getRuntime()).then(setRuntime).catch(cause => setError(describeMediaError(cause)))}>恢复语音服务</button>
+          </div>
+          <p>声音、人格、语言分别设置。系统睡眠会结束会话；恢复后请重新开启。设备名称需麦克风授权后才可能显示。</p>
+        </details>
+        {page === 'character' && error && <p className="error" role="alert">{error}</p>}
+        <details><summary>技术设置与诊断</summary><p>会话：{session?.sessionId ?? '无'} · 运行模式：{runtime?.fakeMedia ? '模拟设备' : '普通设备'}</p>
+          {!!runtime?.assetStatus?.missing.length && <p>缺少本地资源：{runtime.assetStatus.missing.join('、')}</p>}
+          <p>浏览器实际麦克风设置</p><pre>{mediaSettings ? JSON.stringify(mediaSettings, null, 2) : '未获取'}</pre>
+          <button className="secondary" onClick={() => void window.deskai.getRuntime().then(setRuntime).catch(showError)}>刷新语音时序</button>
+          <pre>{runtime?.voiceDiagnostics ? JSON.stringify(runtime.voiceDiagnostics, null, 2) : '暂无语音时序'}</pre></details>
       </div>
-      <p>声音、人格、语言分别设置。系统睡眠会结束会话；恢复后请重新开启。设备名称需麦克风授权后才可能显示。</p>
-    </details>
-    {error && <p className="error" role="alert">{error}</p>}
-    <details className="settings" onToggle={event => { if (event.currentTarget.open) void refreshConversations().catch(showError) }}>
-      <summary>{session ? `${session.conversation.displayName} · 第 ${session.conversation.revision} 版${session.conversation.relationship ? ` · ${session.conversation.relationship}` : ''}` : '会话'}</summary>
-      <div className="actions conversation-actions">
-        <button type="button" className="secondary" disabled={starting || sendingText} onClick={() => void switchConversation()}>新会话</button>
-        <select aria-label="已有会话" value={savedId} onChange={event => setSavedId(event.target.value)}>
-          <option value="">选择已有会话</option>
-          {savedConversations.map(row => <option key={row.id} value={row.id}>{row.title} · {row.displayName} · v{row.revision}{row.relationship ? ` · ${row.relationship}` : ''}</option>)}
-        </select>
-        <button type="button" className="secondary" disabled={!savedId || starting || sendingText || savedId === session?.conversation.id}
-          onClick={() => void switchConversation(savedId)}>继续会话</button>
+      <div hidden={page !== 'dialogue'} className="shell chat-shell">
+        <header className="view-heading"><h1>{role?.displayName ?? '对话'}</h1><p>{selectedVoiceName}</p></header>
+        <section className="summary" aria-live="polite">
+          <div><small>语音服务</small><strong>{serviceState}</strong></div>
+          <div><small>麦克风</small><strong>{captureState}</strong></div>
+          <div><small>输入状态</small><strong>{inputLabel}</strong></div>
+          <div><small>播放</small><strong>{playback}</strong></div>
+        </section>
+        {page === 'dialogue' && error && <p className="error" role="alert">{error}</p>}
+        <details className="settings" onToggle={event => { if (event.currentTarget.open) void refreshConversations().catch(showError) }}>
+          <summary>{session ? `${session.conversation.displayName} · 第 ${session.conversation.revision} 版${session.conversation.relationship ? ` · ${session.conversation.relationship}` : ''}` : '会话'}</summary>
+          <div className="actions conversation-actions">
+            <button type="button" className="secondary" disabled={starting || sendingText} onClick={() => void switchConversation()}>新会话</button>
+            <select aria-label="已有会话" value={savedId} onChange={event => setSavedId(event.target.value)}>
+              <option value="">选择已有会话</option>
+              {savedConversations.map(row => <option key={row.id} value={row.id}>{row.title} · {row.displayName} · v{row.revision}{row.relationship ? ` · ${row.relationship}` : ''}</option>)}
+            </select>
+            <button type="button" className="secondary" disabled={!savedId || starting || sendingText || savedId === session?.conversation.id}
+              onClick={() => void switchConversation(savedId)}>继续会话</button>
+          </div>
+        </details>
+        <details className="settings">
+          <summary>角色知识 · {lookupState}</summary>
+          <label className="knowledge-toggle"><input type="checkbox" checked={preferences?.characterKnowledge ?? false}
+            disabled={!preferences} onChange={event => void changeSetting({ characterKnowledge: event.target.checked })} /> 启用角色知识检索</label>
+          {preferences?.characterKnowledge && knowledgeLookup?.status === 'unavailable' &&
+            <p>运行 <code>npm run desktop:prepare-knowledge</code> 准备索引。{knowledgeLookup.code && ` ${knowledgeLookup.code}`}</p>}
+          {preferences?.characterKnowledge && !!knowledgeLookup?.hits.length && <ul>{knowledgeLookup.hits.map(hit =>
+            <li key={hit.id}>{hit.source} · {hit.locator} · 距离 {hit.distance.toFixed(3)}</li>)}</ul>}
+        </details>
+        <section className="conversation" aria-label="对话记录">
+          {entries.length === 0 ? <p className="empty">可直接输入文字开始对话，或点击“开始语音对话”自动监听和识别。</p> : entries.map(entry => <div className={`entry ${entry.role}`} data-attempt-id={entry.attemptId} key={entry.id}><small>{entry.role === 'user' ? '你' : entry.role === 'assistant' ? `助手${entry.interrupted ? ' · 已中断' : ''}` : '轮次状态'}</small><p>{entry.text}</p></div>)}
+        </section>
+        {referenceCard && <fieldset className="reference-card" disabled={selectingReference || modelState === 'planning'}>
+          <legend>{referenceCard.message}</legend>
+          <ol>{referenceCard.options.map(option => <li key={option.id}>
+            <button type="button" className="secondary" onClick={() => void respondToReference(referenceCard.id, option.id)}>
+              <strong>{option.label}</strong>
+              <span>{[option.parentLabel, option.detail, option.execution && workExecutionLabel(option.execution)].filter(Boolean).join(' · ')}</span>
+            </button>
+          </li>)}</ol>
+          <button type="button" className="secondary" onClick={() => void respondToReference(referenceCard.id)}>忽略</button>
+        </fieldset>}
+        <form className="text-entry" onSubmit={event => { event.preventDefault(); void sendText() }}>
+          <input value={textDraft} onChange={event => setTextDraft(event.target.value)} maxLength={4000} placeholder="输入文字，不需要开启麦克风" aria-label="文字输入" />
+          <button type="submit" disabled={!textDraft.trim() || sendingText}>发送</button>
+        </form>
+        <nav className="actions">
+          {captureRef.current && <button className="secondary" onClick={() => void pauseCapture()}>暂停麦克风</button>}
+          {captureRef.current ? <button onClick={() => void stop()}>结束对话</button>
+            : starting ? <button onClick={() => void stop()}>取消准备</button>
+              : <button onClick={() => void start()}>开始语音对话</button>}
+          {session && !starting && <button className="secondary" onClick={() => void stop()}>结束会话</button>}
+          <button className="secondary" onClick={() => void cancelTurn()} disabled={!session}>停止回复</button>
+          <button className="secondary" onClick={() => void retryTurn()} disabled={!retryable}>重试回复</button>
+        </nav>
       </div>
-    </details>
-    <details className="settings">
-      <summary>角色知识 · {lookupState}</summary>
-      <label className="knowledge-toggle"><input type="checkbox" checked={preferences?.characterKnowledge ?? false}
-        disabled={!preferences} onChange={event => void changeSetting({ characterKnowledge: event.target.checked })} /> 启用角色知识检索</label>
-      {preferences?.characterKnowledge && knowledgeLookup?.status === 'unavailable' &&
-        <p>运行 <code>npm run desktop:prepare-knowledge</code> 准备索引。{knowledgeLookup.code && ` ${knowledgeLookup.code}`}</p>}
-      {preferences?.characterKnowledge && !!knowledgeLookup?.hits.length && <ul>{knowledgeLookup.hits.map(hit =>
-        <li key={hit.id}>{hit.source} · {hit.locator} · 距离 {hit.distance.toFixed(3)}</li>)}</ul>}
-    </details>
-    <section className="conversation" aria-label="对话记录">
-      {entries.length === 0 ? <p className="empty">可直接输入文字开始对话，或点击“开始语音对话”自动监听和识别。</p> : entries.map(entry => <div className={`entry ${entry.role}`} data-attempt-id={entry.attemptId} key={entry.id}><small>{entry.role === 'user' ? '你' : entry.role === 'assistant' ? `助手${entry.interrupted ? ' · 已中断' : ''}` : '轮次状态'}</small><p>{entry.text}</p></div>)}
-    </section>
-    {referenceCard && <fieldset className="reference-card" disabled={selectingReference || modelState === 'planning'}>
-      <legend>{referenceCard.message}</legend>
-      <ol>{referenceCard.options.map(option => <li key={option.id}>
-        <button type="button" className="secondary" onClick={() => void respondToReference(referenceCard.id, option.id)}>
-          <strong>{option.label}</strong>
-          <span>{[option.parentLabel, option.detail, option.execution && workExecutionLabel(option.execution)].filter(Boolean).join(' · ')}</span>
-        </button>
-      </li>)}</ol>
-      <button type="button" className="secondary" onClick={() => void respondToReference(referenceCard.id)}>忽略</button>
-    </fieldset>}
-    <form className="text-entry" onSubmit={event => { event.preventDefault(); void sendText() }}>
-      <input value={textDraft} onChange={event => setTextDraft(event.target.value)} maxLength={4000} placeholder="输入文字，不需要开启麦克风" aria-label="文字输入" />
-      <button type="submit" disabled={!textDraft.trim() || sendingText}>发送</button>
-    </form>
-    <nav className="actions">
-      <button className="secondary" onClick={() => void window.deskai.openWork().then(status => setWorkState(status.state)).catch(cause => setError(describeMediaError(cause)))}>打开 dsh 原生工作台 · {({ stopped: '未启动', starting: '启动中', ready: '就绪', error: '出错' } as Record<string, string>)[workState] ?? workState}</button>
-      {captureRef.current && <button className="secondary" onClick={() => void pauseCapture()}>暂停麦克风</button>}
-      {captureRef.current ? <button onClick={() => void stop()}>结束对话</button>
-        : starting ? <button onClick={() => void stop()}>取消准备</button>
-          : <button onClick={() => void start()}>开始语音对话</button>}
-      {session && !starting && <button className="secondary" onClick={() => void stop()}>结束会话</button>}
-      <button className="secondary" onClick={() => void cancelTurn()} disabled={!session}>停止回复</button>
-      <button className="secondary" onClick={() => void retryTurn()} disabled={!retryable}>重试回复</button>
-    </nav>
-    <p className="hint">开始语音对话后自动监听；识别文字经 dsh 发送至所选模型服务，原音频在本机处理。等待或安静时仅更新状态。</p>
-    <p className="hint">有效回复逐句播放；合成故障保留文字。播放进度是声卡提交估计；真实麦克风、外放回声效果仍需设备验收。</p>
-    <details><summary>技术设置与诊断</summary><p>会话：{session?.sessionId ?? '无'} · 运行模式：{runtime?.fakeMedia ? '模拟设备' : '普通设备'}</p>
-      {!!runtime?.assetStatus?.missing.length && <p>缺少本地资源：{runtime.assetStatus.missing.join('、')}</p>}
-      <p>浏览器实际麦克风设置（仅供诊断，不代表物理 AEC 验收）：</p><pre>{mediaSettings ? JSON.stringify(mediaSettings, null, 2) : '未获取'}</pre>
-      <p>语音识别保持自动语言。停顿后先识别候选，约 1 秒内续说会合并后重新识别；明显未完句等待约 1.2 秒。</p>
-      <button className="secondary" onClick={() => void window.deskai.getRuntime().then(setRuntime).catch(cause => setError(describeMediaError(cause)))}>刷新语音时序</button>
-      <p>仅在内存保留最近各 100 条输入与输出时序，不含录音或对话正文。monotonicMs 使用同一个主进程时钟；playback-enqueued 表示提交给播放器，不代表实际听到声音。</p>
-      <pre>{runtime?.voiceDiagnostics ? JSON.stringify(runtime.voiceDiagnostics, null, 2) : '暂无语音时序'}</pre></details>
-    {hostSnapshot && <details className="settings"><summary>项目与后台任务 · 默认自动审查</summary>
-      <WorkPanel snapshot={hostSnapshot.work} selectedProjectId={hostSnapshot.selectedProjectId} selectedTaskId={hostSnapshot.selectedTaskId}
-        onCommand={command => window.deskai.workCommand(command)}
-        onSelectProject={projectId => { void window.deskai.selectHost({ projectId }).catch(cause => setError(describeMediaError(cause))) }}
-        onSelectTask={taskId => { void window.deskai.selectHost({ taskId }).catch(cause => setError(describeMediaError(cause))) }} />
-      <ApplicationsPanel snapshot={hostSnapshot} onError={setError} />
-    </details>}
-  </main>
+    </main>
+  </>
 }

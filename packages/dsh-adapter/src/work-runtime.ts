@@ -5,19 +5,35 @@ import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import WebSocket from 'ws';
+import { isMap, isSeq, parseDocument } from 'yaml';
 import { type DshFollowFrame, type DshWorkTransport, errorMessage, within } from './session-feed.ts';
 
 export type WorkRuntimeStatus = { state: 'stopped' | 'starting' | 'ready' | 'error'; code?: string };
 export type WorkWindowConnection = { origin: string; cookie: string };
-export type WorkOptions = { profile: string; cwd: string };
+export type WorkOptions = { profile: string; cwd: string; questionWaitSeconds: number };
 type Connection = { origin: string; apiCookie: string; browserCookie: string; pid: number };
 type Mux = { socket: WebSocket; streams: Map<string, (frame: DshFollowFrame) => void> };
 
 export async function loadWorkOptions(root: string): Promise<WorkOptions> {
   const config = JSON.parse(await readFile(path.join(root, 'config/work-runtime.json'), 'utf8'));
-  if (typeof config?.profile !== 'string' || !config.profile.trim() || typeof config.workspace !== 'string' || !config.workspace.trim())
+  if (typeof config?.profile !== 'string' || !config.profile.trim() || typeof config.workspace !== 'string' || !config.workspace.trim() ||
+      !Number.isInteger(config.questionWaitSeconds) || config.questionWaitSeconds < 1 || config.questionWaitSeconds > 2147483)
     throw new Error('INVALID_WORK_CONFIG');
-  return { profile: config.profile.trim(), cwd: path.resolve(root, config.workspace) };
+  return { profile: config.profile.trim(), cwd: path.resolve(root, config.workspace), questionWaitSeconds: config.questionWaitSeconds };
+}
+
+/** Clone the shipped Standard declaration so upstream tool changes stay in Work. */
+async function writeWorkPreset(source: string, file: string, id: string, timeout: number): Promise<void> {
+  const doc = parseDocument(await readFile(source, 'utf8'));
+  const preset = doc.getIn([0, 'insert', 0], true);
+  if (doc.errors.length || !isMap(preset) || preset.get('name') !== '@deepseek-ai/dsh-agent-preset') throw new Error('WORK_PRESET_INVALID');
+  const tools = preset.getIn(['config', 'plugins'], true);
+  const question = isSeq(tools) ? tools.items.find(row => isMap(row) && row.get('id') === 'tool-ask-user') : undefined;
+  if (!isMap(question)) throw new Error('WORK_PRESET_INVALID');
+  preset.set('id', `preset-${id}`);
+  preset.setIn(['config', 'id'], id);
+  question.set('config', doc.createNode({ mode: 'timed', timeout }));
+  await writeFile(file, doc.toString());
 }
 
 function alive(pid: number): boolean {
@@ -34,6 +50,7 @@ async function authCookie(url: string, expectedStatus: number): Promise<string> 
 
 /** Native dsh process and authenticated transport for the Node Host. */
 export class WorkRuntime implements DshWorkTransport {
+  readonly agentPreset = 'deskai-work';
   private readonly root: string;
   private readonly options: WorkOptions;
   private readonly descriptor: string;
@@ -89,10 +106,14 @@ export class WorkRuntime implements DshWorkTransport {
     const require = createRequire(import.meta.url);
     const entry = require.resolve('@deepseek-ai/dsh/lib/bin.js', { paths: [this.root] });
     const patch = require.resolve('@deepseek-ai/dsh-experimental-auto-review/cordis.patch.yml', { paths: [this.root] });
+    const webPatch = require.resolve('@deepseek-ai/dsh-web-app/cordis.patch.yml', { paths: [this.root] });
+    const workPatch = path.join(path.dirname(this.descriptor), 'work-agent.patch.yml');
+    await writeWorkPreset(path.join(path.dirname(webPatch), 'presets/standard.patch.yml'), workPatch,
+      this.agentPreset, this.options.questionWaitSeconds);
     const node = process.env.DESKAI_NODE_EXECUTABLE ?? (process.versions.electron ? undefined : process.execPath);
     if (!node) throw new Error('WORK_NODE_REQUIRED');
     const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
-    const child = spawn(node, [entry, '--profile', this.options.profile, '--patch', patch, '--host', '127.0.0.1', '--port', '0', '--no-open'], {
+    const child = spawn(node, [entry, '--profile', this.options.profile, '--patch', patch, '--patch', workPatch, '--host', '127.0.0.1', '--port', '0', '--no-open'], {
       cwd: this.options.cwd, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
     });
     this.child = child;
@@ -163,7 +184,9 @@ export class WorkRuntime implements DshWorkTransport {
     if (this.mux?.socket.readyState === WebSocket.OPEN) return this.mux;
     return this.openingMux ??= (async () => {
       const socket = new WebSocket(connection.origin.replace(/^http/, 'ws') + '/api/remote.mux', {
-        headers: { Cookie: connection.apiCookie }, maxPayload: 16 * 1024 * 1024, handshakeTimeout: 15_000
+        // An API peer's cookie is revoked when its owning socket closes. The
+        // loopback browser peer can open a fresh socket after a network gap.
+        headers: { Cookie: connection.browserCookie }, maxPayload: 16 * 1024 * 1024, handshakeTimeout: 15_000
       });
       const mux: Mux = { socket, streams: new Map() };
       const failed = () => {

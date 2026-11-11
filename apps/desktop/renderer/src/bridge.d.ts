@@ -7,6 +7,7 @@ import type { ExportReceipt } from '../../../../packages/app-core/src/exports.ts
 import type { AppStateVersion } from '../../../../packages/app-core/src/app-host.ts'
 import type { EngagementMode } from '../../../../packages/app-core/src/auip-contract.ts'
 import type { WorkUiCommand } from '../../../../packages/work-core/src/types.ts'
+import type { WorkTracePage, WorkTraceUpdate } from '../../../../packages/work-core/src/telemetry.ts'
 import type { VoiceDiagnostics } from '../../../../packages/voice-core/src/diagnostics.ts'
 import type { PetGeometry, PetPreferencePatch, PetSnapshot } from '../../../../packages/desktop-pet/src/types.ts'
 import type { AecMode } from '../../../../packages/voice-core/src/aec-mode.ts'
@@ -128,6 +129,8 @@ export interface DeskaiBridge {
   onHostSnapshot(listener: (snapshot: HostSnapshot) => void): () => void
   selectHost(selection: { projectId?: string; taskId?: string; appSessionId?: string }): Promise<void>
   workCommand(command: WorkUiCommand): Promise<unknown>
+  workTracePage(taskId: string, before: string): Promise<WorkTracePage>
+  watchWorkTrace(taskId: string, callback: (update: WorkTraceUpdate) => void): () => void
   openArtifact(id: string, interact: boolean): Promise<unknown>
   exportArtifact(id: string): Promise<ExportReceipt | null>
   workDiff(attemptId: string): Promise<string>
@@ -135,8 +138,6 @@ export interface DeskaiBridge {
   setAppMode(id: string, mode: EngagementMode): Promise<unknown>
   closeApp(id: string): Promise<void>
   openWork(): Promise<WorkStatus>
-  getWorkStatus(): Promise<WorkStatus>
-  onWorkStatus(listener: (status: WorkStatus) => void): () => void
   getRuntime(): Promise<RuntimeInfo>
   getPetSnapshot(): Promise<PetSnapshot>
   updatePetPreferences(input: PetPreferencePatch): Promise<PetSnapshot>
