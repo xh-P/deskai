@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { FrameVAD } from './frame-vad'
 import type { DeskaiEvent, DialogueSmokeReport, PersonaId, ReplyLanguage, RuntimeInfo, SessionStart, SmokeReport, Preferences } from './bridge'
 import type { DialogueEvent } from '../../../../packages/voice-core/src/dialogue.ts'
+import type { ReferenceClarification } from '../../../../packages/voice-core/src/coordination.ts'
+import { workExecutionLabel } from '../../../../packages/work-core/src/completion.ts'
 import type { PetPreferencePatch, PetSnapshot } from '../../../../packages/desktop-pet/src/types.ts'
 import { aecCaptureOptions } from '../../../../packages/voice-core/src/aec-mode.ts'
 import { PcmPlayer } from './player'
@@ -39,6 +41,8 @@ export default function App() {
   const [error, setError] = useState('')
   const [textDraft, setTextDraft] = useState('')
   const [sendingText, setSendingText] = useState(false)
+  const [referenceCard, setReferenceCard] = useState<ReferenceClarification | null>(null)
+  const [selectingReference, setSelectingReference] = useState(false)
   const [modelState, setModelState] = useState('idle')
   const [retryable, setRetryable] = useState(false)
   const [preferences, setPreferences] = useState<RuntimeInfo['preferences'] | null>(null)
@@ -281,6 +285,7 @@ export default function App() {
     setMediaSettings(null)
     setModelState('idle')
     setRetryable(false)
+    setReferenceCard(null)
     setStarting(false)
     // Main admission/cancellation must not depend on ONNX/audio cleanup succeeding.
     const stopMain = window.deskai.stopSession().catch(cause => setError(describeMediaError(cause)))
@@ -417,6 +422,9 @@ export default function App() {
         case 'host-notice': setServiceState(event.text); break
         case 'coordination-state': setModelState(event.state); break
         case 'dialogue': handleDialogue(event.event); break
+        case 'reference-card': setReferenceCard(event.card); break
+        case 'reference-closed':
+          setReferenceCard(card => card?.id === event.clarificationId ? null : card); break
         case 'session-ended': setError(event.reason); void stop(event.reason); break
         case 'status': setServiceState(event.detail ? `${event.status} · ${event.detail}` : event.status); break
         case 'transcript':
@@ -532,11 +540,21 @@ export default function App() {
     setRetryable(false)
     try {
       const opened = await openTextConversation()
-      const result = await window.deskai.sendText({ sessionId: opened.sessionId, text })
+      const result = await window.deskai.sendText({ sessionId: opened.sessionId, text, turnId: crypto.randomUUID() })
       if (result.accepted) setTextDraft('')
       else setError('本轮输入未被接受，请检查当前状态。')
     } catch (cause) { if (!(cause instanceof Error && cause.message === '会话已结束')) setError(describeMediaError(cause)) }
     finally { setSendingText(false) }
+  }
+
+  const respondToReference = async (clarificationId: string, optionId?: string) => {
+    setSelectingReference(true)
+    setError('')
+    try {
+      if (optionId) await window.deskai.selectReference({ clarificationId, optionId })
+      else await window.deskai.dismissReference(clarificationId)
+    } catch (cause) { setError(describeMediaError(cause)) }
+    finally { setSelectingReference(false) }
   }
 
   const changePreferences = async (personaId: PersonaId, replyLanguage: ReplyLanguage, relationshipMode = preferences?.relationshipMode ?? 'friend') => {
@@ -663,6 +681,16 @@ export default function App() {
     <section className="conversation" aria-label="对话记录">
       {entries.length === 0 ? <p className="empty">可直接输入文字开始对话，或点击“开始语音对话”自动监听和识别。</p> : entries.map(entry => <div className={`entry ${entry.role}`} data-attempt-id={entry.attemptId} key={entry.id}><small>{entry.role === 'user' ? '你' : entry.role === 'assistant' ? `助手${entry.interrupted ? ' · 已中断' : ''}` : '轮次状态'}</small><p>{entry.text}</p></div>)}
     </section>
+    {referenceCard && <fieldset className="reference-card" disabled={selectingReference || modelState === 'planning'}>
+      <legend>{referenceCard.message}</legend>
+      <ol>{referenceCard.options.map(option => <li key={option.id}>
+        <button type="button" className="secondary" onClick={() => void respondToReference(referenceCard.id, option.id)}>
+          <strong>{option.label}</strong>
+          <span>{[option.parentLabel, option.detail, option.execution && workExecutionLabel(option.execution)].filter(Boolean).join(' · ')}</span>
+        </button>
+      </li>)}</ol>
+      <button type="button" className="secondary" onClick={() => void respondToReference(referenceCard.id)}>忽略</button>
+    </fieldset>}
     <form className="text-entry" onSubmit={event => { event.preventDefault(); void sendText() }}>
       <input value={textDraft} onChange={event => setTextDraft(event.target.value)} maxLength={4000} placeholder="输入文字，不需要开启麦克风" aria-label="文字输入" />
       <button type="submit" disabled={!textDraft.trim() || sendingText}>发送</button>

@@ -1,4 +1,5 @@
 import type { WorkAttempt, WorkEvent, WorkStatus, WorkTask } from './types.ts';
+import type { WorkOperation } from './operations.ts';
 import { unresolvedRequests } from './requests.ts';
 
 export interface VerifiedFile { id: string; relativePath: string; sha256: string }
@@ -18,6 +19,14 @@ export interface CompletionAssessment {
 export interface AcceptanceReceipt {
   id: string; taskId: string; attemptId: string; acceptedAt: string; assessment: CompletionAssessment;
 }
+
+const executionLabels: Record<string, string> = { queued: '排队', running: '运行中', waiting: '等待答复', completed: '执行已结束',
+  failed: '执行失败', cancelled: '已取消', interrupted: '已中断', unknown: '状态未知' };
+export const workExecutionLabel = (status: string) => executionLabels[status] ?? status;
+
+const operationLabels: Record<WorkOperation['state'], string> = { accepted: '操作已受理', pending: '等待操作确认',
+  acknowledged: '已收到操作确认', unknown: '操作结果待确认' };
+export const workOperationLabel = (state: WorkOperation['state']) => operationLabels[state];
 
 export const artifactPath = (value: string) => value.replace(/\\/g, '/');
 export function expectedFiles(value: unknown): string[] | undefined {

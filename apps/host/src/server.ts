@@ -2,7 +2,6 @@ import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { DshWorkProvider } from '../../../packages/dsh-adapter/src/work-provider.ts';
 import { loadWorkOptions, WorkRuntime } from '../../../packages/dsh-adapter/src/work-runtime.ts';
-import { parseCoordinationPlan } from '../../../packages/voice-core/src/coordination.ts';
 import { HostApi } from './api.ts';
 import { LocalHost } from './host.ts';
 import type { HostCommand } from './protocol.ts';
@@ -25,7 +24,6 @@ async function serve() {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('INVALID_HOST_COMMAND');
     const input = raw as HostCommand;
     if (input.type === 'shutdown') { setImmediate(stop); return { stopping: true }; }
-    if (input.type === 'plan') return host.execute(parseCoordinationPlan(JSON.stringify(input.plan)), input.appVersion);
     return host.command(input);
   }, async () => {
     const state = await realpath(directory);

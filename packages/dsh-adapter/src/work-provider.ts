@@ -9,7 +9,7 @@ export type { DshWorkTransport } from './session-feed.ts';
 type Active = { sessionId?: string; baseline?: number; connected: boolean; acceptingInput: boolean; cancelRequested: boolean;
   requestIds: Set<string>; submissions: Set<Promise<unknown>>; removedIds: Set<string>;
   enteredTurns: Map<string, number>; endedTurns: Map<number, ProviderResult>; currentTurn?: number;
-  saveBinding: () => void; settleKnown: () => void;
+  saveBinding: () => void; settleKnown: () => void; admitted: (requestId: string) => void;
   cancelRpc?: Promise<void>; cancelNative?: () => Promise<void>; cancelDone?: boolean;
   cancelTimer?: NodeJS.Timeout };
 
@@ -82,7 +82,7 @@ export class DshWorkProvider implements ProviderPort {
       requestIds: new Set(binding?.requestIds), submissions: new Set(), removedIds: new Set(binding?.removedIds),
       enteredTurns: new Map(), endedTurns: new Map(),
       saveBinding: () => emit({ type: 'binding', binding: { baseline: active.baseline!, requestIds: [...active.requestIds], removedIds: [...active.removedIds] } }),
-      settleKnown: () => settleKnown() };
+      settleKnown: () => settleKnown(), admitted: requestId => emit({ type: 'request-admitted', requestId }) };
     this.active.set(request.attemptId, active);
     const feed = new AbortController();
     let settled = false;
@@ -174,8 +174,10 @@ export class DshWorkProvider implements ProviderPort {
         const source = record(data.source);
         if (source?.kind === 'user-question-reply' && typeof source.callId === 'string' && questionCallIds.delete(source.callId))
           report({ type: 'request-resolved', requestId: source.callId });
-        if (typeof source?.rpcId === 'string' && active.requestIds.has(source.rpcId) && active.currentTurn !== undefined)
+        if (typeof source?.rpcId === 'string' && active.requestIds.has(source.rpcId) && active.currentTurn !== undefined) {
           active.enteredTurns.set(source.rpcId, active.currentTurn);
+          report({ type: 'request-admitted', requestId: source.rpcId });
+        }
         return;
       }
       if (event.type === 'turn/end') {
@@ -272,7 +274,7 @@ export class DshWorkProvider implements ProviderPort {
       const authoringInstructions = request.authoring ? `\n\nDeskAI AUIP v0 app authoring:\n${APP_AUTHORING_GUIDE}\nHelper source: ${path.join(this.root, 'packages/app-core/examples/deskai-app-client.js')}.` : '';
       const deliveryInstructions = request.expectedArtifacts?.length ? `\nRequired files for review: ${JSON.stringify(request.expectedArtifacts)}. Deliver these files in the working directory and list newly produced files in the Attempt artifact manifest.` : '';
       if (!active.connected) throw new Error('WORK_SESSION_NOT_READY');
-      await this.submitPrompt(active, request.prompt + artifactInstructions + deliveryInstructions + authoringInstructions);
+      await this.submitPrompt(active, request.prompt + artifactInstructions + deliveryInstructions + authoringInstructions, request.requestId);
       active.acceptingInput = true;
       if (active.cancelRequested) await cancelNative();
       return await within(end, 30 * 60_000, 'WORK_SETTLEMENT_TIMEOUT');
@@ -296,16 +298,15 @@ export class DshWorkProvider implements ProviderPort {
     await active.cancelNative?.();
   }
 
-  async append(attemptId: string, prompt: string): Promise<void> {
+  async append(attemptId: string, prompt: string, requestId?: string): Promise<void> {
     const active = this.active.get(attemptId);
     if (!active?.sessionId || !active.connected || !active.acceptingInput || active.cancelRequested) throw new Error('WORK_SESSION_NOT_READY');
     if (!prompt.trim()) throw new Error('WORK_INPUT_EMPTY');
-    await this.submitPrompt(active, prompt);
+    await this.submitPrompt(active, prompt, requestId);
     if (active.cancelRequested) await active.cancelNative?.();
   }
 
-  private async submitPrompt(active: Active, prompt: string): Promise<void> {
-    const requestId = randomUUID();
+  private async submitPrompt(active: Active, prompt: string, requestId: string = randomUUID()): Promise<void> {
     active.requestIds.add(requestId);
     try { active.saveBinding(); }
     catch (error) { active.requestIds.delete(requestId); throw error; }
@@ -316,6 +317,7 @@ export class DshWorkProvider implements ProviderPort {
       active.submissions.add(submission);
       const receipt = await submission.finally(() => active.submissions.delete(submission));
       if (receipt.accepted !== true) throw new Error('WORK_PROMPT_REJECTED');
+      active.admitted(requestId);
     } catch (error) {
       if (promptRejected.has(errorMessage(error)) && !active.enteredTurns.has(requestId)) {
         active.requestIds.delete(requestId); active.saveBinding(); active.settleKnown();

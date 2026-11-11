@@ -1,8 +1,12 @@
 import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import WebSocket from 'ws';
 import { HOST_DESCRIPTOR, type HostDescriptor } from './api.ts';
 import type { HostCommand, HostSnapshot } from './protocol.ts';
+import { isWorkEffect } from '../../../packages/work-core/src/operations.ts';
+
+class HostResponseError extends Error {}
 
 export class HostClient {
   readonly directory: string;
@@ -23,7 +27,7 @@ export class HostClient {
       ...(command ? { method: 'POST', body: JSON.stringify(command) } : {}) });
     if (!response.ok) {
       const error = (await response.json().catch(() => null)) as { error?: string } | null;
-      throw new Error(error?.error ?? `HOST_HTTP_${response.status}`);
+      throw new HostResponseError(error?.error ?? `HOST_HTTP_${response.status}`);
     }
     return await response.json() as T;
   }
@@ -35,7 +39,16 @@ export class HostClient {
   }
 
   cached(): HostSnapshot | undefined { return this.latest; }
-  async command<T = unknown>(input: HostCommand): Promise<T> { return (await this.request<{ result: T }>('/command', input)).result; }
+  async command<T = unknown>(input: HostCommand): Promise<T> {
+    const command = input.type === 'work' && isWorkEffect(input.command) ? { ...input, operationId: input.operationId ?? randomUUID() } : input;
+    const request = () => this.request<{ result: T }>('/command', command);
+    const replayable = command.type === 'plan' || command.type === 'reference-select' || command.type === 'work' && isWorkEffect(command.command);
+    try { return (await request()).result; }
+    catch (error) {
+      if (!replayable || error instanceof HostResponseError) throw error;
+      return (await request()).result;
+    }
+  }
 
   watch(changed: (snapshot: HostSnapshot) => void): () => void {
     let stopped = false;

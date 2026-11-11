@@ -3,24 +3,26 @@ import { mkdir } from 'node:fs/promises';
 import { WorkHost } from '../../../packages/work-core/src/host.ts';
 import { Workspaces } from '../../../packages/work-core/src/workspace.ts';
 import type { ProviderPort } from '../../../packages/work-core/src/types.ts';
-import { pendingRequests } from '../../../packages/work-core/src/requests.ts';
-import { AppHost, ArtifactRegistry, type AppStateVersion } from '../../../packages/app-core/src/index.ts';
+import { isWorkEffect, type WorkOperationReceipt } from '../../../packages/work-core/src/operations.ts';
+import { AppHost, ArtifactRegistry } from '../../../packages/app-core/src/index.ts';
 import { ArtifactExports } from '../../../packages/app-core/src/exports.ts';
 import type { WorkRuntime } from '../../../packages/dsh-adapter/src/work-runtime.ts';
-import type { CoordinationPlan } from '../../../packages/voice-core/src/coordination.ts';
-import type { HostCommand, HostSnapshot } from './protocol.ts';
+import type { HostCommand, HostSelection, HostSnapshot } from './protocol.ts';
 import { verifyWorkDelivery } from './work-delivery.ts';
+import { ConversationControl } from './conversation-control.ts';
 
 /** Shared Work and application state, independent of the client lifecycle. */
 export class LocalHost {
   readonly work: WorkHost;
   readonly artifacts: ArtifactRegistry;
   readonly apps: AppHost;
+  private readonly control: ConversationControl;
   private readonly exports: ArtifactExports;
   private readonly runtime?: WorkRuntime;
   selectedProjectId = '';
   selectedTaskId = '';
   selectedAppId = '';
+  private focus: HostSelection = {};
   private listeners = new Set<() => void>();
   private constructor(directory: string, provider: ProviderPort, runtime?: WorkRuntime) {
     this.runtime = runtime;
@@ -32,6 +34,7 @@ export class LocalHost {
     });
     this.exports = new ArtifactExports(path.join(directory, 'exports'), this.artifacts);
     this.apps = new AppHost(this.artifacts);
+    this.control = new ConversationControl(this.work, this.apps, () => ({ snapshot: this.snapshot(), focus: { ...this.focus } }), receipt => this.showWorkReceipt(receipt));
   }
   static async open(directory: string, provider: ProviderPort, workspace: string, runtime?: WorkRuntime) {
     const host = new LocalHost(directory, provider, runtime);
@@ -55,16 +58,24 @@ export class LocalHost {
     selectedProjectId: this.selectedProjectId, selectedTaskId: this.selectedTaskId, selectedAppId: this.selectedAppId }; }
   selectApp(sessionId: string) {
     if (!this.apps.listSessions().some(app => app.id === sessionId && app.status === 'connected')) throw new Error('APP_SESSION_UNAVAILABLE');
-    this.selectedAppId = sessionId; this.changed();
+    this.focus.appSessionId = this.selectedAppId = sessionId; this.changed();
   }
   selectProject(projectId: string) {
     if (!this.work.snapshot().projects.some(project => project.id === projectId)) throw new Error('WORK_PROJECT_NOT_FOUND');
+    this.focus.projectId = projectId; this.focus.taskId = undefined;
     this.selectedProjectId = projectId; this.selectedTaskId = ''; this.changed();
   }
   selectTask(taskId: string) {
     const task = this.work.snapshot().tasks.find(task => task.id === taskId);
     if (!task) throw new Error('WORK_TASK_NOT_FOUND');
+    this.focus.taskId = task.id; this.focus.projectId = task.projectId;
     this.selectedTaskId = task.id; this.selectedProjectId = task.projectId; this.changed();
+  }
+  private showWorkReceipt(receipt: WorkOperationReceipt) {
+    if (this.selectedTaskId === receipt.task.id && this.selectedProjectId === receipt.task.projectId) return;
+    if (this.focus.taskId !== receipt.task.id) this.focus.taskId = undefined;
+    if (this.focus.projectId !== receipt.task.projectId) this.focus.projectId = undefined;
+    this.selectedTaskId = receipt.task.id; this.selectedProjectId = receipt.task.projectId; this.changed();
   }
   async command(input: Exclude<HostCommand, { type: 'shutdown' }>): Promise<unknown> {
     switch (input.type) {
@@ -74,7 +85,15 @@ export class LocalHost {
         else if (input.projectId) this.selectProject(input.projectId);
         return;
       }
-      case 'plan': return this.execute(input.plan, input.appVersion);
+      case 'plan-context': return this.control.begin(input.turn);
+      case 'plan': return this.control.execute(input.turn, input.plan);
+      case 'reference-select': return this.control.choose(input.conversationId, input.selection);
+      case 'reference-dismiss': return this.control.dismiss(input.conversationId, input.clarificationId);
+      case 'work-receipt': {
+        const receipt = this.work.receipt(input.operationId);
+        if (!receipt) throw new Error('WORK_OPERATION_NOT_FOUND');
+        return receipt;
+      }
       case 'diff': return this.work.diff(input.attemptId);
       case 'artifact-preview': {
         const { artifact, bytes } = await this.artifacts.readVerified(input.artifactId);
@@ -96,6 +115,12 @@ export class LocalHost {
       default: throw new Error('UNKNOWN_HOST_COMMAND');
     }
     const command = input.command;
+    if (isWorkEffect(command)) {
+      const replay = input.operationId !== undefined && this.work.operation(input.operationId) !== undefined;
+      const receipt = await this.work.dispatch(command, { id: input.operationId });
+      if (!replay) this.showWorkReceipt(receipt);
+      return receipt;
+    }
     switch (command.type) {
       case 'project-create': {
         if (typeof command.path !== 'string' || !command.path.trim() || command.path.length > 4096) throw new Error('WORK_INVALID_INPUT');
@@ -103,56 +128,9 @@ export class LocalHost {
         const project = this.work.createProject(command); this.selectProject(project.id); return project;
       }
       case 'draft-save': return this.work.saveDraft(command);
-      case 'submit': { const task = this.work.submit(command); this.selectTask(task.id); return task; }
       case 'accept': case 'recheck': return this.work.review(command.taskId, command.attemptId, command.type);
-      case 'append': return this.work.append(command.taskId, command.prompt);
-      case 'continue': return this.work.continue(command.taskId, command.prompt);
-      case 'retry': return this.work.retry(command.taskId);
-      case 'cancel': return this.work.cancel(command.taskId);
-      case 'recover': return this.work.reattach(command.taskId);
-      case 'reply': return this.work.reply(command.taskId, command.requestId, command.response);
       default: throw new Error('UNKNOWN_WORK_COMMAND');
     }
-  }
-  async execute(plan: CoordinationPlan, appVersion?: AppStateVersion): Promise<unknown> {
-    if (plan.intent === 'chat') return { kind: 'chat' };
-    if (plan.intent === 'submit') {
-      const task = this.work.submit({ projectId: plan.projectId ?? this.selectedProjectId, title: plan.title, prompt: plan.prompt!,
-        authoring: plan.authoring, expectedArtifacts: plan.expectedArtifacts });
-      this.selectTask(task.id);
-      return { kind: 'task-submitted', taskId: task.id, title: task.title, status: task.status, message: '任务已受理，尚未完成。' };
-    }
-    if (plan.intent === 'status') {
-      const state = this.work.snapshot();
-      if (plan.taskId && !state.tasks.some(task => task.id === plan.taskId)) throw new Error('WORK_TASK_NOT_FOUND');
-      return { kind: 'task-status', requests: pendingRequests(state).filter(event => !plan.taskId || event.taskId === plan.taskId),
-        permissionHandling: '权限请求请打开对应任务的原生会话处理；自动审查已默认开启。',
-        tasks: state.tasks.filter(task => !plan.taskId || task.id === plan.taskId).slice(-10).map(task => {
-          const attempt = state.attempts.find(item => item.id === task.attemptIds.at(-1));
-          const assessment = attempt?.assessment;
-          return { id: task.id, title: task.title, execution: task.status, review: assessment?.review,
-            completeness: assessment?.completeness, missingFiles: assessment?.missingFiles, missingApp: assessment?.missingApp,
-            validationFailures: assessment?.delivery.failures, pendingInputs: assessment?.pendingInputs,
-            pendingPermissions: assessment?.pendingPermissions, acceptedAt: attempt?.acceptance?.acceptedAt,
-            providerReport: attempt?.summary?.slice(0, 1200) };
-        }) };
-    }
-    if (plan.intent === 'app') {
-      if (!appVersion) throw new Error('app_state_version_required');
-      const receipt = await this.apps.invokeAction(plan.sessionId!, plan.action!, plan.payload ?? {}, appVersion);
-      return { kind: 'application-receipt', sessionId: plan.sessionId, action: plan.action, receipt };
-    }
-    this.selectTask(plan.taskId!);
-    if (plan.intent === 'cancel') await this.work.cancel(plan.taskId!);
-    if (plan.intent === 'append') {
-      const task = this.work.snapshot().tasks.find(task => task.id === plan.taskId)!;
-      if (['queued', 'running', 'waiting'].includes(task.status)) await this.work.append(task.id, plan.prompt!);
-      else this.work.continue(task.id, plan.prompt!);
-    }
-    if (plan.intent === 'resume') this.work.continue(plan.taskId!, plan.prompt || '继续完成原任务。');
-    if (plan.intent === 'retry') this.work.retry(plan.taskId!);
-    if (plan.intent === 'reply') await this.work.reply(plan.taskId!, plan.requestId!, plan.response);
-    return { kind: 'task-control-receipt', operation: plan.intent, task: this.work.snapshot().tasks.find(task => task.id === plan.taskId) };
   }
   async close() { await this.work.close(); await this.apps.close(); }
 }

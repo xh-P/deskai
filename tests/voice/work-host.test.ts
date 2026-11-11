@@ -10,17 +10,29 @@ import { pendingRequests } from '../../packages/work-core/src/requests.ts';
 test('work ledger persists facts, replies and continues the native session', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'deskai-work-')); const file = path.join(dir, 'work.json');
   let notify!: (event: ProviderEvent) => void; let finish!: (result: ProviderResult) => void;
+  let finishAppend!: () => void;
+  const appends: Array<string | undefined> = [];
   const requests: Array<{ providerSessionId?: string }> = []; const replies: unknown[] = [];
   const provider: ProviderPort = {
     start: (request, onEvent) => { requests.push(request); notify = onEvent; return new Promise(resolve => { finish = resolve; }); },
-    append: async () => {}, cancel: async () => {}, reply: async (_attempt, request, response) => { replies.push({ request, response }); }
+    append: (_attempt, _prompt, id) => { appends.push(id); return new Promise(resolve => { finishAppend = resolve; }); },
+    cancel: async () => {}, reply: async (_attempt, request, response) => { replies.push({ request, response }); }
   };
   try {
     const host = new WorkHost(file, provider); const project = host.createProject({ name: 'Example', path: dir });
     host.saveDraft({ projectId: project.id, text: 'Draft' }); const task = host.submit({ projectId: project.id, prompt: 'Build' });
     await new Promise(resolve => setImmediate(resolve));
     notify({ type: 'session', providerSessionId: 'native-1' });
-    await host.append(task.id, 'Add details');
+    const command = { type: 'append' as const, taskId: task.id, prompt: 'Add details' };
+    const delivery = { id: 'append-operation' };
+    const pendingAppend = host.dispatch(command, delivery);
+    const replay = await host.dispatch(command, delivery);
+    assert.equal(replay.operation.state, 'pending');
+    assert.deepEqual(appends, [delivery.id]);
+    finishAppend();
+    const confirmed = await pendingAppend;
+    assert.equal(confirmed.operation.state, 'acknowledged');
+    assert.equal(confirmed.execution.runId, replay.execution.runId);
     assert.equal(host.snapshot().events.some(event => event.type === 'input-added'), true);
     notify({ type: 'question', requestId: 'q1', text: 'Which?' });
     assert.equal(host.snapshot().tasks[0].status, 'waiting');
@@ -59,6 +71,10 @@ test('uncertain provider failure is not completion and failed append is not reco
     const task = host.submit({ projectId: project.id, prompt: 'Do work' });
     await new Promise(resolve => setImmediate(resolve));
     await assert.rejects(host.append(task.id, 'More'), /not ready/);
+    const command = { type: 'append' as const, taskId: task.id, prompt: 'After reconnect' };
+    const receipt = await host.dispatch(command, { id: 'uncertain-append' });
+    assert.equal(receipt.operation.state, 'unknown');
+    assert.deepEqual(await host.dispatch(command, { id: 'uncertain-append' }), receipt);
     assert.equal(host.snapshot().events.some(event => event.type === 'input-added'), false);
     rejectRun(new Error('connection lost')); await new Promise(resolve => setImmediate(resolve));
     assert.equal(host.snapshot().tasks[0].status, 'unknown');

@@ -14,6 +14,7 @@ async function main() {
       process.once('SIGINT', close); process.once('SIGTERM', close);
       return;
     }
+    case 'receipt': print(await client.command({ type: 'work-receipt', operationId: args[0] })); return;
     case 'command': print(await client.command(JSON.parse(args.join(' ')) as HostCommand)); return;
     case 'submit': {
       const [projectId, ...prompt] = args;
@@ -31,7 +32,7 @@ async function main() {
     }
     case 'diff': process.stdout.write(await client.command<string>({ type: 'diff', attemptId: args[0] })); return;
     case 'shutdown': print(await client.command({ type: 'shutdown' })); return;
-    default: throw new Error('Usage: host:ctl -- snapshot|watch|submit <project-id> <prompt>|accept <task-id> <attempt-id>|recheck <task-id> <attempt-id>|diff <attempt-id>|export <artifact-id> <absolute-destination>|command <JSON>|shutdown');
+    default: throw new Error('Usage: host:ctl -- snapshot|watch|receipt <operation-id>|submit <project-id> <prompt>|accept <task-id> <attempt-id>|recheck <task-id> <attempt-id>|diff <attempt-id>|export <artifact-id> <absolute-destination>|command <JSON>|shutdown');
   }
 }
 

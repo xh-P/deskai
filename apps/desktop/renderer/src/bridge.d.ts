@@ -1,4 +1,5 @@
 import type { DialogueEvent } from '../../../../packages/voice-core/src/dialogue.ts'
+import type { ReferenceClarification, ReferenceSelection } from '../../../../packages/voice-core/src/coordination.ts'
 import type { HostSnapshot } from '../../../host/src/protocol.ts'
 import type { ExportReceipt } from '../../../../packages/app-core/src/exports.ts'
 import type { AppStateVersion } from '../../../../packages/app-core/src/app-host.ts'
@@ -81,6 +82,8 @@ export type DeskaiEvent =
   | { type: 'host-notice'; text: string }
   | { type: 'coordination-state'; state: 'planning' | 'idle' }
   | { type: 'dialogue'; sessionId: string; event: DialogueEvent }
+  | { type: 'reference-card'; sessionId: string; card: ReferenceClarification }
+  | { type: 'reference-closed'; sessionId: string; clarificationId: string }
   | { type: 'session-ended'; sessionId: string; reason: string }
   | { type: 'status'; sessionId?: string; status: string; detail?: string }
   | { type: 'transcript'; sessionId: string; text: string; utteranceId?: number }
@@ -144,7 +147,9 @@ export interface DeskaiBridge {
   stopSession(): Promise<void>
   pauseCapture(): Promise<void>
   retrySpeech(): Promise<void>
-  sendText(input: { sessionId: string; text: string }): Promise<{ accepted: boolean }>
+  sendText(input: { sessionId: string; text: string; turnId?: string }): Promise<{ accepted: boolean }>
+  selectReference(selection: ReferenceSelection): Promise<unknown>
+  dismissReference(id: string): Promise<void>
   updatePreferences(input: Partial<Preferences>): Promise<Preferences>
   cancelTurn(): Promise<void>
   retryTurn(): Promise<{ accepted: boolean }>

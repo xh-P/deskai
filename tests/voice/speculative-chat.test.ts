@@ -112,7 +112,7 @@ test('matching text cannot reuse a candidate after the authoritative Host receip
   await tick();
   speak(speculative.calls[0], 'pending', '尚未正式受理。');
   assert.deepEqual(events, []);
-  const receipt = { kind: 'task-submitted', taskId: 'work-1' };
+  const receipt = { kind: 'work-operation', operation: { id: 'operation-1', taskId: 'work-1', state: 'accepted' } };
   assert.equal((await dialogue.submit({ ...input, hostContext: { receipt } })).accepted, true);
   assert.equal(speculative.cancels, 1);
   assert.deepEqual(ordinary.calls[0].input.hostContext, { receipt });

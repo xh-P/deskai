@@ -23,7 +23,9 @@ import { loadInputRuntimeConfig, SpeechRuntime } from './speech-runtime.ts';
 import { WakeGate } from './wake-gate.ts';
 import { WorkWindow } from './work-window.ts';
 import { HostClient } from '../../host/src/client.ts';
-import { dialogueContext, planningContext } from '../../host/src/context.ts';
+import { dialogueContext } from '../../host/src/context.ts';
+import type { ControlContext, ControlReceipt } from '../../host/src/conversation-control.ts';
+import type { ReferenceSelection } from '../../../packages/voice-core/src/coordination.ts';
 import { hostDirectory } from '../../host/src/state-directory.ts';
 import type { HostSelection, HostSnapshot } from '../../host/src/protocol.ts';
 import type { ExportReceipt } from '../../../packages/app-core/src/exports.ts';
@@ -32,7 +34,7 @@ import { WorkPlanner } from './work-planner.ts';
 import { ArtifactWindows } from './artifact-window.ts';
 import type { DialogueInput } from '../../../packages/voice-core/src/dialogue.ts';
 import type { WorkUiCommand } from '../../../packages/work-core/src/types.ts';
-import { completionLabel, type CompletionAssessment } from '../../../packages/work-core/src/completion.ts';
+import { completionLabel, workExecutionLabel, workOperationLabel, type CompletionAssessment } from '../../../packages/work-core/src/completion.ts';
 import type { AppStateVersion } from '../../../packages/app-core/src/index.ts';
 import type { EngagementMode } from '../../../packages/app-core/src/auip-contract.ts';
 
@@ -335,7 +337,26 @@ function flushHostNotices() {
       dialogue.isGenerating || outputActive || outputBusy || outputPaused || !pendingNotices.length) return;
   dialogue.announce(pendingNotices.splice(0).join('\n').slice(0, 1800), captureArmed ? 'voice' : 'text');
 }
-async function submitCoordinated(input: DialogueInput): Promise<{ accepted: boolean }> {
+function closeReference(conversationId: string, clarificationId: string) {
+  if (conversationId === sessionId) send({ type: 'reference-closed', sessionId: conversationId, clarificationId });
+}
+
+function announceControl(facts: ControlReceipt) {
+  let text: string;
+  switch (facts.kind) {
+    case 'work-operation':
+      text = `${facts.task.title}，${workOperationLabel(facts.operation.state)}，${workExecutionLabel(facts.execution.status)}。`; break;
+    case 'task-status': text = facts.tasks.map(task => `${task.title}，${workExecutionLabel(task.execution)}。`).join('') || '当前没有任务。'; break;
+    case 'application-receipt': text = facts.receipt.accepted ? '应用已确认执行。' : '应用未接受该动作。'; break;
+    case 'reference-clarification': case 'reference-missing': text = facts.message; break;
+    case 'chat': return;
+  }
+  pendingNotices.push(text);
+  send({ type: 'host-notice', text });
+  flushHostNotices();
+}
+
+async function submitCoordinated(input: DialogueInput, inputId?: string): Promise<{ accepted: boolean }> {
   const current = dialogue, currentSession = sessionId;
   if (!current || !currentSession) return { accepted: false };
   if (!input.speculation) current.discardSpeculative();
@@ -350,20 +371,23 @@ async function submitCoordinated(input: DialogueInput): Promise<{ accepted: bool
   let committed = false;
   try {
     const host = await getDesktopHost();
-    const snapshot = await host.snapshot();
+    const turn = { id: inputId ?? (input.speculation ? `${currentSession}_${input.speculation.inputRevision}` : randomUUID()),
+      conversationId: currentSession, text: input.text };
+    const context = await host.command<ControlContext>({ type: 'plan-context', turn });
     if (revision !== planningRevision || current !== dialogue || currentSession !== sessionId) return { accepted: false };
-    const decision = await planner.plan(input.text, planningContext(snapshot));
+    const decision = await planner.plan(input.text, context.planning);
     if (revision !== planningRevision || current !== dialogue || currentSession !== sessionId || input.isEligible?.() === false) return { accepted: false };
     if (realModelSmoke && decision.intent !== 'chat') throw new Error('VOICE_SMOKE_EXPECTED_CHAT');
     if (decision.intent !== 'chat') current.discardSpeculative(input.speculation);
-    const app = decision.intent === 'app' ? snapshot.apps.find(item => item.id === decision.sessionId) : undefined;
-    const appVersion = app ? { revision: app.revision, generation: app.generation } : undefined;
-    const facts = decision.intent === 'chat' ? { kind: 'chat' } : await host.command({ type: 'plan', plan: decision, appVersion });
+    const facts = decision.intent === 'chat' ? { kind: 'chat' as const } : await host.command<ControlReceipt>({ type: 'plan', turn, plan: decision });
     committed = decision.intent !== 'chat';
     if (committed) input.onAccepted?.();
-    const context = dialogueContext(committed ? await host.snapshot() : snapshot, facts);
     if (revision !== planningRevision || current !== dialogue || currentSession !== sessionId) return { accepted: committed };
-    const result = await current.submit({ ...input, ...(committed ? { onAccepted: undefined, isEligible: undefined } : {}), hostContext: context });
+    if (facts.kind === 'reference-clarification') send({ type: 'reference-card', sessionId: currentSession, card: facts });
+    else if (decision.intent === 'choose') closeReference(currentSession, decision.clarificationId);
+    const result = await current.submit({ ...input, ...(committed ? { onAccepted: undefined, isEligible: undefined, requiresReply: true } : {}),
+      hostContext: committed ? { ...context.chat, receipt: facts } : context.chat });
+    if (committed && !result.accepted && currentSession === sessionId) announceControl(facts);
     return { accepted: committed || result.accepted };
   } catch (error) {
     if (revision !== planningRevision) return { accepted: committed };
@@ -374,6 +398,23 @@ async function submitCoordinated(input: DialogueInput): Promise<{ accepted: bool
     planning = false; send({ type: 'coordination-state', state: 'idle' }); flushHostNotices();
   }
 }
+ipcMain.handle('deskai:reference-select', async (event, selection: ReferenceSelection) => {
+  trusted(event);
+  const conversationId = sessionId;
+  if (!conversationId) throw new Error('COORDINATION_SESSION_UNAVAILABLE');
+  const facts = await (await getDesktopHost()).command<ControlReceipt>({ type: 'reference-select', conversationId, selection });
+  if (conversationId !== sessionId) return facts;
+  closeReference(conversationId, selection.clarificationId);
+  announceControl(facts);
+  return facts;
+});
+ipcMain.handle('deskai:reference-dismiss', async (event, clarificationId: string) => {
+  trusted(event);
+  const conversationId = sessionId;
+  if (!conversationId) return;
+  await (await getDesktopHost()).command({ type: 'reference-dismiss', conversationId, clarificationId });
+  closeReference(conversationId, clarificationId);
+});
 ipcMain.handle('deskai:work-open', async event => { trusted(event); return workWindow.open(await getDesktopHost()); });
 ipcMain.handle('deskai:work-status', event => { trusted(event); return desktopHost?.cached()?.runtime ?? { state: 'stopped' }; });
 ipcMain.handle('deskai:host-snapshot', async event => { trusted(event); return (await getDesktopHost()).snapshot(); });
@@ -640,9 +681,9 @@ ipcMain.handle('deskai:start', async event => {
 ipcMain.handle('deskai:stop', async event => { trusted(event); await stopSession(); });
 ipcMain.handle('deskai:send-text', async (event, value: unknown) => {
   trusted(event);
-  const data = value as { sessionId?: string; text?: string };
+  const data = value as { sessionId?: string; text?: string; turnId?: string };
   if (!data || data.sessionId !== sessionId || !dialogue || typeof data.text !== 'string' || data.text.length > 4000) throw new Error('INVALID_TEXT_INPUT');
-  return submitCoordinated({ text: data.text, source: captureArmed ? 'voice' : 'text' });
+  return submitCoordinated({ text: data.text, source: captureArmed ? 'voice' : 'text' }, data.turnId);
 });
 ipcMain.handle('deskai:cancel-turn', async event => { trusted(event); planningRevision++; await planner?.cancel(); await dialogue?.cancelOutput(); refreshOutput(); });
 ipcMain.handle('deskai:retry-turn', async event => { trusted(event); return dialogue?.retry() ?? { accepted: false }; });

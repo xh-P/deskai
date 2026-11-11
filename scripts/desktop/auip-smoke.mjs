@@ -67,7 +67,7 @@ async function runSmoke() {
     const apps = new Map();
     for (const name of examples) {
       const entry = `examples/${name}/index.html`;
-      const task = await host.command({ type: 'work', command: { type: 'submit', projectId: host.selectedProjectId,
+      const { task } = await host.command({ type: 'work', command: { type: 'submit', projectId: host.selectedProjectId,
         prompt: name, authoring: true, expectedArtifacts: [entry] } });
       const attempt = await until(`${name} delivery`, () => host.snapshot().work.attempts.find(item => item.taskId === task.id && item.assessment));
       assert.equal(attempt.assessment.review, 'review_ready', JSON.stringify(attempt.assessment));

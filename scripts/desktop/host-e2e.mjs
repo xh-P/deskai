@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -28,7 +29,6 @@ if (!process.versions.electron) {
   const { DshWorkProvider } = await import('../../.cache/desktop-main/packages/dsh-adapter/src/work-provider.js');
   const { WorkRuntime } = await import('../../.cache/desktop-main/packages/dsh-adapter/src/work-runtime.js');
   const { LocalHost } = await import('../../.cache/desktop-main/apps/host/src/host.js');
-  const { dialogueContext, planningContext } = await import('../../.cache/desktop-main/apps/host/src/context.js');
   const { WorkPlanner } = await import('../../.cache/desktop-main/apps/desktop/src/work-planner.js');
   const { createChatPort } = await import('../../.cache/desktop-main/apps/desktop/src/chat-runtime.js');
   const temporary = process.env.DESKAI_E2E_TEMP;
@@ -41,6 +41,23 @@ if (!process.versions.electron) {
   const speech = new LocalDshSpeech(root);
   let host, browser, planner, chat;
   const report = { timestamp: new Date().toISOString(), realPlanner: true, realDsh: true, appAuthoredByDsh: !capabilitiesOnly, physicalAudioTested: false, passed: false };
+  const conversationId = randomUUID();
+  async function prepare(text) {
+    const turn = { id: randomUUID(), conversationId, text };
+    const context = await host.command({ type: 'plan-context', turn });
+    const plan = await planner.plan(text, context.planning);
+    return { context, command: { type: 'plan', turn, plan } };
+  }
+  async function answer(text, hostContext) {
+    let reply = '';
+    const turn = await chat.runTurn({ text, mode: 'text', personaId: 'nagato-mainline-post-disappearance', relationshipMode: 'kyon', hostContext }, event => {
+      if (event.type === 'attempt-start') reply = '';
+      if (event.type === 'text') reply += event.text;
+    });
+    assert.equal((await turn.completed).status, 'completed');
+    assert.ok(reply.trim());
+    return reply;
+  }
   async function until(predicate, label, timeout = 360000) {
     const end = Date.now() + timeout;
     while (Date.now() < end) { const result = predicate(); if (result) return result; await new Promise(resolve => setTimeout(resolve, 100)); }
@@ -54,37 +71,44 @@ if (!process.versions.electron) {
       chat = await createChatPort(speech, root);
       report.capabilityAnswers = [];
       for (const text of ['你除了聊天还能做什么？', '你是不是没有 agent 工具，只能对话？']) {
-        const decision = await planner.plan(text, planningContext(host.snapshot()));
-        assert.equal(decision.intent, 'chat');
-        const facts = await host.execute(decision);
-        let reply = '';
-        const turn = await chat.runTurn({ text, mode: 'text', personaId: 'nagato-mainline-post-disappearance', relationshipMode: 'kyon', hostContext: dialogueContext(host.snapshot(), facts) }, event => {
-          if (event.type === 'attempt-start') reply = '';
-          if (event.type === 'text') reply += event.text;
-        });
-        assert.equal((await turn.completed).status, 'completed');
-        assert.ok(reply.trim());
+        const { context, command } = await prepare(text);
+        assert.equal(command.plan.intent, 'chat');
+        const reply = await answer(text, context.chat);
+        assert.match(reply, /任务|委派|后台/);
         report.capabilityAnswers.push({ text, reply });
       }
       assert.equal(host.work.snapshot().tasks.length, 0);
       report.inquiryDidNotSubmit = true;
     }
-    const plan = await planner.plan(capabilitiesOnly
+    const { context, command } = await prepare(capabilitiesOnly
       ? '能帮我在当前项目创建 capability-check.txt，内容为 DESKAI_CAPABILITY_OK 吗？现在就做，只需这个文件。'
-      : '请在当前项目新建一个可与角色协作的 AUIP v0 HTML 待办应用，入口保存为 todo.html。界面极简，只要输入框、添加按钮和列表。按任务提供的协议准备清单与客户端 helper，声明添加待办动作并发布当前列表状态。请自己写待办业务，不直接复制现成的 todo.html，也不要增加测试脚本。', planningContext(host.snapshot()));
-    assert.equal(plan.intent, 'submit');
-    if (!capabilitiesOnly) assert.equal(plan.authoring, true);
-    const receipt = await host.execute(plan); report.submitted = receipt.kind === 'task-submitted';
+      : '请在当前项目新建一个可与角色协作的 AUIP v0 HTML 待办应用，入口保存为 todo.html。界面极简，只要输入框、添加按钮和列表。按任务提供的协议准备清单与客户端 helper，声明添加待办动作并发布当前列表状态。请自己写待办业务，不直接复制现成的 todo.html，也不要增加测试脚本。');
+    assert.equal(command.plan.intent, 'submit');
+    if (!capabilitiesOnly) assert.equal(command.plan.authoring, true);
+    const receipt = await host.command(command);
+    assert.equal(receipt.kind, 'work-operation'); report.submitted = true;
+    const replay = await host.command(command);
+    assert.equal(replay.operation.id, receipt.operation.id);
+    assert.equal(replay.execution.runId, receipt.execution.runId);
     console.log('Host e2e: task delegated to dsh');
     const task = await until(() => {
-      const task = host.work.snapshot().tasks[0];
+      const task = host.work.snapshot().tasks.find(item => item.id === receipt.task.id);
       return task && ['completed', 'failed', 'cancelled', 'unknown', 'interrupted', 'waiting'].includes(task.status) ? task : null;
     }, 'native task settlement');
     report.taskStatus = task.status; assert.equal(task.status, 'completed');
+    assert.equal(task.attemptIds.length, 1);
+    assert.equal(host.work.snapshot().tasks.length, 1);
+    const final = await host.command({ type: 'work-receipt', operationId: command.turn.id });
+    assert.equal(final.operation.state, 'acknowledged');
+    assert.equal(final.execution.requestId, command.turn.id);
+    assert.ok(final.execution.sessionId);
+    report.operation = { id: final.operation.id, taskId: final.task.id, ...final.execution };
     if (capabilitiesOnly) {
       const { readFile } = await import('node:fs/promises');
       report.fileVerified = (await readFile(path.join(project, 'capability-check.txt'), 'utf8')).trim() === 'DESKAI_CAPABILITY_OK';
-      assert.ok(report.fileVerified); report.passed = true; return;
+      assert.ok(report.fileVerified);
+      report.admissionReply = await answer(command.turn.text, { ...context.chat, receipt });
+      report.passed = true; return;
     }
     const artifact = await until(() => host.artifacts.listArtifacts().find(item => item.relativePath === 'todo.html'), 'artifact registration', 10000);
     report.artifactVerified = (await host.artifacts.readVerified(artifact.id)).bytes.length > 0;
@@ -94,9 +118,10 @@ if (!process.versions.electron) {
     const connected = await until(() => host.apps.listSessions().find(session => session.status === 'connected' && session.state), 'application registration', 10000);
     host.selectApp(connected.id); report.appConnected = true;
     console.log('Host e2e: application registered; planning a semantic action');
-    const action = await planner.plan('请在这个待办应用中添加一条待办：明天复核清单。', planningContext(host.snapshot()));
+    const { command: actionCommand } = await prepare('请在这个待办应用中添加一条待办：明天复核清单。');
+    const action = actionCommand.plan;
     assert.equal(action.intent, 'app');
-    const response = await host.execute(action, { revision: connected.revision, generation: connected.generation });
+    const response = await host.command(actionCommand);
     report.actionAccepted = response.receipt.accepted === true;
     report.stateUpdated = JSON.stringify(host.apps.listSessions().find(session => session.id === connected.id)?.state).includes('明天复核清单');
     assert.ok(report.actionAccepted && report.stateUpdated);

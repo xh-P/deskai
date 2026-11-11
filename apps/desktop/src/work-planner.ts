@@ -1,6 +1,7 @@
 import { LocalDshChat } from '../../../packages/dsh-adapter/src/session.ts';
 import type { LocalDshSpeech } from '../../../packages/dsh-adapter/src/speech.ts';
 import { COORDINATOR_PRESET, parseCoordinationPlan, type CoordinationPlan } from '../../../packages/voice-core/src/coordination.ts';
+import type { ControlContext } from '../../host/src/conversation-control.ts';
 
 /** A model decision is a proposal. The Host validates identities before effects. */
 export class WorkPlanner {
@@ -9,7 +10,7 @@ export class WorkPlanner {
   constructor(host: LocalDshSpeech, root: string) {
     this.model = new LocalDshChat(host, root, { preset: COORDINATOR_PRESET, renderInput: input => input.text });
   }
-  async plan(text: string, context: unknown): Promise<CoordinationPlan> {
+  async plan(text: string, context: ControlContext['planning']): Promise<CoordinationPlan> {
     let output = '';
     const turn = await this.model.runTurn({ text: JSON.stringify({ currentUserText: text, recent: this.recent, host: context }) }, event => {
       if (event.type === 'attempt-start') output = '';

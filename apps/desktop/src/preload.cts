@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld('deskai', Object.freeze({
   startSession: () => ipcRenderer.invoke('deskai:start'),
   openConversation: () => ipcRenderer.invoke('deskai:open-conversation'),
   sendText: (input: unknown) => ipcRenderer.invoke('deskai:send-text', input),
+  selectReference: (selection: unknown) => ipcRenderer.invoke('deskai:reference-select', selection),
+  dismissReference: (id: string) => ipcRenderer.invoke('deskai:reference-dismiss', id),
   updatePreferences: (preferences: unknown) => ipcRenderer.invoke('deskai:preferences', preferences),
   getPetSnapshot: () => ipcRenderer.invoke('deskai:pet-snapshot'),
   updatePetPreferences: (preferences: unknown) => ipcRenderer.invoke('deskai:pet-preferences', preferences),

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import type { WorkEvent, WorkSnapshot } from '../../../../packages/work-core/src/types.ts'
 import { pendingRequests } from '../../../../packages/work-core/src/requests.ts'
-import { completionLabel } from '../../../../packages/work-core/src/completion.ts'
+import { completionLabel, workExecutionLabel, workOperationLabel } from '../../../../packages/work-core/src/completion.ts'
+import type { WorkOperationReceipt } from '../../../../packages/work-core/src/operations.ts'
 
 import type { WorkUiCommand } from '../../../../packages/work-core/src/types.ts'
 
@@ -19,7 +20,6 @@ const row: CSSProperties = { display: 'flex', flexWrap: 'wrap', gap: 8, alignIte
 const field: CSSProperties = { maxWidth: '100%', boxSizing: 'border-box', padding: 7 }
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 const display = (value: unknown): string => typeof value === 'string' ? value : JSON.stringify(value, null, 2) ?? ''
-const statusText: Record<string, string> = { queued: '排队', running: '运行中', waiting: '等待答复', completed: '执行已结束', failed: '失败', cancelled: '已取消', interrupted: '已中断', unknown: '状态未知' }
 
 function RequestReply({ event, taskId, send }: { event: WorkEvent; taskId: string; send: (command: WorkUiCommand) => Promise<boolean> }) {
   const [selected, setSelected] = useState<Record<string, string[]>>({})
@@ -88,6 +88,7 @@ export default function WorkPanel({ snapshot, selectedProjectId, selectedTaskId,
   const attempts = task ? snapshot.attempts.filter(item => item.taskId === task.id) : []
   const events = task ? snapshot.events.filter(item => item.taskId === task.id) : []
   const lastAttempt = attempts.at(-1)
+  const lastOperation = task && snapshot.operations?.filter(item => item.taskId === task.id).at(-1)
   const assessment = lastAttempt?.assessment
   const live = !!task && ['queued', 'running', 'waiting'].includes(task.status)
   const unsettled = lastAttempt?.result?.unsettled === true
@@ -104,7 +105,15 @@ export default function WorkPanel({ snapshot, selectedProjectId, selectedTaskId,
   const send = async (command: WorkUiCommand): Promise<boolean> => {
     if (busy) return false
     setBusy(true); setError('')
-    try { await onCommand(command); return true } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); return false } finally { setBusy(false) }
+    try {
+      const result = await onCommand(command)
+      if (object(result).kind === 'work-operation' && (result as WorkOperationReceipt).operation.state === 'unknown') {
+        setError('已记录操作，等待确认原生执行结果。')
+        return false
+      }
+      return true
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); return false }
+    finally { setBusy(false) }
   }
   return <section aria-label="工作任务" style={{ marginTop: 16 }}>
     <h2>工作任务</h2>
@@ -138,12 +147,13 @@ export default function WorkPanel({ snapshot, selectedProjectId, selectedTaskId,
         <strong>任务列表</strong>
         {tasks.length === 0 ? <p>这个项目还没有任务。</p> : <ul>{tasks.map(item => <li key={item.id}>
           <button type="button" aria-pressed={selectedTaskId === item.id} onClick={() => { setFollowup(''); onSelectTask(item.id) }}>{item.title}</button>{' '}
-          <span>{item.status === 'completed' ? completionLabel(snapshot.attempts.find(attempt => attempt.id === item.attemptIds.at(-1))?.assessment) : statusText[item.status]}</span>
+          <span>{item.status === 'completed' ? completionLabel(snapshot.attempts.find(attempt => attempt.id === item.attemptIds.at(-1))?.assessment) : workExecutionLabel(item.status)}</span>
         </li>)}</ul>}
       </div>
     </>}
     {task && <div style={box}>
-      <h3>{task.title}</h3><p>状态：{statusText[task.status] ?? task.status}</p>
+      <h3>{task.title}</h3><p>状态 · {workExecutionLabel(task.status)}</p>
+      {lastOperation && <p>{workOperationLabel(lastOperation.state)} · <code>{lastOperation.id}</code></p>}
       {assessment && !live && <div style={box}>
         <strong>{completionLabel(assessment)}</strong>
         {assessment.missingFiles.length > 0 && <p>待交付文件 · {assessment.missingFiles.join('、')}</p>}
@@ -170,7 +180,7 @@ export default function WorkPanel({ snapshot, selectedProjectId, selectedTaskId,
       <button type="button" disabled={busy || !followup.trim() || (!live && (!lastAttempt?.providerSessionId || unsettled || !task.workspace))} onClick={() => void send({ type: live ? 'append' : 'continue', taskId: task.id, prompt: followup }).then(ok => { if (ok) setFollowup('') })}>{live ? '追加要求' : '继续任务'}</button>
       {live && pending.map(event => <RequestReply key={event.id} event={event} taskId={task.id} send={send} />)}
       <details open><summary>执行记录（{attempts.length}）</summary>{attempts.map((attempt, index) => <div key={attempt.id} style={box}>
-        <strong>第 {index + 1} 次 · {statusText[attempt.status] ?? attempt.status}</strong>
+        <strong>第 {index + 1} 次 · {workExecutionLabel(attempt.status)}</strong>
         {attempt.acceptance && <div>验收回执 · {attempt.acceptance.id}</div>}
         {attempt.providerSessionId && <div>原生会话：{attempt.providerSessionId}</div>}
         {attempt.summary && <p style={{ whiteSpace: 'pre-wrap' }}>执行代理报告 · {attempt.summary}</p>}{attempt.error && <p style={{ color: '#a22', whiteSpace: 'pre-wrap' }}>{attempt.error}</p>}

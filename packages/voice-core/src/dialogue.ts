@@ -8,7 +8,7 @@ import type { ChatAccepted, ChatEvent, ChatPersonaId, ChatSettlement, ChatTurnIn
 export type DialoguePort = { runTurn(input: ChatTurnInput, event: (event: ChatEvent) => void): Promise<ChatAccepted>; cancel(): Promise<ChatSettlement | undefined> };
 export type DialoguePreferences = { personaId: ChatPersonaId; relationshipMode?: RelationshipMode; replyLanguage: ReplyLanguage; voiceId: string };
 export type DialogueInput = { text: string; source: DeliveryMode; continuationOf?: number; utteranceIds?: number[]; hostContext?: unknown;
-  isEligible?: () => boolean; onAccepted?: () => void; noSpeech?: boolean; acousticEcho?: boolean; retryOf?: string;
+  isEligible?: () => boolean; onAccepted?: () => void; noSpeech?: boolean; acousticEcho?: boolean; retryOf?: string; requiresReply?: boolean;
   speculation?: SpeculationIdentity };
 export type DialogueEvent =
   | { type: 'user'; turnId: string; text: string; source: DeliveryMode }
@@ -158,6 +158,7 @@ export class DialogueController {
   }
 
   private decide(input: DialogueInput) {
+    if (input.requiresReply) return 'MODEL';
     return localDecision(input.text, { outputPlaying: this.isGenerating || !!this.outputAttempt, expectsReply: this.expectsReply(),
       noSpeech: input.noSpeech, acousticEcho: input.acousticEcho });
   }
