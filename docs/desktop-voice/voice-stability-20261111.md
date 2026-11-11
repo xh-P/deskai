@@ -2,7 +2,7 @@
 
 ## 已完成 B2 与 B3
 
-实现提交为 `b95b109`，完成状态已更新到[后续优化任务清单](./optimization-backlog.md#b-语音稳定性)。
+实现提交为 `b95b109`，完成状态见[Amadeus 整合任务清单](./optimization-backlog.md#b-语音稳定性)。
 
 - 统一采集 Worklet 在同一个 48 kHz AudioContext 中取得麦克风和播放器音量后的 PCM，按 16 kHz、512 样本送入 Silero。WebRTC 档按 WASM 报告的处理延时对齐原始麦克风、残差和参考。默认档为 `browser-ns`，其麦克风信号由 Chromium 处理。[采集 Worklet](../../apps/desktop/renderer/public/worklets/voice-capture.js)
 - 播报期间优先用残差判断近端。WebRTC 残差过低、原始麦克风有足够能量时，对原始信号运行 VAD。回声判定参考 Amadeus 的 Hann 窗和八频段对数功率，并用归一化波形相关定位参考延时。实录里，同一角色的独立片段也能得到较高的频段相似度，因此本地回声判定要求波形与频段证据同时成立。[本地回声判定](../../apps/desktop/renderer/src/echo-guard.ts) · [Amadeus echo_guard.py](https://github.com/Code-Amadeus/Amadeus/blob/f86c72a366bd8ef99102c4a5ab2bb7a57fc5522e/asr/echo_guard.py)

@@ -1,80 +1,116 @@
-# 后续优化任务清单
+# Amadeus 整合任务清单
 
-更新于 2026-11-11。本文记录优化任务、完成状态与验收要求。
+2026-11-11 核对。上游以 Amadeus `main` 的 `be9b97a` 为基准，DeskAI2 以 `7cf4bbf` 为基准。下面的接入任务都对应可定位的上游实现。优先复用可直接接入的模块、协议和示例，DeskAI2 的适配与验证随条目记录。当前执行器接 dsh，语音输出用 GPT-SoVITS v2。[上游基准提交](https://github.com/Code-Amadeus/Amadeus/commit/be9b97aef2ac3affb200998f8af3aab72aa22f6c) · [当前项目方向](./current-direction.md)
 
-## 实施原则
+## 旧条目核对
 
-- 优先核对并复用 Amadeus 已实现的方案，其次调查适合本项目的开源实现；只有前两者无法满足时再自行设计。尚无上游实现证据的能力，不写成可以直接移植。
-- 每项实施前确认上游提交、源码入口、现有实现差距和最小改造范围；先设计再执行。涉及社区方案时比较维护状况、依赖成本、设备适配与可验证效果，不为引入技术而引入技术。
-- 不要求兼容旧数据、接口和设计；按模块职责改造，不叠补丁。dsh 保留为工作执行器，TTS 暂保留 v2，不提前打包。
-- 每项交付代码、简短说明和对应证据；模拟验证、真实模型验证、物理设备验证分别记录。只做与改动风险相称的检查。
-- 下列编号用于跟踪。每轮交付后更新已完成条目，记录对应提交和验证结果。待实机确认的场景保留在验收记录中。
-
-## A. 对话与任务衔接
-
-- **A1｜多轮指代与任务焦点**：整理“继续这个”“按刚才说的改”“另一个任务”等表达，建立对话、选中项目、任务和应用之间的引用关系。优先核对 Amadeus 的 `work_context`、`reference_catalog` 和 `whole_turn_control`。验收：上下文足够时选对对象；不够时简短澄清，不误改其他任务。
-- **A2｜任务意图与受理回执**：区分能力咨询、讨论方案、明确执行、追加要求和撤销；将提交失败、未受理、已受理明确交给角色。优先核对 `work_planner`、`work_intake`、`work_effect_executor`。验收：角色不能只说“我去做”而没有任务记录；不能重复提交同一请求。
-- **A3｜能力说明与运行状态**：能力说明从实际执行器、连接状态和应用声明生成；结合失败原因说明当前能否执行。验收：未连接不冒充可用，询问能力不启动任务，明确执行请求走真实委派。
+- **B1 已撤下。** 旧条目的错字样例与准确率评测是 DeskAI2 自拟工作。Amadeus 的对话识别有默认留空的 `ASR_CONTEXT`，会把领域术语提示传给 Qwen3-ASR，并过滤提示词回显。Wake 的识别调用传空 context。[识别配置](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/config/catalog/voice/conversation_asr.json) · [对话识别](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/asr/manager.py) · [回显过滤](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/asr/text_filter.py) · [唤醒识别](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/asr/wake_service.py)
+- **旧 H2、H3 的个人记忆移出清单。** 上游架构把个人记忆形成、存储和生命周期列在路线图中。现有可接入的是角色定义和角色知识检索。[架构说明](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/README.md#architecture) · [角色知识实现](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/core/character_rag.py)
+- **旧 G3 收敛为断线后的 AppSession 状态处理。** 上游 v0 在连接丢失时标记断开并作废在途动作。旧条目中的自动重连与跨 Host 重启恢复已撤下。[AUIP 断线行为](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/docs/auip_application_sessions.md#disconnect-and-recovery-behavior) · [AppSession 运行时](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/auip_runtime.py)
+- **旧 D3、E3、F3 收敛到实际入口。** dsh 原生界面接管是本地适配，接入时以 dsh 可观察的事件为准。上游 Work 有 Diff 查看与产物交付，以及针对仅有进度回报和 AUIP 验证失败的有限恢复。旧条目中的通用 Diff 采纳和通用失败自修复已撤下。[Work 产物交付](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/docs/work_artifact_delivery.md) · [Work 恢复分支](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_ledger_coordinator.py)
 
 ## B. 语音稳定性
 
-B2 和 B3 的实现已在 `b95b109` 交付。模拟结果和待实机验收项见[语音稳定性实施记录](./voice-stability-20261111.md)。
+### B2｜AEC 双讲与近端保护｜已完成
 
-- **B1｜识别错字与专有名词**：建立用户实际错字样例，区分唤醒识别和对话识别；检查识别器是否支持上下文或热词，再比较上游和社区方案。验收：在固定中文、日文及专有名词样例上比较修改前后准确率和延迟，不用强制替换同音字掩盖错误。
-- **B2｜AEC 双讲与近端保护｜已完成**。参考 Amadeus 对齐麦克风、AEC 残差与实际播放参考，加入声学回声判定和 WebRTC 原始麦克风回退。离线回放保住了被 AEC 压低的弱首音。耳机与外放下的回声、近端语音完整性和误打断仍待实机验收。
-- **B3｜持续对话与插话恢复｜已完成**。按播放轮次清除旧音频，旧合成退出后启动下一轮。连续三次打断的模拟均验证了新一轮生成 PCM。真实播报、短应答、切换声音和暂停后重开麦克风仍待实机验收。
+同步采集麦克风、AEC 残差和实际播放参考，加入回声判定与 WebRTC 原始麦克风回退。离线回放保住了被压低的弱首音。耳机和外放双讲仍待设备验收。实现提交为 `b95b109`。[上游回声判定](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/asr/echo_guard.py) · [上游实时 AEC](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/tts/aec_realtime.py) · [实施记录](./voice-stability-20261111.md)
 
-## C. 独立 Host 与传输边界
+### B3｜持续对话与插话恢复｜已完成
 
-- **C1｜抽离 Electron 依赖**：将 Host 生命周期、dsh 进程与认证传输从窗口管理中分离；Electron 作为客户端。参考 Amadeus 的 Host/客户端边界，不以复制其语言栈为目标。验收：没有 Electron、角色资源和麦克风也能启动任务服务。
-- **C2｜无界面启动与 API 客户端**：提供服务启动/停止入口、配置、认证、状态订阅和示例客户端，复用同一任务控制接口。验收：API 可提交、查看、取消、继续任务，客户端断开不误终止后台任务。
+确认插话后移交首音，按播放轮次清除旧音频，旧合成退出后接续下一轮。连续三次打断的模拟已通过。真实播报恢复和短应答仍待设备验收。实现提交为 `b95b109`。[上游插话检测](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/asr/barge_in_detector.py) · [上游中断流程](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/interrupt_flow.py) · [实施记录](./voice-stability-20261111.md)
 
-## D. 任务恢复与接管
+### B4｜Qwen3-ASR 推理提速｜待接入
 
-- **D1｜执行器断线重连**：核对 dsh 原生订阅游标、事件重放和会话状态，参考 Amadeus Provider 恢复流程。验收：重连不重复执行、不遗漏终态、不把断线当成功。
-- **D2｜Host 重启恢复**：结合持久任务和原生会话核实真实状态，区分可重新挂接、可继续、需重试和结果未知。依赖 C1/C2 明确服务生命周期。验收：重启后能继续可恢复任务；不会无提示重跑已产生副作用的操作。
-- **D3｜原生会话接管同步**：同步用户在 dsh 界面的回复、授权、追加、取消和完成；明确桌面与原生界面的输入归属。验收：任一入口处理后另一入口状态及时一致，已答问题不继续显示待答。
+上游在短静音时先转写，正式端点可复用有效结果，续说会作废旧结果。它的 Qwen 后端另有 FlashAttention、静态 CUDA Graph 解码和分段耗时记录。[上游端点与转写](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/asr/manager.py) · [上游 Qwen 推理](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/asr/qwen_inference.py) · [上游 CUDA Graph](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/asr/qwen_cuda_graph.py)
 
-## E. 工作区与差异交付
+DeskAI2 已有 160 ms 候选转写、续说重开和常驻 Qwen。本项复用现有端点，在本地 worker 接入上游可用的加速路径。用同一设备和音频比较识别耗时、端点后的等待与转写一致性。[现有端点](../../packages/voice-core/src/index.ts) · [现有 Qwen worker](../../services/asr/qwen_worker.py)
 
-- **E1｜工作区分配与隔离**：优先核对 Amadeus 的工作区预备、Git worktree 和任务归属实现；分别规定 Git 项目与非 Git 项目的路径。验收：并行任务不互相覆盖，已有未提交修改不会被当作本任务成果。
-- **E2｜基线与 Git Diff**：在执行前记录基线，执行后关联新增、修改、删除及二进制文件；增量归属于具体执行尝试。验收：差异准确，失败/取消也能查看已经发生的修改。
-- **E3｜修改结果审阅与应用**：提供文件预览、Diff、采纳或拒绝入口；明确修改回主工作区及冲突处理的时机。依赖 E1/E2。验收：用户能看清改动并决定是否应用，不自动覆盖用户修改。
+### B5｜投机 Chat 的确认与作废｜待适配
 
-## F. 任务完成评估
+上游在 Wake 来源且启用受支持的 Hybrid 后端时，可用候选转写启动 pending 轮。正式文本匹配后放行播报。文本不符、投机槽位超时或对话打断时作废。[上游投机轮](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/speculative_turn.py) · [上游 pending 入口](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/handlers/chat_handler.py)
 
-- **F1｜独立完成状态**：核对 Amadeus `work_completion`，将执行结束、目标完成、部分完成、受阻和待确认分开。验收：代理进程正常结束不直接等于用户目标完成。
-- **F2｜目标与证据核对**：受理时保留用户目标和必要完成条件；结束时核对产物、Diff、执行结果和适量验证。依赖 A2、E2。验收：结论能关联具体证据，缺证据明确标注，不能仅靠执行器自述判定。
-- **F3｜未完成后的继续策略**：按未满足条件继续原任务或提出必要问题，保留尝试记录；避免无限自评和重试。依赖 D2、F1/F2。验收：部分完成可针对剩余项继续，不重复已完成副作用。
-
-## G. 完整应用协作
-
-- **G1｜AUIP 协议对齐**：选定上游版本，逐项核对 manifest、票据、身份绑定、状态修订、语义事件、动作和回执。以源码及协议样例建立差距清单，再替换当前精简协议。验收：选定版本的标准样例可接入，不再仅宣称“受 AUIP 启发”。不要求兼容旧精简协议。
-- **G2｜控制权与用户接管**：核对上游观察/协作/委派模式、控制器租约、动作前置条件和用户优先接管。依赖 G1。验收：用户接管立即生效，过期控制权不能继续动作，角色不能越过应用声明权限。
-- **G3｜断线与跨重启恢复**：先核实上游实际支持范围，再设计缺失部分；绑定准确产物版本、会话身份和当前状态。依赖 C2、G1/G2。验收：恢复后不重放已执行动作，未收到回执的操作保持待核实，不误报成功。
-
-## H. 记忆与人格运行时
-
-- **H1｜来源调查与数据模型**：核实 Amadeus 的记忆部分哪些已实现、哪些仍属规划；不足时调查开源记忆/检索实现。分开用户事实、明确偏好、共同经历、角色设定和临时状态。验收：形成可落地方案及来源证据，不把角色虚构经历写成用户事实。
-- **H2｜记忆写入、更新与删除**：实现带来源和时间的存储、去重、冲突更新及用户查看/更正/删除。依赖 H1。验收：更正能覆盖旧事实，删除后不继续检索或引用。
-- **H3｜检索与人格状态投影**：按本轮相关性检索少量记忆，限制上下文大小；人格状态与声音、语言配置分离。依赖 H2。验收：跨会话记住已保存信息，不虚构回忆、不串角色，检索开销可测。
+本地在确认后才提交模型轮次。先用 dsh 跑通可缓冲、可取消的单轮语音路径，再对照端点到首段 PCM 的耗时。验收覆盖续说后旧轮作废、正式轮只交付一次，以及待确认轮尚未播报或发出任务。[本地对话控制](../../packages/voice-core/src/dialogue.ts) · [本地协调入口](../../apps/desktop/src/main.ts)
 
 ## I. 角色呈现
 
-- **I1｜渲染与资源方案核对**：优先研究 Amadeus 的 SpriteForge/PixiJS、角色资源格式和场景接口，比较现有桌宠可复用部分。验收：确定所需资源、运行成本和迁移边界，资源缺失不阻止普通聊天。
-- **I2｜播放驱动口型与字幕**：以实际音频播放位置驱动口型、字幕和停止状态。依赖 B3、I1。验收：暂停/取消时口型及时停止，字幕不提前展示未播内容。
-- **I3｜表情、动画与场景联动**：建立对话、工作进度、应用事件到角色表现的映射，支持用户关闭或降低动画。依赖 I1/I2、A2、G1。验收：表现与真实状态一致，工作过程不抢占用户当前界面，常驻资源消耗可接受。
+### I2｜播报驱动字幕、口型与表情｜待接入
 
-## 建议推进组合
+上游在播放过程中发布基于 PCM RMS 的嘴部开合值，并在句子开始时更新字幕和角色表现。DeskAI2 已有播放回执和桌宠状态，嘴部目前按定时器开合。先接实际渲染 PCM 的幅度和句子身份，让字幕与表情随播放推进，验收中断后上一轮字幕、口型和表情及时退出。[上游播放](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/tts/playback.py) · [上游字幕](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/tts/subtitle.py) · [上游角色表现](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/character_presentation.py) · [本地桌宠](../../apps/desktop/renderer/src/pet/PetApp.tsx)
 
-1. 先补日常体验中的 A1–A3 和 B1，语音和任务衔接可独立推进。
-2. 再稳住任务底座：C1/C2、D1–D3、E1/E2；同时明确 F1 状态模型。
-3. 接着交付完整工作闭环：E3、F2/F3、G1–G3。
-4. H1、I1 可提前调查；记忆和表现的具体实现按资源准备与用户优先级安排，不阻塞前面的稳定性工作。
+### I1｜SpriteForge 角色包与动画状态｜待接入
 
-## 参考与当前基线
+上游角色包装载器校验 manifest、KTX2 片段和嘴部覆盖层，动画器按状态和意图切换片段。DeskAI2 当前使用 PNG 立绘。选一套可用资源验证载入、待机、说话和中断回到待机，再接 I2 的播放信号。[上游角色包](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/render/character_pack.py) · [上游动画器](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/render/spriteforge_animator.py) · [上游角色包格式示例](https://github.com/Code-Amadeus/Amadeus/tree/be9b97aef2ac3affb200998f8af3aab72aa22f6c/examples/character-pack-minimal)
 
-- 当前实现与验证：[Host 架构记录](./host-architecture-20261110.md)、[AEC 专项记录](./aec-study-20261104.md)。
-- 已有上游对照：[Amadeus 与 DeskAI2](./amadeus-vs-deskai2.md)。已有本地源码基准为 `f86c72a366bd8ef99102c4a5ab2bb7a57fc5522e`；上述源码名称是后续核对入口，不表示本轮已审计所有实现。
-- [Amadeus 仓库](https://github.com/Lucas1479/Amadeus)：各项开始时固定参考提交并记录差异。社区候选方案在对应调查任务中筛选，本计划不提前指定未验证依赖。
+### I3｜Windows 桌面场景挂载与恢复｜待接入
 
+上游 Windows 端用 helper 管理 Lively 场景的挂载、停止与原壁纸恢复，壁纸页渲染角色与字幕。DeskAI2 已有独立桌宠窗口。角色场景跑通后再接入壁纸宿主，验证打开主窗口、退出、挂载失败时的场景和壁纸状态。[上游 Windows 挂载](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/electron/src/main/windowsWallpaper.ts) · [上游 helper](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/electron/resources/windows-wallpaper/helper.py) · [生命周期说明](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/docs/windows_wallpaper_lifecycle.md)
+
+## H. 角色定义与知识
+
+### H1｜可编辑角色定义与会话归属｜部分接入
+
+上游校验、创建和更新角色定义，构建角色提示词，并用角色 ID 约束会话归属。DeskAI2 已有 JSON 角色卡、关系模式和 dsh 人格 preset。移植角色校验与会话归属行为，验证旧会话能识别其角色，切换角色后用对应设定回复。[上游角色存储](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/core/character_profiles.py) · [上游角色提示词](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/llm/character_prompts.py) · [上游会话处理](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/handlers/session_handler.py) · [本地 preset](../../packages/dsh-adapter/src/chat-patch.ts)
+
+### H4｜角色知识 RAG｜待接入
+
+上游可选地加载本地 FAISS 角色知识索引，用距离阈值选取片段注入对话。现有运行入口限定默认角色。DeskAI2 接入这一检索和注入路径时，先用一套现有角色知识验证命中、无命中和缺资源时的对话表现。[上游角色知识实现](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/core/character_rag.py) · [上游示例语料](https://github.com/Code-Amadeus/Amadeus/tree/be9b97aef2ac3affb200998f8af3aab72aa22f6c/examples/character-rag)
+
+## A. 对话与 Work 控制
+
+### A3｜对话可见的 Host 能力｜基础已交付
+
+DeskAI2 已在 `d5c3ae2` 把 Host 能力和真实回执注入普通对话。已有验证覆盖能力询问与实际 dsh 委派。[本地实施记录](./host-architecture-20261110.md#角色误称只能对话修复2026-11-11)
+
+### A1｜Host 提供候选并消歧｜部分接入
+
+上游从 Host 状态生成带类型的引用候选，整轮控制解析 Work 意图，歧义时可生成可选项。DeskAI2 规划器已有最近意图和当前项目、任务、应用上下文。下一步让模型从 Host 候选选择明确 ID。验收同项目有多个任务时的「继续这个」和跨项目指代。[上游候选目录](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/reference_catalog.py) · [上游整轮控制](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/whole_turn_control.py) · [上游消歧](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/reference_clarification.py) · [本地规划器](../../apps/desktop/src/work-planner.ts)
+
+### A2｜已受理 Work 的绑定与回执｜部分接入
+
+上游把已受理操作绑定到 Work、Attempt 与 Provider run，同一操作重放时投影原回执。DeskAI2 已能由模型委派 dsh 并报告结果。补齐受理、执行归属和回执的持久绑定，验证重复投递只产生一次执行。[上游 Work 受理](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_intake.py) · [上游操作执行](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_effect_executor.py) · [本地工作控制](../../apps/desktop/src/desktop-host.ts)
+
+## C. 独立 Host
+
+### C1/C2｜独立服务入口与桌面连接｜部分接入
+
+上游 `server.app` 可独立运行，Electron 管理后端进程并通过本机 WebSocket 连接，Host 执行本地鉴权。DeskAI2 已有随桌面运行的 Host 和认证 HTTP API。将现有工作控制和存储交给独立服务，桌面与无界面客户端通过认证连接同一 Host。验收从命令行启动 Host 后提交任务，退出并重连桌面客户端时仍可查看该任务。[上游 Host 入口](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/app.py) · [上游 Electron 启动](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/electron/src/main/index.ts) · [上游本地鉴权](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/local_auth.py) · [本地 Host API](../../apps/desktop/src/host-api.ts)
+
+## D. 执行会话与恢复
+
+### D1/D2｜Provider 会话绑定与事件恢复｜部分接入
+
+上游按前序 Attempt 和 Provider 能力解析会话附着，用执行身份归属事件并恢复尚未投影的终态。DeskAI2 已保存 dsh 会话 ID 并订阅事件，Host 重启时活动记录先标记中断。将持久 Attempt 与实际 dsh 会话快照、事件和终态对齐，验证断线重连和重启后能够识别可续接与结果未知的任务。[上游会话附着](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/provider_session_binding.py) · [上游事件接收](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/provider_event_ingestion.py) · [上游账本恢复](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_ledger_coordinator.py) · [本地 dsh 适配](../../packages/dsh-adapter/src/work-provider.ts)
+
+## E. 工作区与产物交付
+
+### E1｜按 Work 准备隔离工作区｜待接入
+
+上游为 Git 项目准备并复用任务分支与 worktree，并保留非 Git 的工作区入口。DeskAI2 当前把项目目录交给 dsh。移植 Work 与工作区绑定，在两个任务并行修改时验证执行目录、归属和继续执行的工作区。[上游工作区准备](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/workspace_provisioner.py) · [本地 Work 账本](../../packages/work-core/src/host.ts)
+
+### E2｜按 Attempt 收集 Diff 与交付文件｜部分接入
+
+上游按 Git 基线收集变更，登记归属本次 Attempt 的文件，支持查看统一 Diff、预览文件和经批准的产物导出。DeskAI2 已按执行清单登记、校验和预览产物。补上基线与差异展示，并接入基于已校验产物的导出回执。验收执行前的改动与本次产物能正确归属，批准的导出可追溯。[上游产物与基线](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_artifact_registry.py) · [上游 Diff 解析](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/unified_diff.py) · [上游导出服务](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_export_service.py) · [本地产物登记](../../packages/app-core/src/index.ts)
+
+## F. Work 完成评估
+
+### F1/F2｜执行结果、交付证据与人工验收｜待接入
+
+上游用执行终态、登记产物、验证结果和待处理输入等证据得出完成度与待审状态，并保留用户确认入口。DeskAI2 目前把 dsh 终态写入任务状态，产物校验独立进行。接入评估后，用执行成功但缺少产物、验证失败、交付齐备三个场景检查显示和回执。[上游完成评估](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_completion.py) · [上游结果验证](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/outcome_verification.py) · [本地 Work 账本](../../packages/work-core/src/host.ts)
+
+## G. AUIP 应用协作
+
+### G1｜接通上游 AUIP v0 示例｜部分接入
+
+上游验证产物绑定、一次性票据、manifest、状态修订和动作回执。DeskAI2 已有精简应用协议。按固定提交的协议接通一份上游示例，验证注册、状态上报、声明动作、回执和断线失效。[上游协议校验](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/auip_contract.py) · [上游应用连接](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/auip_app_connection.py) · [上游 2048 示例](https://github.com/Code-Amadeus/Amadeus/tree/be9b97aef2ac3affb200998f8af3aab72aa22f6c/examples/auip-2048) · [本地应用 Host](../../packages/app-core/src/index.ts)
+
+### G2｜控制器租约与用户接管｜待接入
+
+上游 AppSession 校验动作前置条件，并为声明 `controller/v1` 的应用维护租约与用户接管状态。DeskAI2 已按声明动作校验请求。接通 G1 后用带控制器的样例验证动作取得租约、用户接管撤销租约，以及过期修订上的请求被拒绝。[上游运行时](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/auip_runtime.py) · [上游控制器示例](https://github.com/Code-Amadeus/Amadeus/tree/be9b97aef2ac3affb200998f8af3aab72aa22f6c/examples/auip-bullet-hell)
+
+## 推进顺序
+
+1. 从 B4 和 I2 开始验证用户能感知的延迟与表现，再接 I1 和 H1。
+2. 先补 A1、A2 的引用与回执，再推进 C1/C2 和 D1/D2。E1、E2 提供工作区与交付事实，F1/F2 用这些证据更新任务完成度。
+3. G1 跑通上游样例后再做 G2。B5、H4、I3 分别按对话适配、知识素材和角色场景的准备情况推进。
+
+每轮更新对应条目，附实现提交和实际验证结果。物理设备验收记录在对应实施文档中。
