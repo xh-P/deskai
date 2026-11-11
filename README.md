@@ -6,12 +6,15 @@ Windows 桌面语音与任务工作台，当前持续迭代源码，不制作新
 
 - `npm run desktop:dev` 或 `启动桌面语音对话.cmd`：启动桌面应用。开始语音后采集麦克风，关闭窗口默认隐藏到托盘。
 - `npm run host:serve` 启动独立任务 Host，`npm run host:ctl -- snapshot` 查询项目与任务。桌面退出后 Host 继续运行。
+- `npm run host:ctl -- receipt <操作ID>` 查询该操作绑定的执行与回执。
 - `npm start` 或 `start-deepseek-harness.cmd`：已有 DeepSeek Harness 原生 Web 入口。
 - `npm run desktop:build`：TypeScript 检查与开发构建；`npm run desktop:test`：回归测试。
 
 语音使用 SenseVoice 唤醒 → Qwen3-ASR 对话识别 → 可配置 Chat → GPT-SoVITS v2 原生流式合成。Qwen 默认保持驻留。人格、声音和语言独立；桌宠沿用现有实现。
 
 对话可由 AI 委派 dsh 执行后台任务。独立 Host 管理项目、执行恢复、Git 工作区、Diff、产物导出与人工验收。登记的应用可通过 AUIP v0 上报状态并接收声明动作。dsh 默认启用原生自动审查。[Host 与交付](./docs/desktop-voice/host-work-20261112.md) · [Work 验收与 AUIP](./docs/desktop-voice/work-review-auip-20261112.md)
+
+同一句话可能指向多个任务时，桌面会显示选择卡。选定后用原话继续，已受理操作可按操作 ID 找回执行回执。[对话引用与 Work 回执](./docs/desktop-voice/work-control-20261112.md)
 
 ## 配置与资源
 

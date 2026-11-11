@@ -57,17 +57,17 @@ DeskAI2 的 dsh 语音候选可提前请求并缓冲回复。正式输入与 Hos
 
 ## A. 对话与 Work 控制
 
-### A3｜对话可见的 Host 能力｜基础已交付
+### A1｜Host 提供候选并消歧｜已完成
 
-DeskAI2 已在 `d5c3ae2` 把 Host 能力和真实回执注入普通对话。已有验证覆盖能力询问与实际 dsh 委派。[本地实施记录](./host-architecture-20261110.md#角色误称只能对话修复2026-11-11)
+Host 为当前轮提供带类型的候选，校验规划器返回的引用，并在歧义时提供选择卡。选择绑定原请求和执行对象。真实规划器验证了同项目的「继续这个」、按序号选择和跨项目同名任务定位。语音交互仍待设备验收。[上游候选目录](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/reference_catalog.py) · [上游整轮控制](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/whole_turn_control.py) · [上游消歧](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/reference_clarification.py) · [实施记录](./work-control-20261112.md)
 
-### A1｜Host 提供候选并消歧｜部分接入
+### A2｜已受理 Work 的绑定与回执｜已完成
 
-上游从 Host 状态生成带类型的引用候选，整轮控制解析 Work 意图，歧义时可生成可选项。DeskAI2 规划器已有最近意图和当前项目、任务、应用上下文。下一步让模型从 Host 候选选择明确 ID。验收同项目有多个任务时的「继续这个」和跨项目指代。[上游候选目录](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/reference_catalog.py) · [上游整轮控制](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/whole_turn_control.py) · [上游消歧](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/reference_clarification.py) · [本地规划器](../../apps/desktop/src/work-planner.ts)
+已受理操作绑定到 Work、Attempt、Provider run 和实际 dsh 请求。同 ID 同内容重放返回原执行的回执。已验证并发投递、Host 重启后重放及真实 dsh 只产生一次执行。[上游 Work 受理](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_intake.py) · [上游操作执行](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_effect_executor.py) · [实施记录](./work-control-20261112.md)
 
-### A2｜已受理 Work 的绑定与回执｜部分接入
+### A3｜对话可见的 Host 能力｜已完成
 
-上游把已受理操作绑定到 Work、Attempt 与 Provider run，同一操作重放时投影原回执。DeskAI2 已能由模型委派 dsh 并报告结果。补齐受理、执行归属和回执的持久绑定，验证重复投递只产生一次执行。[上游 Work 受理](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_intake.py) · [上游操作执行](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/work_effect_executor.py) · [本地工作控制](../../apps/host/src/host.ts)
+在 `d5c3ae2` 的基础上接入带执行绑定的真实回执。普通对话根据 Host 能力回答，并按受理、执行和验收状态反馈。真实模型验证了能力询问未创建任务，明确要求可委派 dsh 并收到回执。[初版实施记录](./host-architecture-20261110.md#角色误称只能对话修复2026-11-11) · [实施记录](./work-control-20261112.md)
 
 ## C. 独立 Host
 
@@ -110,7 +110,6 @@ Host 校验当前修订、接管前后的授权版本、参数与应用动作前
 ## 推进顺序
 
 1. 从 I2 开始验证播放驱动的表现，再接 I1 和 H1。
-2. A1、A2 继续补引用与回执。C 至 G 的实施与验证已记在对应条目。
-3. H4 和 I3 分别按知识素材和角色场景的准备情况推进。
+2. H4 和 I3 分别按知识素材和角色场景的准备情况推进。
 
 每轮更新对应条目，附实现提交和实际验证结果。物理设备验收记录在对应实施文档中。

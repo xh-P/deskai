@@ -2,6 +2,7 @@
 
 当前入口是源码开发模式 `npm run desktop:dev`。
 
+- [对话引用与 Work 回执](./work-control-20261112.md) 记录 A 的候选消歧、操作绑定和验证。
 - [Work 验收与 AUIP 应用协作](./work-review-auip-20261112.md) 记录 F、G 的验收证据、上游样例和复现入口。
 - [独立 Host、执行恢复与交付](./host-work-20261112.md) 记录 C、D、E 的源码入口、真实 dsh 验证与待确认项。
 - [语音延迟实施记录](./voice-latency-20261111.md) 记录 B4、B5 的 GPU 对照、投机确认和端到端冒烟。

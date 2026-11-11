@@ -1,6 +1,6 @@
 # 当前项目方向
 
-更新于 2026-11-11。当前目标是把 Amadeus 已实现的能力逐项整合进 DeskAI2，以实际使用效果决定取舍。进度见[Amadeus 整合任务清单](./optimization-backlog.md)。
+更新于 2026-11-12。当前目标是把 Amadeus 已实现的能力逐项整合进 DeskAI2，以实际使用效果决定取舍。进度见[Amadeus 整合任务清单](./optimization-backlog.md)。
 
 ## 已撤销的旧约束
 
@@ -23,6 +23,7 @@
 - AEC 继续对照 Amadeus，提供真实可选处理档位；参考其架构建立自己的 Host 工作控制层，由 AI 调用 DeepSeek Harness 执行任务，默认自动审查，不另造工具执行系统。执行器先只接 dsh，应用协作与执行权限分离。
 - 独立 Host、执行恢复和工作区交付见[本轮实施记录](./host-work-20261112.md)，历史资料从[文档索引](./README.md)访问。当前 Agent 工作方式以[项目级 Agent 指引](../../AGENTS.md)为准。
 - Work 完成评估、人工验收和 AUIP v0 应用见[实施与验证记录](./work-review-auip-20261112.md)。
+- 对话候选、选择卡和持久操作回执见[实施与验证记录](./work-control-20261112.md)。
 - AEC 与插话改造、模拟验证及待实机确认项见[语音稳定性实施记录](./voice-stability-20261111.md)。
 
 - 以用户实际体验为主要目标；用户已报告 Amadeus 在延迟、角色动画、人格/记忆和桌面呈现方面更好。
