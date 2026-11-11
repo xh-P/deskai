@@ -11,7 +11,7 @@ const run = args => new Promise((resolve, reject) => {
 export async function buildDesktop() {
   const vadDest = path.join(root, 'apps/desktop/renderer/public/vad');
   await mkdir(vadDest, { recursive: true });
-  for (const file of ['vad.worklet.bundle.min.js', 'silero_vad_v5.onnx']) {
+  for (const file of ['silero_vad_v5.onnx']) {
     await cp(path.join(root, 'node_modules/@ricky0123/vad-web/dist', file), path.join(vadDest, file));
   }
   for (const file of ['ort-wasm-simd-threaded.mjs', 'ort-wasm-simd-threaded.wasm']) {

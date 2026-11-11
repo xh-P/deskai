@@ -87,7 +87,6 @@ test('cleaned playback uses source spans and never inserts skipped code into hea
 class FakeTts implements SpeechPort {
   requests: SynthesisRequest[] = [];
   callbacks: ((pcm: PCMChunk) => void)[] = [];
-  cancelCalls = 0;
   running = 0;
   maxRunning = 0;
   seconds = 4;
@@ -104,7 +103,6 @@ class FakeTts implements SpeechPort {
     callback({ ...request, requestId: 'r', chunkSeq: 0, sampleRate: this.rate, channels: 1, format: 'pcm_s16le', samples, pcm });
     return { chunks: 1, samples, canceled: false };
   }
-  async cancel() { this.cancelCalls++; }
 }
 
 /** Exposes the gap between receiving PCM and the worker's terminal result. */
@@ -307,7 +305,7 @@ test('complete synthesis-to-worklet receipt loop delivers each cleaned sentence 
   let Worklet: any;
   class Processor { port = { onmessage: null, postMessage: (message: Record<string, unknown>) => reports.push(message) }; }
   runInNewContext(readFileSync('apps/desktop/renderer/public/worklets/pcm-player.js', 'utf8'), {
-    AudioWorkletProcessor: Processor, Float32Array, sampleRate: 48000,
+    AudioWorkletProcessor: Processor, Float32Array, sampleRate: 48000, currentFrame: 0,
     registerProcessor: (_name: string, type: unknown) => { Worklet = type; },
   });
   const player = new Worklet();

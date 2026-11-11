@@ -3,7 +3,7 @@ import { FrameVAD } from './frame-vad'
 import type { DeskaiEvent, DialogueSmokeReport, PersonaId, ReplyLanguage, RuntimeInfo, SessionStart, SmokeReport, Preferences } from './bridge'
 import type { DialogueEvent } from '../../../../packages/voice-core/src/dialogue.ts'
 import type { PetPreferencePatch, PetSnapshot } from '../../../../packages/desktop-pet/src/types.ts'
-import { aecCaptureOptions, DEFAULT_AEC_MODE } from '../../../../packages/voice-core/src/aec-mode.ts'
+import { aecCaptureOptions } from '../../../../packages/voice-core/src/aec-mode.ts'
 import { PcmPlayer } from './player'
 import WorkPanel from './WorkPanel'
 import ApplicationsPanel from './ApplicationsPanel'
@@ -99,7 +99,7 @@ export default function App() {
     const player = new PcmPlayer(context, opened.sessionId, report => {
       window.deskai.playbackState(report)
       playbackRef.current = report.playing
-      setPlayback(report.completed ? '播放完成' : report.paused ? '因候选插话暂停' : report.playing ? '播放中' : '空闲')
+      setPlayback(report.completed ? '播放完成' : report.paused ? '已暂停' : report.playing ? '播放中' : '空闲')
     }, message => { setError(message); window.deskai.playbackState({ sessionId: opened.sessionId, generationId: generationFloor.current, playing: false, paused: false, errorCode: 'PLAYER_ERROR' }) })
     try {
       await player.initialize()
@@ -317,7 +317,7 @@ export default function App() {
       currentSession.current = opened.sessionId
       setSession(opened)
       setServiceState(opened.status)
-      const aecMode = (await window.deskai.getRuntime()).aecMode ?? DEFAULT_AEC_MODE
+      const { aecMode, interruption, endpoint } = await window.deskai.getRuntime()
       const output = await ensureOutput(opened)
       context = output.context
       player = output.player
@@ -325,7 +325,10 @@ export default function App() {
       vad = await FrameVAD.new({
         context,
         aecMode,
-        referenceOutput: player.getReferenceOutput(),
+        interruption,
+        endpoint,
+        referenceOutput: output.player.getReferenceOutput(),
+        playbackGeneration: frameEnd => output.player.playbackGeneration(frameEnd),
         onAecStats: stats => {
           if (smoke.current && stats.referenceFrames > 0 && !smoke.current.notes.some(note => note.startsWith('WebRTC AEC3 worklet'))) {
             smoke.current.notes.push(`WebRTC AEC3 worklet processed ${stats.frames} frames with ${stats.referenceFrames} playback-reference frames; Chromium fake media, not physical AEC validation`)
@@ -342,11 +345,15 @@ export default function App() {
           stream = acquired
           return acquired
         },
-        onError: cause => { setError(describeMediaError(cause)); void stop('采集处理失败，已释放麦克风') },
-        onFrameProcessed: (probs, frame16k, sampleStart) => {
-          if (currentSession.current !== opened.sessionId) return
+        onError: cause => {
+          if (epoch !== startEpoch.current) return
+          setError(describeMediaError(cause))
+          void stop('采集处理失败，已释放麦克风')
+        },
+        onFrameProcessed: frame => {
+          if (epoch !== startEpoch.current || currentSession.current !== opened.sessionId) return
           if (smoke.current && playbackRef.current) smoke.current.inputDuringPlayback = true
-          window.deskai.sendFrame({ sessionId: opened.sessionId, sampleStart, samples: new Float32Array(frame16k), probability: probs.isSpeech })
+          window.deskai.sendFrame({ sessionId: opened.sessionId, ...frame })
         },
       })
       const deviceStream = stream as MediaStream | null
@@ -364,8 +371,8 @@ export default function App() {
         smoke.current.notes.push(`Silero v5 initialized; AEC mode ${aecMode}; Chromium fake media, not physical microphone/AEC validation`)
         smokeTimer.current = setTimeout(finishSmoke, 120_000)
         try {
-          const bytes = await window.deskai.loadPlaybackFixture()
-          await player.playFixture(bytes)
+          const { generationId, wav } = await window.deskai.loadPlaybackFixture()
+          await player.playFixture(wav, generationId)
         } catch (cause) { smoke.current.notes.push(`Fixture playback failed: ${describeMediaError(cause)}`) }
       }
     } catch (cause) {
@@ -391,13 +398,16 @@ export default function App() {
   const pauseCapture = useCallback(async () => {
     if (startLock.current) { await stop('已取消麦克风准备'); return; }
     const active = captureRef.current
+    if (!active) return
+    const epoch = ++startEpoch.current
     captureRef.current = null
-    await window.deskai.pauseCapture()
-    if (active) {
-      active.stream.getTracks().forEach(track => { track.onended = null; track.stop() })
-      await active.vad.destroy().catch(() => {})
+    const pauseMain = window.deskai.pauseCapture().catch(cause => setError(describeMediaError(cause)))
+    active.stream.getTracks().forEach(track => { track.onended = null; track.stop() })
+    await active.vad.destroy().catch(() => {})
+    await pauseMain
+    if (epoch === startEpoch.current) {
+      setCaptureState('已暂停麦克风'); setInputState('OFF'); setMediaSettings(null)
     }
-    setCaptureState('已暂停麦克风'); setInputState('OFF'); setMediaSettings(null)
   }, [stop])
 
   useEffect(() => {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createInputController, classifyLocalText, StreamingResampler, encodePcm16Wav } from '../../packages/voice-core/src/index.ts';
-import type { Segment, Ready, Boundary, Interruption, InputDiagnostic } from '../../packages/voice-core/src/index.ts';
+import type { Segment, Ready, Boundary, InputDiagnostic } from '../../packages/voice-core/src/index.ts';
 
 const frame = (probability: number, length = 160, value = 0.2) => ({ samples: new Float32Array(length).fill(value), probability });
 const feed = (controller: ReturnType<typeof createInputController>, probability: number, count: number, length = 160) => {
@@ -195,10 +195,10 @@ test('receipt after a fully transcribed continuation rebuilds only the unsubmitt
 });
 
 test('ending capture drops pre-roll and prior playback context before a new session', async () => {
-  const segments: Segment[] = [], interruptions: Interruption[] = [];
-  const controller = createInputController({ onSegment: segment => segments.push(segment), onInterruption: event => interruptions.push(event) });
+  const segments: Segment[] = [], ready: Ready[] = [];
+  const controller = createInputController({ onSegment: segment => segments.push(segment), transcribe: async () => '嗯', onReady: r => ready.push(r) });
   controller.start('old');
-  controller.setOutput({ generationId: 8, playing: true, expectsReply: false });
+  controller.setOutput({ playing: true, expectsReply: false });
   for (let i = 0; i < 25; i++) controller.pushFrame(frame(0, 160, 0.9));
   controller.stop();
   controller.start('new');
@@ -206,18 +206,16 @@ test('ending capture drops pre-roll and prior playback context before a new sess
   await settle();
   assert.equal(segments[0].startSample, 0);
   assert.ok(Math.abs(segments[0].samples[0] - 0.2) < 1e-6);
-  assert.equal(interruptions.length, 0);
+  assert.equal(ready[0].text, '嗯');
 });
 
-test('punctuation-only ASR restores a candidate without creating a user turn', async () => {
-  const interruptions: Interruption[] = [], ready: Ready[] = [];
-  const controller = createInputController({ transcribe: async () => '……？', onInterruption: event => interruptions.push(event), onReady: event => ready.push(event) });
+test('punctuation-only ASR does not create a user turn', async () => {
+  const ready: Ready[] = [];
+  const controller = createInputController({ transcribe: async () => '……？', onReady: event => ready.push(event) });
   controller.start('a');
-  controller.setOutput({ generationId: 1, playing: true, expectsReply: false });
   feed(controller, 1, 30); feed(controller, 0, 60);
   await settle();
   assert.equal(ready.length, 0);
-  assert.deepEqual(interruptions.map(event => event.type), ['candidate', 'resume']);
 });
 
 test('ASR supplied period after a trailing conditional still waits for continuation', async () => {
@@ -291,37 +289,29 @@ test('unfinished text waits 1200 ms after last speech and new onset revokes read
   assert.equal(controller.isEligible(ready[0].inputRevision, ready[0].utteranceIds), false);
 });
 
-test('playing permits capture, candidate resumes for backchannel, yes after question forwards', async () => {
-  const interrupts: Interruption[] = [], ready: Ready[] = [];
-  let text = '嗯';
-  const controller = createInputController({ transcribe: async () => text, onInterruption: x => interrupts.push(x), onReady: x => ready.push(x) });
-  controller.start('a'); controller.setOutput({ generationId: 7, playing: true, expectsReply: false });
-  feed(controller, 1, 30); feed(controller, 0, 60); await settle();
-  assert.deepEqual(interrupts.map(x => x.type), ['candidate', 'resume']);
+test('backchannels retain playback context after clear, and a short answer after a question forwards', async () => {
+  const ready: Ready[] = [];
+  const controller = createInputController({ transcribe: async () => '嗯', onReady: x => ready.push(x) });
+  controller.start('a'); controller.setOutput({ playing: true, expectsReply: false });
+  feed(controller, 1, 30);
+  controller.setOutput({ playing: false, expectsReply: false });
+  feed(controller, 0, 60); await settle();
   assert.equal(ready.length, 0);
-  controller.setOutput({ generationId: 7, playing: true, expectsReply: true });
+  controller.setOutput({ playing: false, expectsReply: true });
   feed(controller, 1, 30); feed(controller, 0, 60); await settle();
   assert.equal(ready.at(-1)?.text, '嗯');
-  assert.equal(interrupts.at(-1)?.type, 'confirmed');
   assert.equal(classifyLocalText('はい', { playing: true, expectsReply: false }), 'forward');
   assert.equal(classifyLocalText('no', { playing: true, expectsReply: true }), 'forward');
 });
 
-test('800 ms sustained speech confirms without waiting for ASR', () => {
-  const interrupts: Interruption[] = [];
-  const controller = createInputController({ onInterruption: x => interrupts.push(x) });
-  controller.start('a'); controller.setOutput({ generationId: 3, playing: true, expectsReply: false });
-  feed(controller, 1, 80);
-  assert.deepEqual(interrupts.map(x => x.type), ['candidate', 'confirmed']);
-});
-
 test('stop expression is narrow and does not submit LLM text', async () => {
-  const ready: Ready[] = [], interrupts: Interruption[] = [];
-  const controller = createInputController({ transcribe: async () => '别说了', onReady: x => ready.push(x), onInterruption: x => interrupts.push(x) });
-  controller.start('a'); controller.setOutput({ generationId: 1, playing: true, expectsReply: false });
+  const ready: Ready[] = [];
+  let stops = 0;
+  const controller = createInputController({ transcribe: async () => '别说了', onReady: x => ready.push(x), onStop: () => { stops++; } });
+  controller.start('a'); controller.setOutput({ playing: true, expectsReply: false });
   feed(controller, 1, 10); feed(controller, 0, 60); await settle();
   assert.equal(ready.length, 0);
-  assert.equal(interrupts.at(-1)?.type, 'confirmed');
+  assert.equal(stops, 1);
   assert.equal(classifyLocalText('不要停，接着说', { playing: true, expectsReply: false }), 'backchannel');
   assert.equal(classifyLocalText('他说了 stop', { playing: true, expectsReply: false }), 'forward');
 });
@@ -387,38 +377,6 @@ test('queue overflow discards bounded accumulation then accepts a new utterance'
   assert.ok(boundaries.some(x => x.type === 'discarded' && x.reason === 'incomplete ASR accumulation'));
   feed(controller, 1, 10); feed(controller, 0, 60); await settle();
   assert.equal(ready.at(-1)?.text, 'next');
-});
-
-test('empty ASR after candidate restores old playback', async () => {
-  const interrupts: Interruption[] = [];
-  const controller = createInputController({ transcribe: async () => '', onInterruption: x => interrupts.push(x) });
-  controller.start('a'); controller.setOutput({ generationId: 1, playing: true, expectsReply: false });
-  feed(controller, 1, 25); feed(controller, 0, 60); await settle();
-  assert.deepEqual(interrupts.map(x => x.type), ['candidate', 'resume']);
-});
-
-test('ducked playback stays in interruption context for 800 ms confirm and short backchannel resume', async () => {
-  const events: Interruption[] = [];
-  let text = '嗯';
-  const controller = createInputController({ transcribe: async () => text, onInterruption: event => {
-    events.push(event);
-    if (event.type === 'candidate') controller.setOutput({ generationId: event.generationId, playing: false, expectsReply: false });
-  } });
-  controller.start('a'); controller.setOutput({ generationId: 1, playing: true, expectsReply: false });
-  feed(controller, 1, 30); feed(controller, 0, 60); await settle();
-  assert.deepEqual(events.map(x => x.type), ['candidate', 'resume']);
-  controller.setOutput({ generationId: 2, playing: true, expectsReply: false });
-  text = 'new request';
-  feed(controller, 1, 80);
-  assert.deepEqual(events.slice(2).map(x => x.type), ['candidate', 'confirmed']);
-});
-
-test('short false onset never pauses output', async () => {
-  const events: Interruption[] = [];
-  const controller = createInputController({ transcribe: async () => '', onInterruption: x => events.push(x) });
-  controller.start('a'); controller.setOutput({ generationId: 1, playing: true, expectsReply: false });
-  feed(controller, 1, 10); feed(controller, 0, 60); await settle();
-  assert.deepEqual(events, []);
 });
 
 test('PCM is absent from pending text records and released after submission', async () => {

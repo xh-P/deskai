@@ -8,21 +8,6 @@ import { createInputController } from '../../packages/voice-core/src/index.ts';
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 const feed = (c: ReturnType<typeof createInputController>, voiced: boolean, count: number) => { for (let i = 0; i < count; i++) c.pushFrame({ samples: new Float32Array(160), probability: voiced ? 0.9 : 0 }); };
 
-test('configured sustained near-end speech cancels before transcription completes', () => {
-  const events: string[] = [];
-  const controller = createInputController({ interruptionCandidateMs: 64, interruptionConfirmMs: 96,
-    onInterruption: event => events.push(event.type) });
-  controller.start('barge-in');
-  controller.setOutput({ generationId: 1, playing: true, expectsReply: false });
-  feed(controller, true, 6);
-  assert.deepEqual(events, []);
-  feed(controller, true, 2);
-  assert.deepEqual(events, ['candidate']);
-  feed(controller, true, 3);
-  assert.deepEqual(events, ['candidate', 'confirmed']);
-  controller.stop();
-});
-
 test('160ms candidate is invalidated on resumed speech and commits at 350ms', async () => {
   const resolutions: ((s: string) => void)[] = []; const ready: string[] = [];
   const c = createInputController({ candidateWindowMs: 160, continuationWindowMs: 350, unfinishedWindowMs: 350, transcribe: () => new Promise(resolve => resolutions.push(resolve)), onReady: r => ready.push(r.text) });

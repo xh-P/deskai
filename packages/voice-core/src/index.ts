@@ -1,12 +1,12 @@
 export { StreamingResampler } from './resample.ts';
 export { encodePcm16Wav } from './wav.ts';
 import { InputEndpoint } from './input-endpoint.ts';
+import { INPUT_RATE as RATE } from './input-config.ts';
 
 export type Segment = { sessionId: string; utteranceId: number; inputRevision: number; startSample: number; endSample: number; samples: Float32Array; final: boolean };
 export type InputState = 'OFF' | 'LISTENING' | 'CAPTURING' | 'SETTLING' | 'TRANSCRIBING' | 'ACCUMULATING';
 export type Ready = { sessionId: string; inputRevision: number; utteranceIds: number[]; text: string; continuationOf?: number };
 export type Boundary = { type: 'ready' | 'revoked' | 'overflow' | 'discarded'; sessionId: string; inputRevision: number; utteranceIds: number[]; reason?: string };
-export type Interruption = { type: 'candidate' | 'confirmed' | 'resume'; generationId: number; reason: string };
 export type InputDiagnostic = {
   type: 'candidate' | 'audio-slice' | 'reopened' | 'asr-started' | 'asr-finished' | 'asr-failed' | 'asr-stale' | 'commit-ready' | 'cancelled';
   sessionId: string; inputRevision: number; utteranceIds: number[];
@@ -16,7 +16,7 @@ export type InputOptions = {
   transcribe?: (segment: Segment, signal: AbortSignal) => Promise<string>;
   onSegment?: (segment: Segment) => void;
   onInputState?: (state: InputState) => void;
-  onInterruption?: (event: Interruption) => void;
+  onStop?: () => void;
   onBoundary?: (event: Boundary) => void;
   onReady?: (ready: Ready) => void;
   onError?: (error: unknown) => void;
@@ -26,15 +26,12 @@ export type InputOptions = {
   maxSegmentSeconds?: number;
   maxQueuedSegments?: number;
   vadThreshold?: number;
-  interruptionCandidateMs?: number;
-  interruptionConfirmMs?: number;
   /** Silence durations measured from the last voiced sample. */
   continuationWindowMs?: number;
   candidateWindowMs?: number;
   unfinishedWindowMs?: number;
 };
 
-const RATE = 16000;
 // Silero can recognize a weak onset several frames after its first phoneme.
 // Keep PCM, rather than inventing missing text after recognition.
 const PREROLL = 12800;
@@ -89,7 +86,7 @@ export class InputController {
   private activeStart = 0;
   private lastSegmentEnd = 0;
   private silence = 0;
-  private speechRun = 0;
+  private utteranceDuringPlayback = false;
   private lastSpeechEnd = 0;
   private pending = new Map<number, { inputRevision: number; startSample: number; endSample: number; text?: string; failed?: boolean }>();
   private readonly endpoint: InputEndpoint;
@@ -99,13 +96,10 @@ export class InputController {
   private working = false;
   private abortController = new AbortController();
   private readyRevision = -1;
-  private output = { generationId: 0, playing: false, expectsReply: false };
-  private interrupt: 'none' | 'candidate' | 'confirmed' = 'none';
+  private output = { playing: false, expectsReply: false };
   private readonly maxSamples: number;
   private readonly maxQueue: number;
   private readonly threshold: number;
-  private readonly interruptionCandidateSamples: number;
-  private readonly interruptionConfirmSamples: number;
   private readonly releaseThreshold: number;
 
   constructor(options: InputOptions = {}) {
@@ -116,8 +110,6 @@ export class InputController {
     if (this.maxSamples < RATE) throw new RangeError('maxSegmentSeconds must be at least one second');
     this.maxQueue = Math.max(1, Math.floor(options.maxQueuedSegments ?? 8));
     this.threshold = options.vadThreshold ?? 0.5;
-    this.interruptionCandidateSamples = Math.ceil((options.interruptionCandidateMs ?? 200) * RATE / 1000);
-    this.interruptionConfirmSamples = Math.ceil((options.interruptionConfirmMs ?? 800) * RATE / 1000);
     this.releaseThreshold = Math.max(0, this.threshold - 0.15);
   }
 
@@ -144,7 +136,7 @@ export class InputController {
     this.epoch++;
     this.abortController.abort();
     this.queue = [];
-    this.active = []; this.activeLength = this.silence = this.speechRun = 0;
+    this.active = []; this.activeLength = this.silence = 0;
     this.preRoll = []; this.preRollLength = 0;
     this.capturing = false;
     this.endpoint.seal();
@@ -152,17 +144,19 @@ export class InputController {
     this.pending.clear();
     this.hasGap = false;
     this.readyRevision = -1;
-    this.interrupt = 'none';
-    this.output = { ...this.output, playing: false, expectsReply: false };
+    this.utteranceDuringPlayback = false;
+    this.output = { playing: false, expectsReply: false };
     this.sessionId = '';
     this.setState('OFF');
   }
 
-  setOutput(output: { generationId: number; playing: boolean; expectsReply: boolean }): void {
+  setOutput(output: { playing: boolean; expectsReply: boolean }): void {
     this.output = { ...output };
   }
 
-  pushFrame(frame: { samples: Float32Array; probability: number; sampleStart?: number }): void {
+  get hasPendingInput(): boolean { return this.capturing || this.pending.size > 0; }
+
+  pushFrame(frame: { samples: Float32Array; probability: number; sampleStart?: number; duringPlayback?: boolean }): void {
     if (!this.sessionId || !frame.samples.length) return;
     if (frame.samples.length > RATE) throw new RangeError('input frame exceeds one second');
     if (frame.sampleStart !== undefined && frame.sampleStart !== this.cursor) throw new RangeError('noncontiguous input samples');
@@ -178,19 +172,12 @@ export class InputController {
       this.active.push(samples);
       this.activeLength += samples.length;
       if (voiced) {
+        this.utteranceDuringPlayback ||= this.output.playing || frame.duringPlayback === true;
         this.silence = 0;
-        this.speechRun += samples.length;
         this.lastSpeechEnd = this.cursor;
-        this.maybeInterrupt();
-      } else {
-        this.silence += samples.length;
-        this.speechRun = 0;
-      }
+      } else this.silence += samples.length;
       if (this.activeLength >= this.maxSamples) this.emitSegment(false);
-      else if (this.silence >= this.endpoint.candidateSamples) {
-        this.emitSegment(true);
-        if (this.interrupt === 'candidate' && !this.options.transcribe) this.resumeIfFalseAlarm();
-      }
+      else if (this.silence >= this.endpoint.candidateSamples) this.emitSegment(true);
     } else this.addPreRoll(samples);
     this.maybeReady();
   }
@@ -199,7 +186,7 @@ export class InputController {
     const tail = this.endpoint.reopen(sampleStart, this.lastSpeechEnd, this.preRollLength,
       segment => this.readyRevision < 0 && this.pending.has(segment.utteranceId));
     this.revokeReady('new onset');
-    this.interrupt = 'none';
+    if (!tail) this.utteranceDuringPlayback = false;
     this.revision++;
     this.continuationForRevision = this.lastSubmittedUtterance && sampleStart - this.lastSpeechEnd <= UNFINISHED_WAIT
       ? this.lastSubmittedUtterance : 0;
@@ -222,7 +209,7 @@ export class InputController {
     this.capturing = true;
     this.activeLength = this.preRollLength + (tail?.samples.length ?? 0);
     this.preRoll = []; this.preRollLength = 0;
-    this.silence = this.speechRun = 0;
+    this.silence = 0;
     this.setState('CAPTURING');
   }
 
@@ -260,7 +247,7 @@ export class InputController {
     this.activeStart = segment.endSample;
     if (final) {
       if (this.pending.has(segment.utteranceId)) this.endpoint.remember(segment);
-      this.active = []; this.activeLength = this.silence = this.speechRun = 0;
+      this.active = []; this.activeLength = this.silence = 0;
       this.capturing = false;
       this.setState('SETTLING');
     }
@@ -315,7 +302,6 @@ export class InputController {
       this.pending.clear();
       this.endpoint.seal();
       this.hasGap = false;
-      this.resumeIfFalseAlarm();
       this.options.onBoundary?.({ type: 'discarded', sessionId: this.sessionId, inputRevision: this.revision, utteranceIds: ids, reason: 'incomplete ASR accumulation' });
       this.setState('LISTENING');
       return;
@@ -329,23 +315,21 @@ export class InputController {
     if (!text) {
       for (const [id] of records) this.pending.delete(id);
       this.endpoint.seal();
-      this.resumeIfFalseAlarm();
       this.options.onBoundary?.({ type: 'discarded', sessionId: this.sessionId, inputRevision: this.revision, utteranceIds: records.map(([id]) => id), reason: 'empty ASR' });
       this.setState('LISTENING');
       return;
     }
     if (unfinished(text) && this.endpoint.waiting(this.cursor, this.lastSpeechEnd, true)) return;
     const ids = records.map(([id]) => id);
-    const local = classifyLocalText(text, { playing: this.output.playing || this.interrupt === 'candidate', expectsReply: this.output.expectsReply });
+    const local = classifyLocalText(text, { playing: this.utteranceDuringPlayback || this.output.playing, expectsReply: this.output.expectsReply });
     if (local === 'empty') {
       for (const [id] of records) this.pending.delete(id);
       this.endpoint.seal();
-      this.resumeIfFalseAlarm();
       this.setState('LISTENING');
       return;
     }
     if (local === 'stop') {
-      this.confirmInterruption('stop control');
+      this.options.onStop?.();
       for (const [id] of records) this.pending.delete(id);
       this.endpoint.seal();
       this.options.onBoundary?.({ type: 'discarded', sessionId: this.sessionId, inputRevision: this.revision, utteranceIds: ids, reason: 'stop control' });
@@ -355,12 +339,10 @@ export class InputController {
     if (local === 'backchannel') {
       for (const [id] of records) this.pending.delete(id);
       this.endpoint.seal();
-      this.resumeIfFalseAlarm();
       this.options.onBoundary?.({ type: 'discarded', sessionId: this.sessionId, inputRevision: this.revision, utteranceIds: ids, reason: 'backchannel' });
       this.setState('LISTENING');
       return;
     }
-    if (this.interrupt === 'candidate') this.confirmInterruption('recognized speech');
     this.endpoint.seal();
     this.readyRevision = this.revision;
     this.diagnose('commit-ready', ids, records[0][1].startSample, records.at(-1)![1].endSample);
@@ -408,27 +390,6 @@ export class InputController {
   reevaluateReady(): void {
     this.readyRevision = -1;
     this.maybeReady();
-  }
-
-  private maybeInterrupt(): void {
-    if (this.interrupt === 'confirmed' || (!this.output.playing && this.interrupt === 'none')) return;
-    if (this.speechRun >= this.interruptionCandidateSamples && this.interrupt === 'none') {
-      this.interrupt = 'candidate';
-      this.options.onInterruption?.({ type: 'candidate', generationId: this.output.generationId, reason: 'sustained near-end speech' });
-    }
-    if (this.speechRun >= this.interruptionConfirmSamples) this.confirmInterruption('sustained near-end speech');
-  }
-
-  confirmInterruption(reason = 'confirmed by coordinator'): void {
-    if (this.interrupt === 'confirmed') return;
-    this.interrupt = 'confirmed';
-    this.options.onInterruption?.({ type: 'confirmed', generationId: this.output.generationId, reason });
-  }
-
-  resumeIfFalseAlarm(): void {
-    if (this.interrupt !== 'candidate') return;
-    this.interrupt = 'none';
-    this.options.onInterruption?.({ type: 'resume', generationId: this.output.generationId, reason: 'false alarm or backchannel' });
   }
 
   private revokeReady(reason: string): void {

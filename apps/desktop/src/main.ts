@@ -6,6 +6,8 @@ import assert from 'node:assert/strict';
 import { LocalDshSpeech, type SpeechStatus } from '../../../packages/dsh-adapter/src/speech.ts';
 import { createChatPort } from './chat-runtime.ts';
 import { createInputController, encodePcm16Wav, type InputController, type InputDiagnostic } from '../../../packages/voice-core/src/index.ts';
+import { VAD_FRAME_SAMPLES } from '../../../packages/voice-core/src/input-config.ts';
+import type { CaptureFrame } from '../renderer/src/bridge.d.ts';
 import { DialogueController, type DialogueEvent, type DialoguePreferences } from '../../../packages/voice-core/src/dialogue.ts';
 import { validatePersona } from '../../../packages/voice-core/src/prompts.ts';
 import { PERSONA_IDS } from '../../../packages/voice-core/src/persona-catalog.ts';
@@ -94,8 +96,7 @@ const ttsMetrics = { pcmChunks: 0, playedSegments: 0, firstPCMAt: 0, voiceFailur
 const metrics = { inputFrames: 0, inputSamples: 0, inputFramesDuringPlayback: 0, segments: 0,
   asrCompleted: 0, asrSeconds: [] as number[], readyTurns: 0, fixtureTranscriptPrefixMatched: null as boolean | null, sessionStarts: 0,
   firstSegment: null as { startSample: number; endSample: number; final: boolean } | null,
-  inputTimeline: [] as InputDiagnostic[],
-  interruptions: [] as { type: string; at: number }[] };
+  inputTimeline: [] as InputDiagnostic[] };
 let outputActive = false;
 const inputRuntimeConfig = await loadInputRuntimeConfig(root);
 const continuationWindowMs = inputRuntimeConfig.endpoint.continuationWindowMs;
@@ -142,8 +143,7 @@ function trusted(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) {
   if (event.sender !== window?.webContents || event.senderFrame?.url !== page) throw new Error('UNTRUSTED_RENDERER');
 }
 function refreshOutput() {
-  controller?.setOutput({ generationId: dialogue?.generationId ?? 0,
-    playing: outputActive || outputPaused || outputBusy || dialogue?.isGenerating === true, expectsReply: dialogue?.expectsReply() ?? false });
+  controller?.setOutput({ playing: outputActive, expectsReply: dialogue?.expectsReply() ?? false });
 }
 function updateTtsStatus(update: TtsStatus) {
   ttsStatus = update;
@@ -179,7 +179,6 @@ function attachOutput() {
   if (!tts || !activeDialogue || ttsStatus.state !== 'ready') return;
   const activeTts = tts;
   voiceOutput = new SpeechOutput({ sessionId, port: {
-    cancel: () => activeTts.cancel(),
     synthesize: async (request, onPCM, signal) => {
       const started = performance.now();
       const identity = { sessionId: request.sessionId, turnId: request.turnId, segmentId: request.segmentId, generationId: request.generationId };
@@ -329,7 +328,8 @@ async function getDesktopHost(): Promise<DesktopHost> {
   })().catch(error => { hostPreparing = undefined; throw error; });
 }
 function flushHostNotices() {
-  if (shutdown || !dialogue || planning || voiceSubmitting || dialogue.isGenerating || outputActive || outputBusy || outputPaused || !pendingNotices.length) return;
+  if (shutdown || !dialogue || planning || voiceSubmitting || controller?.hasPendingInput ||
+      dialogue.isGenerating || outputActive || outputBusy || outputPaused || !pendingNotices.length) return;
   dialogue.announce(pendingNotices.splice(0).join('\n').slice(0, 1800), captureArmed ? 'voice' : 'text');
 }
 async function submitCoordinated(input: DialogueInput): Promise<{ accepted: boolean }> {
@@ -406,6 +406,7 @@ ipcMain.handle('deskai:app-close', async (event, id: string) => { trusted(event)
 ipcMain.handle('deskai:runtime', event => {
   trusted(event);
   return { smoke: smokeMode, fakeMedia, dialogueSmoke, ttsSmoke, preferences, personas, aecMode: preferences.aecMode ?? inputRuntimeConfig.aec.mode, defaultWakePhrases: inputRuntimeConfig.wake.phrases,
+    interruption: inputRuntimeConfig.interruption, endpoint: inputRuntimeConfig.endpoint,
     speechStatus: lastSpeechStatus, assetStatus, ttsStatus, voices: tts?.registry() ?? [],
     voiceDiagnostics: { continuationWindowMs, input: metrics.inputTimeline, output: outputTimeline.snapshot() },
     versions: { electron: process.versions.electron ?? '', chrome: process.versions.chrome ?? '' } };
@@ -471,7 +472,6 @@ async function openConversation() {
   // the new session can start another task on the same recognizer.
   controller ??= createInputController({
     ...inputRuntimeConfig.endpoint,
-    ...inputRuntimeConfig.interruption,
     maxSegmentSeconds: Math.min(20, catalog.maxDurationSeconds, (catalog.maxAudioBytes - 44) / 32000),
     maxQueuedSegments: 4,
     onDiagnostic: event => {
@@ -499,20 +499,11 @@ async function openConversation() {
           writeFile(path.join(root, 'outputs/desktop-validation/m1/synthetic-first-segment.wav'), encodePcm16Wav(segment.samples)));
       }
     },
-    onInputState: state => { petActivity.input(state); syncPet(); send({ type: 'input-state', sessionId, state }); },
-    onInterruption: event => {
-      metrics.interruptions.push({ type: event.type, at: performance.now() });
-      if (metrics.interruptions.length > 100) metrics.interruptions.shift();
-      if (event.type === 'confirmed') {
-        void dialogue?.cancelOutput().catch(() => {});
-        return;
-      }
-      const command = event.type === 'candidate' ? 'pause' : 'resume';
-      if (voiceOutput) voiceOutput.command(command, event.generationId);
-      else send({ type: 'output-command', sessionId, generationId: event.generationId, command });
-      petActivity.output(command, event.generationId); syncPet();
-      outputPaused = event.type === 'candidate';
+    onInputState: state => {
+      petActivity.input(state); syncPet(); send({ type: 'input-state', sessionId, state });
+      if (state === 'LISTENING') queueMicrotask(flushHostNotices);
     },
+    onStop: stopCurrentReply,
     onBoundary: event => {
       if (event.type === 'discarded' || event.type === 'overflow') for (const id of event.utteranceIds) inputRoutes.delete(id);
       if (event.type === 'overflow' || event.type === 'discarded' && /ASR|queue/.test(event.reason ?? '')) {
@@ -676,22 +667,27 @@ ipcMain.handle('deskai:retry-speech', async event => {
 ipcMain.on('deskai:frame', (event, frame: unknown) => {
   try { trusted(event); } catch { return; }
   if (!captureArmed || !controller || !frame || typeof frame !== 'object') return;
-  const value = frame as { sessionId: string; samples: Float32Array; probability: number; sampleStart: number };
+  const value = frame as CaptureFrame;
   if (value.sessionId !== sessionId) return;
   try {
-    if (!(value.samples instanceof Float32Array) || !value.samples.length || value.samples.length > 2048 ||
+    const generationId = value.interruptGeneration;
+    if (!(value.samples instanceof Float32Array) || value.samples.length !== VAD_FRAME_SAMPLES ||
         !Number.isSafeInteger(value.sampleStart) || value.sampleStart < 0 ||
-        !Number.isFinite(value.probability) || value.probability < 0 || value.probability > 1) throw new Error('INVALID_CAPTURE_FRAME');
+        !Number.isFinite(value.probability) || value.probability < 0 || value.probability > 1 ||
+        generationId !== undefined && (!Number.isSafeInteger(generationId) || generationId < 0)) throw new Error('INVALID_CAPTURE_FRAME');
     metrics.inputFrames++; metrics.inputSamples += value.samples.length;
     if (outputActive) metrics.inputFramesDuringPlayback++;
     if (outputActive || outputBusy || outputPaused || dialogue?.isGenerating || value.probability >= inputRuntimeConfig.endpoint.vadThreshold) wakeGate.touch(performance.now());
     refreshListeningMode();
     refreshOutput();
-    controller.pushFrame(value);
+    controller.pushFrame({ ...value, duringPlayback: generationId !== undefined });
+    if (generationId !== undefined && dialogue?.generationId === generationId) {
+      outputTimeline.record('interruption-confirmed', { sessionId, generationId });
+      void dialogue.cancelOutput(generationId).catch(() => {});
+    }
   } catch {
     captureArmed = false;
     petActivity.setCaptureArmed(false); petActivity.fail(); syncPet();
-    controller.resumeIfFalseAlarm();
     controller.stop();
     updateTray();
     send({ type: 'capture-command', command: 'pause' });
@@ -713,8 +709,10 @@ ipcMain.on('deskai:playback', (event, report: unknown) => {
 });
 ipcMain.handle('deskai:playback-fixture', async event => {
   trusted(event);
-  if (!sessionId) throw new Error('SESSION_NOT_ACTIVE');
-  return new Uint8Array(await readFile(path.join(assetRoot, 'assets/凉宫春日参考语音包/predef_ref/正常有希/01_有希_平静.wav')));
+  if (!dialogue) throw new Error('SESSION_NOT_ACTIVE');
+  const generationId = dialogue.generationId;
+  const wav = new Uint8Array(await readFile(path.join(assetRoot, 'assets/凉宫春日参考语音包/predef_ref/正常有希/01_有希_平静.wav')));
+  return { generationId, wav };
 });
 ipcMain.on('deskai:finish-smoke', (event, input: unknown) => {
   trusted(event);
@@ -722,7 +720,8 @@ ipcMain.on('deskai:finish-smoke', (event, input: unknown) => {
   smokeCompleted = true;
   const data = input as Record<string, unknown>;
   const checks = ['vadInitialized', 'asrTranscriptSeen', 'transcriptRendered', 'inputDuringPlayback'];
-  const passed = data.simulated === true && checks.every(key => data[key] === true) && metrics.asrCompleted > 0 && data.completedSessions === 2;
+  const passed = data.simulated === true && checks.every(key => data[key] === true) && metrics.asrCompleted > 0 &&
+    metrics.inputFramesDuringPlayback > 0 && data.completedSessions === 2;
   const report = { simulated: true, vadInitialized: data.vadInitialized === true,
     asrTranscriptSeen: data.asrTranscriptSeen === true, inputDuringPlayback: data.inputDuringPlayback === true,
     transcriptRendered: data.transcriptRendered === true,

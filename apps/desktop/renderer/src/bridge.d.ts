@@ -4,6 +4,7 @@ import type { WorkUiCommand } from '../../../../packages/work-core/src/types.ts'
 import type { VoiceDiagnostics } from '../../../../packages/voice-core/src/diagnostics.ts'
 import type { PetGeometry, PetPreferencePatch, PetSnapshot } from '../../../../packages/desktop-pet/src/types.ts'
 import type { AecMode } from '../../../../packages/voice-core/src/aec-mode.ts'
+import type { EndpointConfig, InterruptionConfig } from '../../../../packages/voice-core/src/input-config.ts'
 
 import type { ChatPersonaId, RelationshipMode } from '../../../../packages/voice-core/src/persona-catalog.ts'
 export type PersonaId = ChatPersonaId
@@ -19,6 +20,8 @@ export interface RuntimeInfo {
   ttsSmoke?: boolean
   fakeMedia: boolean
   aecMode: NonNullable<Preferences['aecMode']>
+  endpoint: EndpointConfig
+  interruption: InterruptionConfig
   defaultWakePhrases: string[]
   versions: Record<string, string>
   preferences: Preferences
@@ -45,9 +48,10 @@ export interface CaptureFrame {
   sessionId: string
   /** Session-local sample position; a gap must fail instead of deleting audio. */
   sampleStart: number
-  /** Mono, 16 kHz, processed by the configured AEC path and Silero's resampler. */
+  /** Mono, 16 kHz, admitted by the capture and echo guard pipeline. */
   samples: Float32Array
   probability: number
+  interruptGeneration?: number
 }
 
 export interface PlaybackReport {
@@ -142,7 +146,7 @@ export interface DeskaiBridge {
   sendFrame(frame: CaptureFrame): void
   onEvent(listener: (event: DeskaiEvent) => void): () => void
   playbackState(report: PlaybackReport): void
-  loadPlaybackFixture(): Promise<Uint8Array>
+  loadPlaybackFixture(): Promise<{ generationId: number; wav: Uint8Array }>
   finishSmoke(report: SmokeReport): void
   finishDialogueSmoke(report: DialogueSmokeReport): void
 }

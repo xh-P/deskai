@@ -1,19 +1,19 @@
 /** Serialize stateful VAD inference without retaining a complete utterance. */
-export class FrameQueue {
-  private frames: Float32Array[] = []
+export class FrameQueue<T> {
+  private frames: T[] = []
   private running: Promise<void> | null = null
   private closed = false
-  private processFrame: (frame: Float32Array) => Promise<void>
+  private processFrame: (frame: T) => Promise<void>
   private onError: (error: unknown) => void
   private readonly maxFrames: number
 
-  constructor(processFrame: (frame: Float32Array) => Promise<void>, onError: (error: unknown) => void, maxFrames = 8) {
+  constructor(processFrame: (frame: T) => Promise<void>, onError: (error: unknown) => void, maxFrames = 8) {
     this.processFrame = processFrame
     this.onError = onError
     this.maxFrames = maxFrames
   }
 
-  push(frame: Float32Array): void {
+  push(frame: T): void {
     if (this.closed) return
     if (this.frames.length + Number(this.running !== null) >= this.maxFrames) {
       this.closed = true
@@ -21,7 +21,7 @@ export class FrameQueue {
       this.onError(new Error('VAD处理落后，已停止采集；请减少后台负载后重试。'))
       return
     }
-    this.frames.push(frame.slice())
+    this.frames.push(frame)
     this.drain()
   }
 

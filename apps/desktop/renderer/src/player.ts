@@ -9,9 +9,9 @@ export class PcmPlayer {
   private gain: GainNode | null = null
   private volume = 1
   private generationId = -1
-  private fixtureGeneration = 0
   private fixtureQueue: { chunks: Float32Array[]; sampleRate: number } | null = null
   private queuedEstimate = 0
+  private renderStart?: { generationId: number; contextFrame: number }
 
   constructor(
     readonly context: AudioContext,
@@ -29,6 +29,10 @@ export class PcmPlayer {
     this.gain.connect(this.context.destination)
     this.node.port.onmessage = ({ data }: MessageEvent) => {
       if (data.generationId !== this.generationId) return
+      if (data.type === 'render-start') {
+        this.renderStart = { generationId: data.generationId, contextFrame: data.contextFrame }
+        return
+      }
       if (data.type === 'overflow') {
         this.onError('播放缓冲已满，后续音频块未入队。')
         this.report({ ...data, sessionId: this.sessionId, playing: false, paused: false, errorCode: 'PLAYBACK_OVERFLOW' })
@@ -77,18 +81,18 @@ export class PcmPlayer {
     }, [samples.buffer])
   }
 
-  async playFixture(wav: Uint8Array): Promise<void> {
+  async playFixture(wav: Uint8Array, generationId: number): Promise<void> {
     if (!this.node) throw new Error('播放器未初始化')
     const bytes = new Uint8Array(wav)
     const audio = await this.context.decodeAudioData(bytes.buffer)
+    if (!this.node || generationId < this.generationId) return
     if (audio.length === 0) throw new Error('测试音频为空')
     const mono = new Float32Array(audio.length)
     for (let c = 0; c < audio.numberOfChannels; c++) {
       const channel = audio.getChannelData(c)
       for (let i = 0; i < mono.length; i++) mono[i] += channel[i] / audio.numberOfChannels
     }
-    this.fixtureGeneration = Math.max(this.fixtureGeneration + 1, this.generationId + 1)
-    this.generationId = this.fixtureGeneration
+    this.generationId = generationId
     const chunkSize = Math.max(1, Math.floor(audio.sampleRate))
     const chunks: Float32Array[] = []
     for (let start = 0; start < mono.length; start += chunkSize) chunks.push(mono.slice(start, start + chunkSize))
@@ -111,6 +115,7 @@ export class PcmPlayer {
 
   close(): void {
     this.fixtureQueue = null
+    this.renderStart = undefined
     this.node?.port.postMessage({ type: 'clear', generationId: this.generationId + 1 })
     this.node?.disconnect()
     this.gain?.disconnect()
@@ -128,5 +133,10 @@ export class PcmPlayer {
   getReferenceOutput(): AudioNode {
     if (!this.gain) throw new Error('播放器尚未初始化')
     return this.gain
+  }
+
+  playbackGeneration(contextFrameEnd: number): number | undefined {
+    const start = this.renderStart
+    if (start && contextFrameEnd > start.contextFrame) return start.generationId
   }
 }

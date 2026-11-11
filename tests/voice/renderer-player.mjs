@@ -7,7 +7,7 @@ const messages = []
 let Player
 class FakeProcessor { constructor() { this.port = { onmessage: null, postMessage: message => messages.push(message) } } }
 const source = await readFile(resolve('apps/desktop/renderer/public/worklets/pcm-player.js'), 'utf8')
-runInNewContext(source, { AudioWorkletProcessor: FakeProcessor, Float32Array, sampleRate: 48000, registerProcessor: (_name, type) => { Player = type } })
+runInNewContext(source, { AudioWorkletProcessor: FakeProcessor, Float32Array, sampleRate: 48000, currentFrame: 0, registerProcessor: (_name, type) => { Player = type } })
 const player = new Player()
 const send = data => player.port.onmessage({ data })
 const render = () => { const mono = new Float32Array(128); player.process([], [[mono]]); return mono }

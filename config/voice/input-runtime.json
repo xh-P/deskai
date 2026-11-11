@@ -1,7 +1,26 @@
 {
   "aec": { "mode": "browser-ns" },
   "wake": { "phrases": ["长门", "有希", "长门有希", "長門", "長門有希", "ながと", "ゆき", "ながとゆき"], "idleTimeoutMs": 180000 },
-  "interruption": { "interruptionCandidateMs": 64, "interruptionConfirmMs": 96 },
+  "interruption": {
+    "startDelayMs": 350,
+    "confirmMs": 96,
+    "minVoicedMs": 64,
+    "preRollMs": 160,
+    "referenceLookbackMs": 450,
+    "minReferenceRms": 0.004,
+    "minRms": 0.012,
+    "rawMinRmsMultiplier": 1.8,
+    "vadThreshold": 0.55,
+    "echo": {
+      "waveformCorrelation": 0.7,
+      "rawCorrelation": 0.82,
+      "residualCorrelation": 0.5,
+      "residualRatio": 0.9,
+      "strongRawCorrelation": 0.92,
+      "strongRawResidualCorrelation": 0.375,
+      "singleSignalCorrelation": 0.88
+    }
+  },
   "endpoint": { "candidateWindowMs": 160, "continuationWindowMs": 350, "unfinishedWindowMs": 350, "vadThreshold": 0.5 },
   "conversation": { "provider": "qwen-local", "model": "Qwen/Qwen3-ASR-0.6B", "device": "cuda:0", "idlePolicy": "resident" }
 }

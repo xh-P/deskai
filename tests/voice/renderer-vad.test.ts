@@ -22,7 +22,7 @@ test('AEC modes map to distinct capture and actual WASM processing paths', () =>
 
 test('stateful VAD inference remains serial and flushes pending frames on close', async () => {
   const done: (() => void)[] = [], processed: number[] = [], errors: unknown[] = [];
-  const queue = new FrameQueue(frame => new Promise<void>(resolve => {
+  const queue = new FrameQueue<Float32Array>(frame => new Promise<void>(resolve => {
     processed.push(frame[0]); done.push(resolve);
   }), error => errors.push(error));
   queue.push(new Float32Array([1])); queue.push(new Float32Array([2]));
@@ -39,7 +39,7 @@ test('stateful VAD inference remains serial and flushes pending frames on close'
 test('slow VAD has a hard bounded frame queue and signals overload instead of dropping speech silently', async () => {
   let settle!: () => void;
   const errors: unknown[] = [], processed: number[] = [];
-  const queue = new FrameQueue(async frame => { processed.push(frame[0]); await new Promise<void>(resolve => { settle = resolve; }); }, error => errors.push(error), 3);
+  const queue = new FrameQueue<Float32Array>(async frame => { processed.push(frame[0]); await new Promise<void>(resolve => { settle = resolve; }); }, error => errors.push(error), 3);
   queue.push(new Float32Array([1])); queue.push(new Float32Array([2])); queue.push(new Float32Array([3]));
   queue.push(new Float32Array([4]));
   await Promise.resolve();
@@ -47,24 +47,4 @@ test('slow VAD has a hard bounded frame queue and signals overload instead of dr
   assert.deepEqual(processed, [1]);
   settle(); await queue.close();
   assert.deepEqual(processed, [1]);
-});
-
-test('512-sample queued PCM is isolated from producer reuse and processed without gaps', async () => {
-  const complete: (() => void)[] = [], processed: Float32Array[] = [];
-  const queue = new FrameQueue(async frame => {
-    processed.push(frame);
-    await new Promise<void>(resolve => complete.push(resolve));
-  }, error => { throw error; });
-  const frame = Float32Array.from({ length: 512 }, (_, i) => i / 512);
-  queue.push(frame);
-  frame.fill(0.25); queue.push(frame);
-  frame.fill(-1);
-  await Promise.resolve();
-  assert.equal(processed.length, 1);
-  assert.equal(processed[0][511], 511 / 512);
-  complete[0]();
-  for (let i = 0; i < 10; i++) await Promise.resolve();
-  assert.equal(processed.length, 2);
-  assert.ok(processed[1].every(value => value === 0.25));
-  complete[1](); await queue.close();
 });

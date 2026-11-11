@@ -6,6 +6,7 @@ class PcmPlayer extends AudioWorkletProcessor {
     this.offset = 0
     this.renderedSamples = 0
     this.paused = false
+    this.started = false
     this.tick = 0
     this.sequences = new Map()
     this.identity = {}
@@ -25,6 +26,7 @@ class PcmPlayer extends AudioWorkletProcessor {
       this.offset = 0
       this.renderedSamples = 0
       this.paused = false
+      this.started = false
       this.sequences.clear()
       this.identity = {}
       this.report()
@@ -74,6 +76,10 @@ class PcmPlayer extends AudioWorkletProcessor {
     if (!channel) return true
     channel.fill(0)
     if (this.paused) return true
+    if (this.queue.length && !this.started) {
+      this.started = true
+      this.port.postMessage({ type: 'render-start', generationId: this.generationId, contextFrame: currentFrame })
+    }
     for (let i = 0; i < channel.length && this.queue.length; i++) {
       const head = this.queue[0]
       const at = Math.floor(this.offset)

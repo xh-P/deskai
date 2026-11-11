@@ -229,7 +229,8 @@ export class DialogueController {
   }
 
   /** Cancel the current reply, or invalidate playback if the model already settled. */
-  cancelOutput(): Promise<void> {
+  cancelOutput(generationId = this.generation): Promise<void> {
+    if (generationId !== this.generation) return Promise.resolve();
     if (this.active || this.outputAttempt || this.canceling) return this.cancel();
     if (!this.closed) this.emit({ type: 'output-clear', generationId: ++this.generation });
     return Promise.resolve();

@@ -2,7 +2,7 @@ import type { InputDiagnostic } from './index.ts';
 
 export type OutputDiagnostic = {
   type: 'input-submitted' | 'input-accepted' | 'model-started' | 'model-first-text' | 'model-decision'
-    | 'tts-started' | 'tts-first-pcm' | 'tts-finished' | 'tts-failed' | 'playback-enqueued' | 'output-cleared';
+    | 'tts-started' | 'tts-first-pcm' | 'tts-finished' | 'tts-failed' | 'playback-enqueued' | 'interruption-confirmed' | 'output-cleared';
   monotonicMs: number;
   sessionId: string;
   turnId?: string;
