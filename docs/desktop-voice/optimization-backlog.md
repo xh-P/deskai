@@ -19,17 +19,17 @@
 
 确认插话后移交首音，按播放轮次清除旧音频，旧合成退出后接续下一轮。连续三次打断的模拟已通过。真实播报恢复和短应答仍待设备验收。实现提交为 `b95b109`。[上游插话检测](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/asr/barge_in_detector.py) · [上游中断流程](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/interrupt_flow.py) · [实施记录](./voice-stability-20261111.md)
 
-### B4｜Qwen3-ASR 推理提速｜待接入
+### B4｜Qwen3-ASR 推理提速｜已完成
 
 上游在短静音时先转写，正式端点可复用有效结果，续说会作废旧结果。它的 Qwen 后端另有 FlashAttention、静态 CUDA Graph 解码和分段耗时记录。[上游端点与转写](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/asr/manager.py) · [上游 Qwen 推理](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/asr/qwen_inference.py) · [上游 CUDA Graph](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/asr/qwen_cuda_graph.py)
 
-DeskAI2 已有 160 ms 候选转写、续说重开和常驻 Qwen。本项复用现有端点，在本地 worker 接入上游可用的加速路径。用同一设备和音频比较识别耗时、端点后的等待与转写一致性。[现有端点](../../packages/voice-core/src/index.ts) · [现有 Qwen worker](../../services/asr/qwen_worker.py)
+DeskAI2 的常驻 worker 已接入上游 CUDA Graph，保留 160 ms 候选转写和续说重开。同一 RTX 4060 上三段中英日音频的 Graph 推理均提速，9 对转写一致。端点后的等待也用实际 worker 做了对照。[本地 Qwen worker](../../services/asr/qwen_worker.py) · [实施与验证](./voice-latency-20261111.md#b4-已完成)
 
-### B5｜投机 Chat 的确认与作废｜待适配
+### B5｜投机 Chat 的确认与作废｜已完成
 
 上游在 Wake 来源且启用受支持的 Hybrid 后端时，可用候选转写启动 pending 轮。正式文本匹配后放行播报。文本不符、投机槽位超时或对话打断时作废。[上游投机轮](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/speculative_turn.py) · [上游 pending 入口](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/handlers/chat_handler.py)
 
-本地在确认后才提交模型轮次。先用 dsh 跑通可缓冲、可取消的单轮语音路径，再对照端点到首段 PCM 的耗时。验收覆盖续说后旧轮作废、正式轮只交付一次，以及待确认轮尚未播报或发出任务。[本地对话控制](../../packages/voice-core/src/dialogue.ts) · [本地协调入口](../../apps/desktop/src/main.ts)
+DeskAI2 的 dsh 语音候选可提前请求并缓冲回复。正式输入与 Host 上下文匹配后复用，续说或 Work 分支作废候选。真实 dsh 与 GPU TTS 的模拟采集对照通过，开启时确认一轮并作废两轮。[本地对话控制](../../packages/voice-core/src/dialogue.ts) · [本地协调入口](../../apps/desktop/src/main.ts) · [实施与验证](./voice-latency-20261111.md#b5-已完成)
 
 ## I. 角色呈现
 
@@ -109,8 +109,8 @@ DeskAI2 已在 `d5c3ae2` 把 Host 能力和真实回执注入普通对话。已�
 
 ## 推进顺序
 
-1. 从 B4 和 I2 开始验证用户能感知的延迟与表现，再接 I1 和 H1。
+1. 从 I2 开始验证播放驱动的表现，再接 I1 和 H1。
 2. 先补 A1、A2 的引用与回执，再推进 C1/C2 和 D1/D2。E1、E2 提供工作区与交付事实，F1/F2 用这些证据更新任务完成度。
-3. G1 跑通上游样例后再做 G2。B5、H4、I3 分别按对话适配、知识素材和角色场景的准备情况推进。
+3. G1 跑通上游样例后再做 G2。H4 和 I3 分别按知识素材和角色场景的准备情况推进。
 
 每轮更新对应条目，附实现提交和实际验证结果。物理设备验收记录在对应实施文档中。

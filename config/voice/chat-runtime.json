@@ -1,3 +1,4 @@
 {
-  "provider": "dsh-session"
+  "provider": "dsh-session",
+  "speculativeVoice": { "maxAgeMs": 12000 }
 }

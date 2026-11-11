@@ -18,6 +18,8 @@ export type InputOptions = {
   onInputState?: (state: InputState) => void;
   onStop?: () => void;
   onBoundary?: (event: Boundary) => void;
+  onCandidate?: (candidate: Ready) => void;
+  onCandidateRevoked?: (candidate: Ready) => void;
   onReady?: (ready: Ready) => void;
   onError?: (error: unknown) => void;
   /** Timing/ranges only; never raw audio, recognized text or credentials. */
@@ -96,6 +98,7 @@ export class InputController {
   private working = false;
   private abortController = new AbortController();
   private readyRevision = -1;
+  private candidate?: Ready;
   private output = { playing: false, expectsReply: false };
   private readonly maxSamples: number;
   private readonly maxQueue: number;
@@ -129,6 +132,7 @@ export class InputController {
   }
 
   stop(): void {
+    this.invalidateCandidate();
     if (this.sessionId && (this.capturing || this.pending.size)) {
       this.diagnose('cancelled', [...this.pending.keys()],
         this.pending.values().next().value?.startSample ?? this.activeStart, this.cursor);
@@ -183,6 +187,7 @@ export class InputController {
   }
 
   private begin(sampleStart: number): void {
+    this.invalidateCandidate();
     const tail = this.endpoint.reopen(sampleStart, this.lastSpeechEnd, this.preRollLength,
       segment => this.readyRevision < 0 && this.pending.has(segment.utteranceId));
     this.revokeReady('new onset');
@@ -298,6 +303,7 @@ export class InputController {
     const records = [...this.pending.entries()].sort((a,b) => a[0] - b[0]);
     if (this.hasGap) {
       if (this.working || this.queue.length) return;
+      this.invalidateCandidate();
       const ids = records.map(([id]) => id);
       this.pending.clear();
       this.endpoint.seal();
@@ -308,10 +314,20 @@ export class InputController {
     }
     if (!records.length || records.some(([, record]) => record.text === undefined && !record.failed)) return;
     if (records.some(([, record]) => record.failed)) return;
-    // ASR punctuation/language is not a turn boundary. Every language receives
-    // the same acoustic continuation window, including short complete replies.
-    if (this.endpoint.waiting(this.cursor, this.lastSpeechEnd)) return;
     const text = records.map(([, record]) => record.text).filter(Boolean).join(' ').trim();
+    const ids = records.map(([id]) => id);
+    const input: Ready = { sessionId: this.sessionId, inputRevision: this.revision, utteranceIds: ids, text,
+      ...(this.continuationForRevision ? { continuationOf: this.continuationForRevision } : {}) };
+    const local = classifyLocalText(text, { playing: this.utteranceDuringPlayback || this.output.playing, expectsReply: this.output.expectsReply });
+    // The candidate may be used for reversible work. Only the acoustic
+    // endpoint publishes readiness and permits effects.
+    if (!this.candidate && local === 'forward' && this.options.onCandidate) {
+      this.candidate = input;
+      this.options.onCandidate(input);
+    }
+    if (this.endpoint.waiting(this.cursor, this.lastSpeechEnd) ||
+        unfinished(text) && this.endpoint.waiting(this.cursor, this.lastSpeechEnd, true)) return;
+    if (local !== 'forward') this.invalidateCandidate();
     if (!text) {
       for (const [id] of records) this.pending.delete(id);
       this.endpoint.seal();
@@ -319,9 +335,6 @@ export class InputController {
       this.setState('LISTENING');
       return;
     }
-    if (unfinished(text) && this.endpoint.waiting(this.cursor, this.lastSpeechEnd, true)) return;
-    const ids = records.map(([id]) => id);
-    const local = classifyLocalText(text, { playing: this.utteranceDuringPlayback || this.output.playing, expectsReply: this.output.expectsReply });
     if (local === 'empty') {
       for (const [id] of records) this.pending.delete(id);
       this.endpoint.seal();
@@ -347,8 +360,7 @@ export class InputController {
     this.readyRevision = this.revision;
     this.diagnose('commit-ready', ids, records[0][1].startSample, records.at(-1)![1].endSample);
     this.options.onBoundary?.({ type: 'ready', sessionId: this.sessionId, inputRevision: this.revision, utteranceIds: ids });
-    this.options.onReady?.({ sessionId: this.sessionId, inputRevision: this.revision, utteranceIds: ids, text,
-      ...(this.continuationForRevision ? { continuationOf: this.continuationForRevision } : {}) });
+    this.options.onReady?.(input);
   }
 
   isEligible(inputRevision: number, utteranceIds: number[]): boolean {
@@ -360,6 +372,7 @@ export class InputController {
 
   markSubmitted(utteranceIds: number[]): void {
     if (!this.isEligible(this.revision, utteranceIds)) throw new Error('utterances are not eligible');
+    this.invalidateCandidate();
     for (const id of utteranceIds) this.pending.delete(id);
     this.lastSubmittedUtterance = Math.max(this.lastSubmittedUtterance, ...utteranceIds);
     this.readyRevision = -1;
@@ -372,6 +385,7 @@ export class InputController {
     const ids = [...this.pending.keys()];
     if (inputRevision > this.revision || utteranceIds.length === 0 ||
       !utteranceIds.every((id, i) => ids[i] === id && this.pending.get(id)?.text !== undefined)) throw new Error('accepted utterance prefix missing');
+    this.invalidateCandidate();
     for (const id of utteranceIds) this.pending.delete(id);
     this.lastSubmittedUtterance = Math.max(this.lastSubmittedUtterance, ...utteranceIds);
     this.readyRevision = -1;
@@ -380,6 +394,7 @@ export class InputController {
 
   /** Rejected/offline input is explicitly discarded locally, never called submitted. */
   discardReady(utteranceIds: number[]): void {
+    this.invalidateCandidate();
     this.endpoint.discard(utteranceIds);
     for (const id of utteranceIds) this.pending.delete(id);
     this.readyRevision = -1;
@@ -390,6 +405,12 @@ export class InputController {
   reevaluateReady(): void {
     this.readyRevision = -1;
     this.maybeReady();
+  }
+
+  private invalidateCandidate(): void {
+    const candidate = this.candidate;
+    this.candidate = undefined;
+    if (candidate) this.options.onCandidateRevoked?.(candidate);
   }
 
   private revokeReady(reason: string): void {

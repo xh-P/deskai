@@ -2,6 +2,7 @@ import type { InputDiagnostic } from './index.ts';
 
 export type OutputDiagnostic = {
   type: 'input-submitted' | 'input-accepted' | 'model-started' | 'model-first-text' | 'model-decision'
+    | 'speculative-started' | 'speculative-confirmed' | 'speculative-discarded'
     | 'tts-started' | 'tts-first-pcm' | 'tts-finished' | 'tts-failed' | 'playback-enqueued' | 'interruption-confirmed' | 'output-cleared';
   monotonicMs: number;
   sessionId: string;
@@ -13,7 +14,18 @@ export type OutputDiagnostic = {
   utteranceIds?: number[];
   durationMs?: number;
 };
-export type VoiceDiagnostics = { continuationWindowMs: number; input: InputDiagnostic[]; output: OutputDiagnostic[] };
+export type QwenAsrDiagnostics = {
+  startup: {
+    requestedEngine: string; sourceRevision: string | null; device: string; attention: Record<string, string>;
+    preparedCapacities: number[]; fallbackReason: string | null; graphWarmupMs: number; graphCaptureMs: number;
+    graphAllocatedBytes: number; loadMs: number;
+  };
+  latest?: {
+    requestedEngine: string; engine: string; audioMs: number; inferenceMs: number; replaySteps: number;
+    fallbackReason: string | null; timingMs?: Record<string, number>;
+  };
+};
+export type VoiceDiagnostics = { continuationWindowMs: number; input: InputDiagnostic[]; output: OutputDiagnostic[]; asr?: QwenAsrDiagnostics };
 type Fields = Omit<OutputDiagnostic, 'type' | 'monotonicMs'>;
 
 /** A bounded, in-memory timing trace. Explicit fields prevent text/PCM from entering diagnostics. */

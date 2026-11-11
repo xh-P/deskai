@@ -2,12 +2,14 @@ import { DeliveryLedger, PROMPT_VERSION } from './m2.ts';
 import type { DeliveryMode, ReplyLanguage } from './m2.ts';
 import { localDecision } from './policy.ts';
 import { cleanSpeech } from './sentences.ts';
+import { SpeculativeChat, type SpeculationDiagnostic, type SpeculationIdentity } from './speculative-chat.ts';
 import type { ChatAccepted, ChatEvent, ChatPersonaId, ChatSettlement, ChatTurnInput, RelationshipMode } from '../../dsh-adapter/src/session.ts';
 
 export type DialoguePort = { runTurn(input: ChatTurnInput, event: (event: ChatEvent) => void): Promise<ChatAccepted>; cancel(): Promise<ChatSettlement | undefined> };
 export type DialoguePreferences = { personaId: ChatPersonaId; relationshipMode?: RelationshipMode; replyLanguage: ReplyLanguage; voiceId: string };
 export type DialogueInput = { text: string; source: DeliveryMode; continuationOf?: number; utteranceIds?: number[]; hostContext?: unknown;
-  isEligible?: () => boolean; onAccepted?: () => void; noSpeech?: boolean; acousticEcho?: boolean; retryOf?: string };
+  isEligible?: () => boolean; onAccepted?: () => void; noSpeech?: boolean; acousticEcho?: boolean; retryOf?: string;
+  speculation?: SpeculationIdentity };
 export type DialogueEvent =
   | { type: 'user'; turnId: string; text: string; source: DeliveryMode }
   | { type: 'decision'; turnId: string; generationId: number; action: string; local: boolean }
@@ -18,7 +20,7 @@ export type DialogueEvent =
   | { type: 'error'; code: string; message: string; retryable: boolean }
   | { type: 'usage'; usage: unknown };
 type UserHistory = { role: 'user'; turnId: string; text: string };
-type Active = { id: string; epoch: number; generation: number; input: DialogueInput; accepted: boolean; canceled: boolean;
+type Active = { id: string; epoch: number; generation: number; input: DialogueInput; port: DialoguePort; accepted: boolean; canceled: boolean;
   attemptId?: string; failure?: string; finished?: boolean;
   attempts: string[]; completed?: Promise<ChatSettlement> };
 
@@ -26,6 +28,7 @@ type Active = { id: string; epoch: number; generation: number; input: DialogueIn
 export class DialogueController {
   readonly ledger = new DeliveryLedger({ maxAttempts: 16, maxText: 12000 });
   private port: DialoguePort;
+  private readonly speculative?: SpeculativeChat;
   private preferences: DialoguePreferences;
   private emit: (event: DialogueEvent) => void;
   private active?: Active;
@@ -46,8 +49,10 @@ export class DialogueController {
   private waitExpiresAt = 0;
   private waitTimer?: ReturnType<typeof setTimeout>;
 
-  constructor(port: DialoguePort, preferences: DialoguePreferences, emit: (event: DialogueEvent) => void) {
+  constructor(port: DialoguePort, preferences: DialoguePreferences, emit: (event: DialogueEvent) => void,
+    speculative?: { port: DialoguePort; maxAgeMs: number; diagnostic?: (event: SpeculationDiagnostic) => void }) {
     this.port = port; this.preferences = { ...preferences }; this.emit = emit;
+    if (speculative) this.speculative = new SpeculativeChat(speculative.port, speculative.maxAgeMs, speculative.diagnostic);
   }
 
   get isGenerating(): boolean { return !!this.active && !this.active.finished && !this.active.canceled && !this.active.failure; }
@@ -59,7 +64,17 @@ export class DialogueController {
     return this.ledger.getPendingQuestion()?.status === 'awaiting';
   }
 
+  prepareSpeculative(input: DialogueInput): boolean {
+    if (!this.speculative || !input.speculation || input.source !== 'voice' || this.closed || this.blocked ||
+        this.active || this.outputAttempt || this.canceling || this.queued || input.text.length > 4000) return false;
+    if (this.decide(input) !== 'MODEL') return false;
+    return this.speculative.prepare(input.speculation, this.chatRequest(input));
+  }
+
+  discardSpeculative(identity?: SpeculationIdentity): void { this.speculative?.discard(identity); }
+
   submit(input: DialogueInput): Promise<{ accepted: boolean; local?: string }> {
+    if (!input.speculation) this.discardSpeculative();
     if (this.closed) return Promise.resolve({ accepted: false });
     if (!input.text.trim() || input.text.length > 4000) return Promise.reject(new Error('INPUT_LENGTH'));
     if (this.queued >= 2) {
@@ -67,15 +82,16 @@ export class DialogueController {
       return Promise.resolve({ accepted: false });
     }
     const epoch = this.epoch;
+    const eligible = () => !this.closed && epoch === this.epoch && input.isEligible?.() !== false;
     this.queued++;
     const work = this.queue.then(async () => {
-      if (this.closed || epoch !== this.epoch || input.isEligible?.() === false) return { accepted: false };
+      if (!eligible()) { this.discardSpeculative(input.speculation); return { accepted: false }; }
       const pending = this.ledger.getPendingQuestion();
       this.clearWait();
-      const local = localDecision(input.text, { outputPlaying: this.isGenerating || !!this.outputAttempt, expectsReply: this.expectsReply(),
-        noSpeech: input.noSpeech, acousticEcho: input.acousticEcho });
+      const local = this.decide(input);
       const turnId = input.retryOf ?? `turn-${++this.serial}`;
       if (local !== 'MODEL') {
+        this.discardSpeculative(input.speculation);
         this.counts.localFiltered++;
         if (local === 'STOP') await this.cancel();
         if (local === 'SILENT' && pending?.status === 'awaiting' && /不用|不想|no thanks|答えたく|もういい/u.test(input.text)) this.ledger.markQuestionResolved();
@@ -86,25 +102,33 @@ export class DialogueController {
         return { accepted: true, local };
       }
       if (this.blocked) {
+        this.discardSpeculative(input.speculation);
         this.failedInput = input;
         this.emit({ type: 'error', code: this.blocked, message: '模型凭据未配置。请检查当前 Chat Provider 的凭据设置后重试。', retryable: true });
         return { accepted: false };
       }
       await this.cancel();
-      if (this.closed || epoch !== this.epoch || input.isEligible?.() === false) return { accepted: false };
-      const state: Active = { id: turnId, epoch, generation: ++this.generation, input, accepted: false,
+      if (!eligible()) { this.discardSpeculative(input.speculation); return { accepted: false }; }
+      const identity = input.speculation;
+      if (identity && this.speculative) {
+        const waiting = this.speculative.wait(identity, this.chatRequest(input));
+        if (waiting) await waiting;
+        if (!eligible()) { this.discardSpeculative(input.speculation); return { accepted: false }; }
+      }
+      const request = this.chatRequest(input);
+      const prepared = identity && this.speculative?.claim(identity, request);
+      if (!prepared) this.discardSpeculative(input.speculation);
+      const state: Active = { id: turnId, epoch, generation: ++this.generation, input, port: prepared?.port ?? this.port, accepted: false,
         canceled: false, attempts: [] };
       this.active = state;
       this.emit({ type: 'model-state', state: 'generating' });
-      const projection = this.projectHistory();
       const question = this.ledger.getPendingQuestion();
+      const emit = (event: ChatEvent) => this.onModelEvent(state, event);
       try {
         this.counts.modelRequests++;
-        const accepted = await this.port.runTurn({ requestId: `deskai-${epoch}-${this.serial}-${this.generation}`,
-          text: input.text, hostContext: input.hostContext, personaId: this.preferences.personaId, relationshipMode: this.preferences.relationshipMode ?? 'friend', mode: input.source, replyLanguage: this.preferences.replyLanguage,
-          visibleHistory: projection.history, deliveryState: { attempts: projection.attempts,
-            pendingQuestion: question, continuationOf: input.continuationOf,
-            submittedUtteranceIds: input.utteranceIds ?? [], promptVersion: PROMPT_VERSION } }, event => this.onModelEvent(state, event));
+        const accepted = prepared?.accepted ?? await state.port.runTurn({
+          ...request, requestId: `deskai-${epoch}-${this.serial}-${state.generation}`,
+        }, emit);
         state.accepted = true;
         state.completed = accepted.completed;
         if (state.failure) this.failedInput = { ...state.input, retryOf: state.id };
@@ -120,6 +144,7 @@ export class DialogueController {
           // WAIT/SILENT alone never clears it.
           if (question) this.ledger.markQuestionResolved();
         }
+        prepared?.release(emit);
         void accepted.completed.then(settlement => this.finish(state, settlement)).catch(() => this.fail(state, 'DELIVERY_STATE_ERROR'));
         return { accepted: true };
       } catch (error) {
@@ -132,14 +157,29 @@ export class DialogueController {
     return work;
   }
 
+  private decide(input: DialogueInput) {
+    return localDecision(input.text, { outputPlaying: this.isGenerating || !!this.outputAttempt, expectsReply: this.expectsReply(),
+      noSpeech: input.noSpeech, acousticEcho: input.acousticEcho });
+  }
+
+  private chatRequest(input: DialogueInput): ChatTurnInput {
+    const projection = this.projectHistory();
+    return { text: input.text, hostContext: input.hostContext, personaId: this.preferences.personaId,
+      relationshipMode: this.preferences.relationshipMode ?? 'friend', mode: input.source, replyLanguage: this.preferences.replyLanguage,
+      visibleHistory: projection.history, deliveryState: { attempts: projection.attempts,
+        pendingQuestion: this.ledger.getPendingQuestion(), continuationOf: input.continuationOf,
+        submittedUtteranceIds: input.utteranceIds ?? [], promptVersion: PROMPT_VERSION } };
+  }
+
   /** Speak an accepted Host fact without turning it into a synthetic user request. */
   announce(text: string, source: DeliveryMode): void {
     if (this.closed || this.isGenerating || !text.trim()) return;
+    this.discardSpeculative();
     const turnId = `notice-${++this.serial}`, attemptId = `${turnId}-delivery`, generation = ++this.generation;
     this.ledger.startAttempt(attemptId, turnId, { v: 1, action: 'SPEAK', reason: 'direct_request', expectsReply: false }, source);
     this.ledger.appendGenerated(attemptId, text);
     if (source === 'voice') this.outputAttempt = { id: turnId, epoch: this.epoch, generation,
-      input: { text: '', source }, accepted: true, canceled: false, attempts: [attemptId], attemptId, finished: true };
+      input: { text: '', source }, port: this.port, accepted: true, canceled: false, attempts: [attemptId], attemptId, finished: true };
     this.emit({ type: 'assistant-delta', turnId, attemptId, generationId: generation, source, text });
     this.emit({ type: 'assistant-state', turnId, attemptId, generationId: generation, state: 'complete' });
   }
@@ -220,7 +260,7 @@ export class DialogueController {
     this.emit({ type: 'assistant-state', turnId: state.id, attemptId: state.attemptId, generationId: state.generation, state: 'interrupted' });
     this.emit({ type: 'model-state', state: 'cancelling' });
     this.outputAttempt = undefined;
-    this.canceling = (state.finished ? Promise.resolve() : this.port.cancel()).then(() => {}).finally(() => {
+    this.canceling = (state.finished ? Promise.resolve() : state.port.cancel()).then(() => {}).finally(() => {
       if (this.active === state) this.active = undefined;
       this.canceling = undefined;
       if (!this.closed) this.emit({ type: 'model-state', state: 'idle' });
@@ -231,6 +271,7 @@ export class DialogueController {
   /** Cancel the current reply, or invalidate playback if the model already settled. */
   cancelOutput(generationId = this.generation): Promise<void> {
     if (generationId !== this.generation) return Promise.resolve();
+    this.discardSpeculative();
     if (this.active || this.outputAttempt || this.canceling) return this.cancel();
     if (!this.closed) this.emit({ type: 'output-clear', generationId: ++this.generation });
     return Promise.resolve();
@@ -241,10 +282,11 @@ export class DialogueController {
     if (!previous) return { accepted: false };
     this.failedInput = undefined;
     this.blocked = undefined;
-    return this.submit({ ...previous, isEligible: undefined, onAccepted: undefined });
+    return this.submit({ ...previous, isEligible: undefined, onAccepted: undefined, speculation: undefined });
   }
 
   async updatePreferences(preferences: DialoguePreferences): Promise<void> {
+    this.discardSpeculative();
     const identityChanged = preferences.personaId !== this.preferences.personaId ||
       (preferences.personaId === 'nagato-mainline-post-disappearance' && (preferences.relationshipMode ?? 'friend') !== (this.preferences.relationshipMode ?? 'friend'));
     // Invalidate queued input before waiting for cancellation to settle.
@@ -314,7 +356,7 @@ export class DialogueController {
   async close(): Promise<void> {
     this.closed = true; this.epoch++;
     this.clearWait();
-    await this.cancel();
+    await Promise.all([this.speculative?.close(), this.cancel()]);
     this.userHistory = [];
     this.failedInput = undefined;
     this.ledger.markQuestionResolved();

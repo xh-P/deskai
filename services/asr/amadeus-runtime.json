@@ -1,0 +1,12 @@
+{
+  "revision": "be9b97aef2ac3affb200998f8af3aab72aa22f6c",
+  "files": [
+    "LICENSE",
+    "asr/__init__.py",
+    "asr/backend.py",
+    "asr/qwen_cuda_graph.py",
+    "asr/qwen_inference.py",
+    "core/__init__.py",
+    "core/cuda_execution.py"
+  ]
+}

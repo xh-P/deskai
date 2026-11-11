@@ -6,12 +6,17 @@ import { LocalDshChat } from '../../../packages/dsh-adapter/src/session.ts';
 import { OpenAICompatibleChat } from '../../../packages/dsh-adapter/src/openai-chat.ts';
 
 export type ChatRuntimeConfig =
-  | { provider: 'dsh-session' }
+  | { provider: 'dsh-session'; speculativeVoice?: { maxAgeMs: number } }
   | { provider: 'openai-compatible'; baseUrl: string; model: string; apiKeyEnv?: string; timeoutMs?: number };
 
 export async function readChatRuntimeConfig(root: string): Promise<ChatRuntimeConfig> {
   const config = JSON.parse(await readFile(path.join(root, 'config/voice/chat-runtime.json'), 'utf8')) as Record<string, unknown>;
-  if (config.provider === 'dsh-session') return { provider: 'dsh-session' };
+  if (config.provider === 'dsh-session') {
+    if (config.speculativeVoice === undefined) return { provider: 'dsh-session' };
+    const { maxAgeMs } = (config.speculativeVoice ?? {}) as { maxAgeMs?: number };
+    if (maxAgeMs === undefined || !Number.isSafeInteger(maxAgeMs) || maxAgeMs <= 0) throw new Error('INVALID_SPECULATIVE_CHAT_CONFIG');
+    return { provider: 'dsh-session', speculativeVoice: { maxAgeMs } };
+  }
   if (config.provider !== 'openai-compatible') throw new Error('CHAT_PROVIDER_CONFIG');
   if (typeof config.baseUrl !== 'string' || typeof config.model !== 'string' || !config.model.trim()
     || (config.apiKeyEnv !== undefined && (typeof config.apiKeyEnv !== 'string' || !/^[A-Z][A-Z0-9_]*$/u.test(config.apiKeyEnv)))) throw new Error('CHAT_PROVIDER_CONFIG');
@@ -25,11 +30,18 @@ export async function readChatRuntimeConfig(root: string): Promise<ChatRuntimeCo
     ...(timeoutMs === undefined ? {} : { timeoutMs: timeoutMs as number }) };
 }
 
-/** The desktop selects a Chat provider independently from ASR and TTS. */
-export async function createChatPort(host: LocalDshSpeech, root: string): Promise<DialoguePort> {
+type ChatRuntime = { port: DialoguePort; speculative?: { port: DialoguePort; maxAgeMs: number } };
+
+/** Speculation gets a separate text-only dsh session owner so its cancellation cannot affect confirmed Chat. */
+export async function createChatRuntime(host: LocalDshSpeech, root: string): Promise<ChatRuntime> {
   const config = await readChatRuntimeConfig(root);
-  if (config.provider === 'dsh-session') return new LocalDshChat(host, root);
+  if (config.provider === 'dsh-session') return { port: new LocalDshChat(host, root),
+    ...(config.speculativeVoice ? { speculative: { port: new LocalDshChat(host, root), ...config.speculativeVoice } } : {}) };
   const apiKey = config.apiKeyEnv ? process.env[config.apiKeyEnv] : undefined;
   if (config.apiKeyEnv && !apiKey) throw new Error('MISSING_CREDENTIAL');
-  return new OpenAICompatibleChat(root, { baseUrl: config.baseUrl, model: config.model, apiKey, timeoutMs: config.timeoutMs });
+  return { port: new OpenAICompatibleChat(root, { baseUrl: config.baseUrl, model: config.model, apiKey, timeoutMs: config.timeoutMs }) };
+}
+
+export async function createChatPort(host: LocalDshSpeech, root: string): Promise<DialoguePort> {
+  return (await createChatRuntime(host, root)).port;
 }

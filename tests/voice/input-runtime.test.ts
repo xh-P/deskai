@@ -18,6 +18,8 @@ test('160ms candidate is invalidated on resumed speech and commits at 350ms', as
 
 test('wake gate routes remainder, rejects stale results, and expires after inactivity', () => {
   const gate = new WakeGate(['有希', '长门有希'], 180000); const wake = gate.snapshot(1);
+  assert.deepEqual(gate.preview('长门有希，今天天气如何？', wake, 1), { accepted: true, text: '今天天气如何？', woke: true });
+  assert.deepEqual(gate.snapshot(1), wake);
   assert.deepEqual(gate.accept('长门有希，今天天气如何？', wake, 1), { accepted: true, text: '今天天气如何？', woke: true });
   assert.equal(gate.accept('有希', wake, 2).accepted, false);
   gate.touch(100000); assert.equal(gate.snapshot(200000).mode, 'conversation');

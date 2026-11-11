@@ -22,5 +22,8 @@
     }
   },
   "endpoint": { "candidateWindowMs": 160, "continuationWindowMs": 350, "unfinishedWindowMs": 350, "vadThreshold": 0.5 },
-  "conversation": { "provider": "qwen-local", "model": "Qwen/Qwen3-ASR-0.6B", "device": "cuda:0", "idlePolicy": "resident" }
+  "conversation": {
+    "provider": "qwen-local", "model": "Qwen/Qwen3-ASR-0.6B", "device": "cuda:0", "idlePolicy": "resident",
+    "inference": { "engine": "cuda_graph", "flashAttention": true, "graphCapacity": 512 }
+  }
 }

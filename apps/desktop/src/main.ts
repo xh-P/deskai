@@ -4,7 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { LocalDshSpeech, type SpeechStatus } from '../../../packages/dsh-adapter/src/speech.ts';
-import { createChatPort } from './chat-runtime.ts';
+import { createChatRuntime } from './chat-runtime.ts';
 import { createInputController, encodePcm16Wav, type InputController, type InputDiagnostic } from '../../../packages/voice-core/src/index.ts';
 import { VAD_FRAME_SAMPLES } from '../../../packages/voice-core/src/input-config.ts';
 import type { CaptureFrame } from '../renderer/src/bridge.d.ts';
@@ -335,7 +335,8 @@ function flushHostNotices() {
 async function submitCoordinated(input: DialogueInput): Promise<{ accepted: boolean }> {
   const current = dialogue, currentSession = sessionId;
   if (!current || !currentSession) return { accepted: false };
-  if (smokeMode || !planner) {
+  if (!input.speculation) current.discardSpeculative();
+  if (smokeMode && !realModelSmoke || !planner) {
     const host = await getDesktopHost();
     return current.submit({ ...input, hostContext: host.dialogueContext({ kind: 'chat' }) });
   }
@@ -349,6 +350,8 @@ async function submitCoordinated(input: DialogueInput): Promise<{ accepted: bool
     if (revision !== planningRevision || current !== dialogue || currentSession !== sessionId) return { accepted: false };
     const decision = await planner.plan(input.text, host.planningContext());
     if (revision !== planningRevision || current !== dialogue || currentSession !== sessionId || input.isEligible?.() === false) return { accepted: false };
+    if (realModelSmoke && decision.intent !== 'chat') throw new Error('VOICE_SMOKE_EXPECTED_CHAT');
+    if (decision.intent !== 'chat') current.discardSpeculative(input.speculation);
     const facts = await host.execute(decision);
     committed = decision.intent !== 'chat';
     if (committed) input.onAccepted?.();
@@ -359,7 +362,10 @@ async function submitCoordinated(input: DialogueInput): Promise<{ accepted: bool
     if (revision !== planningRevision) return { accepted: committed };
     send({ type: 'error', code: 'COORDINATION_FAILED', message: '任务协调失败：' + (error instanceof Error ? error.message : String(error)) });
     return { accepted: committed };
-  } finally { planning = false; send({ type: 'coordination-state', state: 'idle' }); flushHostNotices(); }
+  } finally {
+    if (input.speculation) current.discardSpeculative(input.speculation);
+    planning = false; send({ type: 'coordination-state', state: 'idle' }); flushHostNotices();
+  }
 }
 ipcMain.handle('deskai:work-open', async event => { trusted(event); return (await getWorkRuntime()).open(); });
 ipcMain.handle('deskai:work-status', event => { trusted(event); return workRuntime?.getStatus() ?? { state: 'stopped' }; });
@@ -408,7 +414,7 @@ ipcMain.handle('deskai:runtime', event => {
   return { smoke: smokeMode, fakeMedia, dialogueSmoke, ttsSmoke, preferences, personas, aecMode: preferences.aecMode ?? inputRuntimeConfig.aec.mode, defaultWakePhrases: inputRuntimeConfig.wake.phrases,
     interruption: inputRuntimeConfig.interruption, endpoint: inputRuntimeConfig.endpoint,
     speechStatus: lastSpeechStatus, assetStatus, ttsStatus, voices: tts?.registry() ?? [],
-    voiceDiagnostics: { continuationWindowMs, input: metrics.inputTimeline, output: outputTimeline.snapshot() },
+    voiceDiagnostics: { continuationWindowMs, input: metrics.inputTimeline, output: outputTimeline.snapshot(), asr: speechRuntime?.diagnostics() },
     versions: { electron: process.versions.electron ?? '', chrome: process.versions.chrome ?? '' } };
 });
 ipcMain.handle('deskai:pet-snapshot', event => {
@@ -456,8 +462,8 @@ async function openConversation() {
   finally { if (preparingService === service) preparingService = undefined; }
   if (epoch !== sessionEpoch || shutdown) throw new Error('SESSION_START_CANCELLED');
   if (ttsSmoke && !realModelSmoke) fixturePort = new FixtureChatPort();
-  const chatPort = ttsSmoke && !realModelSmoke ? fixturePort! : await createChatPort(service, root);
-  if (epoch !== sessionEpoch || shutdown) { await chatPort.cancel(); throw new Error('SESSION_START_CANCELLED'); }
+  const chat = ttsSmoke && !realModelSmoke ? { port: fixturePort!, speculative: undefined } : await createChatRuntime(service, root);
+  if (epoch !== sessionEpoch || shutdown) { await chat.port.cancel(); throw new Error('SESSION_START_CANCELLED'); }
   planner = new WorkPlanner(service, root);
   speechRuntime = new SpeechRuntime(service, inputRuntimeConfig.conversation, root);
   sessionId = randomUUID();
@@ -466,7 +472,11 @@ async function openConversation() {
   metrics.inputTimeline = [];
   outputTimeline.clear();
 
-  dialogue = new DialogueController(chatPort, preferences, dialogueEvent);
+  dialogue = new DialogueController(chat.port, preferences, dialogueEvent, chat.speculative && {
+    ...chat.speculative, diagnostic: event => {
+      if (sessionId === event.sessionId) outputTimeline.record(event.type, event);
+    },
+  });
   attachOutput();
   // Keep this instance across sessions so a canceled ASR task settles before
   // the new session can start another task on the same recognizer.
@@ -504,6 +514,18 @@ async function openConversation() {
       if (state === 'LISTENING') queueMicrotask(flushHostNotices);
     },
     onStop: stopCurrentReply,
+    onCandidate: candidate => {
+      if (smokeMode && !realModelSmoke || !captureArmed || candidate.sessionId !== sessionId || !desktopHost ||
+          planning || voiceSubmitting || outputActive || outputBusy || outputPaused) return;
+      const route = inputRoutes.get(candidate.utteranceIds[0]);
+      const preview = smokeMode ? { accepted: true, text: candidate.text } : route && wakeGate.preview(candidate.text, route, performance.now());
+      if (!preview?.accepted) return;
+      dialogue?.prepareSpeculative({
+        text: preview.text, source: 'voice', continuationOf: candidate.continuationOf, utteranceIds: candidate.utteranceIds,
+        hostContext: desktopHost.dialogueContext({ kind: 'chat' }), speculation: candidate,
+      });
+    },
+    onCandidateRevoked: candidate => dialogue?.discardSpeculative(candidate),
     onBoundary: event => {
       if (event.type === 'discarded' || event.type === 'overflow') for (const id of event.utteranceIds) inputRoutes.delete(id);
       if (event.type === 'overflow' || event.type === 'discarded' && /ASR|queue/.test(event.reason ?? '')) {
@@ -550,6 +572,7 @@ async function openConversation() {
       outputTimeline.record('input-submitted', ready);
       const current = controller;
       void submitCoordinated({ text, source: 'voice', continuationOf: ready.continuationOf,
+        speculation: ready,
         utteranceIds: ready.utteranceIds, isEligible: () => sessionId === ready.sessionId && current.isEligible(ready.inputRevision, ready.utteranceIds),
         onAccepted: () => {
           if (sessionId === ready.sessionId) {
@@ -777,6 +800,7 @@ function maybeFinishTtsSmoke() {
     realSenseVoice: inputRuntimeConfig.conversation.provider === 'dsh', realQwen: inputRuntimeConfig.conversation.provider === 'qwen-local',
     realGpuTts: true, physicalMicrophoneTested: false, physicalSpeakerTested: false, aecValidated: false,
     metrics, tts: ttsMetrics, model: dialogue.stats, ledger: dialogue.ledger.snapshot(),
+    asr: speechRuntime?.diagnostics(), outputTimeline: outputTimeline.snapshot(),
     passed: metrics.asrCompleted > 0 && metrics.inputFramesDuringPlayback > 0 && ttsMetrics.pcmChunks > 0 &&
       ttsMetrics.voiceFailures === 0 && dialogue.stats.modelRequests > 0 && dialogue.stats.modelRequests <= metrics.readyTurns };
   void (async () => {

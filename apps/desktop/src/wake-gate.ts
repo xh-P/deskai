@@ -23,16 +23,23 @@ export class WakeGate {
   }
   touch(now: number): void { if (this.snapshot(now).mode === 'conversation') this.activeUntil = now + this.idleTimeoutMs; }
   reset(): void { this.activeUntil = 0; this.generation++; }
-  accept(text: string, route: { mode: SpeechMode; generation: number }, now: number): { accepted: boolean; text: string; woke: boolean } {
+  preview(text: string, route: { mode: SpeechMode; generation: number }, now: number): { accepted: boolean; text: string; woke: boolean } {
     const current = this.snapshot(now);
     if (route.generation !== current.generation || route.mode !== current.mode) return { accepted: false, text: '', woke: false };
-    if (current.mode === 'conversation') { this.touch(now); return { accepted: !!text.trim(), text: text.trim(), woke: false }; }
+    if (current.mode === 'conversation') return { accepted: !!text.trim(), text: text.trim(), woke: false };
     const lower = text.toLocaleLowerCase();
     const match = this.phrases.map(phrase => ({ phrase, index: lower.indexOf(phrase) })).filter(item => item.index >= 0).sort((a, b) => a.index - b.index || b.phrase.length - a.phrase.length)[0];
     if (!match) return { accepted: false, text: '', woke: false };
     const rest = text.slice(match.index + match.phrase.length).replace(/^[\s\p{P}\p{S}]+/u, '').trim();
-    this.activeUntil = now + this.idleTimeoutMs;
-    this.generation++;
     return { accepted: !!rest, text: rest, woke: true };
+  }
+
+  accept(text: string, route: { mode: SpeechMode; generation: number }, now: number): ReturnType<WakeGate['preview']> {
+    const result = this.preview(text, route, now);
+    if (result.woke) {
+      this.activeUntil = now + this.idleTimeoutMs;
+      this.generation++;
+    } else if (result.accepted) this.touch(now);
+    return result;
   }
 }
