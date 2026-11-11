@@ -45,4 +45,17 @@ B1 已撤下。识别错字样例和准确率评测曾由 DeskAI2 自拟。上�
 
 ## I. 角色呈现
 
-**暂缓**。恢复时优先主播式 Live2D 和动态效果，壁纸搁置。[上游 Live2D 实验后端](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/docs/live2d_character_visuals.md)
+- **I1 待实施**。验证 Cubism Web 渲染，选择可用模型并核对授权与参数。
+- **I2 待实施**。接入主播式 Live2D 桌宠、角色预览、自然动作与实际播报嘴型。
+- **I3 待实施**。用目标模型检查桌宠交互、连续插话和同机性能。壁纸搁置。
+
+[Live2D 设计与验收](./live2d-workbench-plan.md#i-live2d-角色)
+
+## J. 实时 Work 工作台
+
+- **J1 待实施**。用真实 dsh 会话核对 Trajectory、请求档位、缓存用量和可用的成员交流事件。
+- **J2 待实施**。以 Host 受理回执和 dsh 原生会话接通调度交流、逐任务增量和指标。
+- **J3 待实施**。重做任务导航、执行时间线与详情，支持查看、接手和验收任务。
+- **J4 待实施**。验证并行任务、断线恢复、统计归属和 Live2D 同机运行。
+
+[工作台设计与验收](./live2d-workbench-plan.md#j-实时-work-工作台)
