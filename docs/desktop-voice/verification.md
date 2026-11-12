@@ -55,7 +55,7 @@
 - Windows Electron 中用官方 Web Samples 5-r.5 和 Core 5.3 渲染了同一 Mao 样例。PixiJS 8.23.0 与 Untitled Pixi Live2D Engine 1.4.0 在 Core 5.3 下读不到所需的绘制顺序字段。固定到 Core 5.2 后通过 WebGL、物理、透明像素、嘴型预览、Mao 与 Haru 往返切换、WebGL 恢复及窗口隐藏重显共 7 项。另验证本地模型导入、配置重开和越界资源拒绝。[官方 SDK](https://www.live2d.com/en/sdk/download/web/) · [Pixi 适配器](https://github.com/Untitled-Story/untitled-pixi-live2d-engine)
 - WAV 模拟采集接通实际 Qwen、dsh 对话与 GPT-SoVITS v2。Mao 接收 435 帧有效口型信号，完成 2 句播放，渲染嘴型峰值 0.82。正式输入受理至首 PCM 约 2.02 秒，约 850 ms 采样窗内的绘制循环间隔 P95 为 20.6 ms。口型输出的约 12.7 秒全部落在另一条真实 Work 的工具运行期间。RTX 4060 Laptop 整机显存采样为 1944–5791 MiB，含同机的其他进程。
 - 120 项项目回归及 Luna Max 的 9 项 Electron 桌宠冒烟通过。回归覆盖三次播放代次清除及恢复、暂停时屏蔽旧报告，以及仅以实际输出 PCM 生成口型信号。
-- 构建通过。Luna Max 用隔离配置完成 Electron 启动冒烟，确认桌宠初始显示长门校服 Q 版，角色页选中静态造型。预览 Mao 时桌宠保持原造型，应用后切换为 Mao，可再应用静态造型切回。记录位于 `.cache/live2d-startup-smoke-report.json`。
+- 构建通过。Luna Max 用隔离配置完成 Electron 启动冒烟，确认桌宠初始显示长门校服 Q 版，角色页选中静态造型。预览 Haru 时桌宠保持原造型，应用后切换为 Haru，可再应用静态造型切回。记录位于 `.cache/live2d-startup-smoke-report.json`。
 - 本机记录位于 `outputs/desktop-live2d/`，包含官方样例、预览与桌宠截图、并行 Work 和显存采样。联合语音报告为 `outputs/desktop-validation/tts/desktop-smoke-1794442152614.json`。
 
 ### 待目标模型与物理设备验收
