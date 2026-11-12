@@ -2,6 +2,7 @@ import type { CharacterLookupSummary, CharacterReference } from './character-ref
 import type { DeliveryMode } from './delivery.ts';
 import type { ChatPersonaId, RelationshipMode } from './persona-catalog.ts';
 import type { Persona, ReplyLanguage } from './prompts.ts';
+import type { GestureName } from './gesture.ts';
 
 export interface ChatTurnInput {
   requestId?: string;
@@ -16,6 +17,7 @@ export interface ChatTurnInput {
   hostContext?: unknown;
   characterKnowledge?: boolean;
   characterReference?: readonly CharacterReference[];
+  gestureActions?: readonly GestureName[];
 }
 
 export type ChatEvent =

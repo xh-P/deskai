@@ -152,8 +152,11 @@ function send(event: object) { if (window && !window.isDestroyed()) window.webCo
 function syncPet() {
   if (!petWindow) return;
   const personaId = activeConversation?.persona.id ?? preferences.personaId;
-  petWindow.setActivity(petActivity.snapshot(petWindow.getPreferences()), live2d.resolve(personaId));
+  const model = live2d.resolve(personaId);
+  if (petWindow.getSnapshot().model?.id !== model?.id) petActivity.clearGestures();
+  petWindow.setActivity(petActivity.snapshot(petWindow.getPreferences()), model);
 }
+const gestureActions = () => petWindow?.availableGestures() ?? [];
 function showMainWindow() { window?.show(); window?.focus(); }
 function stopCurrentReply() {
   if (!sessionId || !(turnCoordinator.busy || dialogue?.isGenerating || outputBusy || outputActive || outputPaused)) return;
@@ -531,7 +534,7 @@ async function openConversation(requestedId?: string) {
     sessionId = randomUUID();
     petActivity.startSession(sessionId); syncPet();
     fixturePort = new FixtureChatPort();
-    dialogue = new DialogueController(fixturePort, conversationPreferences(record), dialogueEvent, undefined, record.history);
+    dialogue = new DialogueController(fixturePort, conversationPreferences(record), dialogueEvent, undefined, { history: record.history, gestureActions });
     return;
   }
   const service = speech ??= new LocalDshSpeech(root, status);
@@ -559,7 +562,7 @@ async function openConversation(requestedId?: string) {
     ...chat.speculative, diagnostic: event => {
       if (sessionId === event.sessionId) outputTimeline.record(event.type, event);
     },
-  }, record.history);
+  }, { history: record.history, gestureActions });
   attachOutput();
   // Keep this instance across sessions so a canceled ASR task settles before
   // the new session can start another task on the same recognizer.

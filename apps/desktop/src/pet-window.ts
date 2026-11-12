@@ -4,13 +4,14 @@ import { PET_VARIANTS, type PetGeometry, type PetPreferences, type PetPreference
 import { clampPetBounds, clampPetDragBounds, PetDrag, resizePetKeepingFeet } from '../../../packages/desktop-pet/src/drag.ts';
 import { defaultPetPreferences, loadPetPreferences, mergePetPreferences, savePetPreferences } from './pet-settings.ts';
 import type { Live2DProfile, MouthFrame } from '../../../packages/desktop-pet/src/live2d.ts';
+import { GESTURE_NAMES, type GestureName } from '../../../packages/voice-core/src/gesture.ts';
 
 const petPage = 'deskai://app/index.html?pet=1';
 const names: Record<(typeof PET_VARIANTS)[number], string> = {
   'uniform-chibi': '校服 · Q 版', 'uniform-normal': '校服 · 原作比例',
   'witch-chibi': '魔法服 · Q 版', 'witch-normal': '魔法服 · 原作比例',
 };
-type Activity = Pick<PetSnapshot, 'state' | 'subtitle' | 'sessionId' | 'generationId' | 'attemptId' | 'segmentId'>;
+type Activity = Pick<PetSnapshot, 'state' | 'subtitle' | 'sessionId' | 'generationId' | 'attemptId' | 'segmentId' | 'gesture'>;
 
 function overlap(a: Electron.Rectangle, b: Electron.Rectangle): number {
   return Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)) *
@@ -37,6 +38,7 @@ export class PetWindowManager {
   private preferences: PetPreferences = { ...defaultPetPreferences };
   private activity: Activity = { state: 'off', subtitle: '', sessionId: null, generationId: 0 };
   private model?: Live2DProfile;
+  private gestures: GestureName[] = [];
   private geometry = new Map<string, number>();
   private saveTimer?: ReturnType<typeof setTimeout>;
   private saving: Promise<unknown> = Promise.resolve();
@@ -95,10 +97,11 @@ export class PetWindowManager {
     pet.on('move', () => this.rememberPosition());
     pet.on('blur', () => this.cancelDrag());
     pet.on('hide', () => this.cancelDrag());
-    pet.webContents.on('render-process-gone', () => this.cancelDrag());
+    pet.webContents.on('render-process-gone', () => { this.gestures = []; this.cancelDrag(); });
     pet.on('closed', () => {
       if (this.window !== pet) return;
       this.window = undefined;
+      this.gestures = [];
       this.started = false;
       this.opaqueHit = false;
       this.dragState.cancel();
@@ -122,15 +125,19 @@ export class PetWindowManager {
   getWindow(): BrowserWindow | undefined { return this.window && !this.window.isDestroyed() ? this.window : undefined; }
   showIfVisible(): void { if (this.preferences.visible) this.getWindow()?.showInactive(); }
   getPreferences(): PetPreferences { return { ...this.preferences, position: this.preferences.position && { ...this.preferences.position } }; }
+  availableGestures(): readonly GestureName[] { return this.getWindow()?.isVisible() ? this.gestures : []; }
   prepareToQuit(): void { this.quitting = true; }
 
-  setActivity({ state, subtitle, sessionId, generationId, attemptId, segmentId }: Activity, model?: Live2DProfile): void {
-    const next = { state, subtitle, sessionId, generationId, attemptId, segmentId };
+  setActivity({ state, subtitle, sessionId, generationId, attemptId, segmentId, gesture }: Activity, model?: Live2DProfile): void {
+    const next = { state, subtitle, sessionId, generationId, attemptId, segmentId, gesture };
     if (model === this.model && JSON.stringify(next) === JSON.stringify(this.activity)) return;
     const changedModel = model?.id !== this.model?.id;
     this.activity = next;
     this.model = model;
-    if (changedModel) { this.cancelDrag(); this.setOpaqueHit(false); this.resizeKeepingFeet(); }
+    if (changedModel) {
+      this.gestures = [];
+      this.cancelDrag(); this.setOpaqueHit(false); this.resizeKeepingFeet();
+    }
     this.publish();
   }
 
@@ -168,6 +175,10 @@ export class PetWindowManager {
     if (!value || !PET_VARIANTS.includes(value.variant) || !Number.isFinite(value.aspect) ||
         value.aspect < 0.2 || value.aspect > 3) return;
     if (value.modelId && this.model?.id !== value.modelId) return;
+    if (value.modelId) {
+      const reported = Array.isArray(value.gestures) ? value.gestures : [];
+      this.gestures = GESTURE_NAMES.filter(name => reported.includes(name));
+    }
     const key = value.modelId ?? value.variant;
     const previous = this.geometry.get(key);
     if (previous !== undefined && Math.abs(previous - value.aspect) < 0.001) return;

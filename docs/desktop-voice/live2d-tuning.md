@@ -4,6 +4,10 @@
 
 这张 1055 × 1491 的透明立绘用于确定脸部、服装和半身取景，预留了发顶与肩膀的分层空间。长门的 Live2D 模型待拆层和绑定。桌宠启动默认使用现有的长门造型，官方 Mao 和 Haru 样例可在「角色」页选用。[立绘原文件](./art/nagato-live2d-reference.png) · [官方样例](https://www.live2d.com/en/learn/sample/)
 
+## 角色动作
+
+主对话模型可选点头、摇头、向两侧歪头或向四个方向转视线。摇头和点头分别用头部 X、Y，歪头用 Z。转视线先动眼球，头部稍后跟随，身体按模型绑定以较小幅度跟进。长门建模时可用标准头部、眼球和身体参数，并为发丝和服装绑定物理。动作能力以模型载入时实际存在的参数及范围为准。[动作参数](../../apps/desktop/renderer/src/live2d/gesture-motion.ts) · [Cubism 标准参数](https://docs.live2d.com/en/cubism-editor-manual/standard-parameter-list/)
+
 ## 可协助的事项
 
 - 如果已有可用的长门模型，提供 `.model3.json` 所在目录。保留同目录结构中的 `.moc3`、贴图、物理、姿势、表情和动作。当前运行时使用 Cubism Core 5.2，导出时选择可在该版本加载的模型格式。

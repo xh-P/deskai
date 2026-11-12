@@ -1,11 +1,12 @@
 import type { DialogueEvent } from '../../voice-core/src/dialogue.ts';
-import type { PetPreferences, PetSnapshot, PetState } from './types.ts';
+import type { PetGesture, PetPreferences, PetSnapshot, PetState } from './types.ts';
 import type { MouthFrame } from './live2d.ts';
 
 type InputState = 'OFF' | 'LISTENING' | 'CAPTURING' | 'SETTLING' | 'TRANSCRIBING' | 'ACCUMULATING';
 type ModelState = 'idle' | 'generating' | 'cancelling' | 'waiting' | 'silent' | 'error';
 type Playback = { sessionId: string; generationId: number; playing: boolean; paused: boolean; completed?: boolean };
 type Progress = { generationId: number; text: string; completed: boolean; attemptId?: string; segmentId?: string };
+type GestureEvent = Extract<DialogueEvent, { type: 'gesture' }>;
 
 /** Projects actual session, model and playback receipts into a visual state. */
 export class PetActivity {
@@ -19,6 +20,8 @@ export class PetActivity {
   private playbackPaused = false;
   private held = false;
   private segment?: Progress;
+  private pendingGesture?: GestureEvent;
+  private gesture?: PetGesture;
   private lastMouthFrame = -1;
   private error = false;
 
@@ -37,6 +40,7 @@ export class PetActivity {
     this.playbackPaused = false;
     this.held = false;
     this.segment = undefined;
+    this.clearGestures();
     this.lastMouthFrame = -1;
     this.error = false;
   }
@@ -50,6 +54,7 @@ export class PetActivity {
     this.playbackPaused = false;
     this.held = false;
     this.segment = undefined;
+    this.clearGestures();
     this.error = retainError;
   }
 
@@ -58,9 +63,12 @@ export class PetActivity {
     if (!armed) this.inputState = 'OFF';
   }
 
+  clearGestures(): void { this.pendingGesture = this.gesture = undefined; }
+
   input(state: string): void {
     if (!this.sessionId || !['OFF', 'LISTENING', 'CAPTURING', 'SETTLING', 'TRANSCRIBING', 'ACCUMULATING'].includes(state)) return;
     this.inputState = state as InputState;
+    if (state === 'CAPTURING' && !this.playbackPlaying) this.gesture = undefined;
     if (state === 'CAPTURING' || state === 'TRANSCRIBING') {
       if (this.modelState === 'waiting' || this.modelState === 'silent') this.modelState = 'idle';
       this.error = false;
@@ -78,20 +86,22 @@ export class PetActivity {
       }
     } else if (event.type === 'model-state') {
       this.modelState = event.state;
-      if (event.state === 'generating') this.error = false;
-      if (event.state === 'error') this.error = true;
+      if (event.state === 'generating') { this.error = false; this.clearGestures(); }
+      if (event.state === 'error') this.fail();
+    } else if (event.type === 'gesture' && event.generationId >= this.generationFloor && !this.error) {
+      if (event.timing === 'speech') this.pendingGesture = event;
+      else if (!this.playbackPaused) this.gesture = { ...event.gesture, startedAt: Date.now() };
     } else if (event.type === 'output-clear') {
       this.output('clear', event.generationId);
     } else if (event.type === 'assistant-state' && event.generationId >= this.generationFloor) {
       if (event.state === 'interrupted' || event.state === 'error') {
         this.segment = undefined;
         this.playbackPlaying = false;
+        this.clearGestures();
         if (event.state === 'error') this.error = true;
       }
     } else if (event.type === 'error') {
-      this.error = true;
-      this.segment = undefined;
-      this.playbackPlaying = false;
+      this.fail();
     }
   }
 
@@ -105,10 +115,12 @@ export class PetActivity {
       this.playbackPaused = false;
       this.segment = undefined;
       this.lastMouthFrame = -1;
+      this.clearGestures();
     } else if (command === 'pause') {
       this.playbackPaused = true;
       this.playbackPlaying = false;
       this.segment = undefined;
+      this.gesture = undefined;
     } else {
       this.playbackPaused = false;
       this.playbackPlaying = false;
@@ -123,6 +135,7 @@ export class PetActivity {
     this.playbackGeneration = report.generationId;
     this.playbackPaused = this.held || report.paused === true;
     this.playbackPlaying = report.playing === true && !this.playbackPaused && report.completed !== true;
+    if (this.playbackPaused) this.gesture = undefined;
     if (!this.playbackPlaying) this.segment = undefined;
   }
 
@@ -131,7 +144,14 @@ export class PetActivity {
         progress.generationId !== this.playbackGeneration || !this.playbackPlaying || this.playbackPaused) return;
     if (progress.completed) {
       if (this.segment?.segmentId === progress.segmentId) this.segment = undefined;
-    } else this.segment = progress;
+    } else {
+      this.segment = progress;
+      const pending = this.pendingGesture;
+      if (pending?.attemptId === progress.attemptId && pending?.generationId === progress.generationId) {
+        this.pendingGesture = undefined;
+        this.gesture = { ...pending.gesture, startedAt: Date.now() };
+      }
+    }
   }
 
   mouth(frame: MouthFrame): boolean {
@@ -152,6 +172,7 @@ export class PetActivity {
     this.error = true;
     this.segment = undefined;
     this.playbackPlaying = false;
+    this.clearGestures();
   }
 
   clearError(): void { this.error = false; if (this.modelState === 'error') this.modelState = 'idle'; }
@@ -173,6 +194,7 @@ export class PetActivity {
       alwaysOnTop: preferences.alwaysOnTop, motionMode: preferences.motionMode, state,
       subtitle: state === 'speaking' ? this.segment!.text.slice(0, 160) : '',
       attemptId: this.segment?.attemptId, segmentId: this.segment?.segmentId,
+      gesture: this.gesture,
       sessionId: this.sessionId, generationId: Math.max(this.generationFloor, this.playbackGeneration),
     };
   }

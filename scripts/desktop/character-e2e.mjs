@@ -38,7 +38,7 @@ async function ask(port, record, text, enabled) {
     }
     if (event.type === 'assistant-state' && event.state === 'complete') finish(drafts.get(event.attemptId));
     if (event.type === 'error') fail(new Error(event.code));
-  }, undefined, record.history);
+  }, undefined, { history: record.history });
   const timer = setTimeout(() => fail(new Error('CHARACTER_MODEL_TIMEOUT')), 150_000);
   try {
     assert.equal((await dialogue.submit({ text, source: 'text', hostContext: { receipt: { kind: 'chat' } } })).accepted, true);

@@ -36,8 +36,12 @@ test('mouth and subtitles require a matching playback receipt; clear rejects sta
   const state = () => activity.snapshot(defaultPetPreferences);
   activity.startSession('session-1', true);
   activity.dialogue({ type: 'model-state', state: 'generating' });
+  const cue = { type: 'gesture', attemptId: 'attempt-1', generationId: 1, timing: 'speech',
+    gesture: { name: 'shake_head', strength: 'normal' } } as const;
+  activity.dialogue(cue);
   activity.spoken({ generationId: 1, text: '真实句子', completed: false });
   assert.notEqual(state().state, 'speaking');
+  assert.equal(state().gesture, undefined);
   activity.playback({ sessionId: 'other-session', generationId: 1, playing: true, paused: false });
   activity.spoken({ generationId: 1, text: '真实句子', completed: false });
   assert.notEqual(state().state, 'speaking');
@@ -50,19 +54,23 @@ test('mouth and subtitles require a matching playback receipt; clear rejects sta
   assert.equal(activity.mouth({ ...mouth, frame: 4200, segmentId: 'next' }), false);
   assert.equal(state().state, 'speaking');
   assert.equal(state().subtitle, '真实句子');
+  assert.equal(state().gesture?.name, 'shake_head');
   activity.output('pause', 1);
   activity.playback({ sessionId: 'session-1', generationId: 1, playing: true, paused: false });
   assert.equal(activity.mouth({ ...mouth, frame: 4500 }), false);
   assert.equal(state().state, 'paused');
   assert.equal(state().subtitle, '');
+  assert.equal(state().gesture, undefined);
   activity.output('resume', 1);
   activity.spoken({ generationId: 1, text: '旧回执', completed: false });
   assert.notEqual(state().state, 'speaking');
   activity.output('clear', 2);
+  activity.dialogue(cue);
   activity.playback({ sessionId: 'session-1', generationId: 1, playing: true, paused: false });
-  activity.spoken({ generationId: 1, text: '已取消内容', completed: false });
+  activity.spoken({ generationId: 1, attemptId: 'attempt-1', text: '已取消内容', completed: false });
   assert.notEqual(state().state, 'speaking');
   assert.equal(state().subtitle, '');
+  assert.equal(state().gesture, undefined);
   activity.playback({ sessionId: 'session-1', generationId: 2, playing: true, paused: false });
   activity.spoken({ generationId: 2, text: '新回执', completed: false });
   assert.equal(state().subtitle, '新回执');

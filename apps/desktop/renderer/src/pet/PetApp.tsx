@@ -307,7 +307,7 @@ export default function PetApp() {
       }}
       onContextMenu={event => { if (!hit(event)) return; event.preventDefault(); window.deskPet.showContextMenu() }}>
       {currentSet && <canvas ref={canvasRef} className="pet-body" hidden={live} aria-label="静态桌宠" />}
-      {model && <Live2DView ref={stage} profile={model} state={snapshot.state} reduced={!animate}
+      {model && <Live2DView ref={stage} profile={model} state={snapshot.state} gesture={snapshot.gesture} reduced={!animate}
         enabled={visible && documentVisible} readMouth={() => {
           const frame = liveFrame.current
           return frame && performance.now() - frame.at <= 125 && frame.value.sessionId === snapshot.sessionId &&
@@ -315,7 +315,7 @@ export default function PetApp() {
             frame.value.segmentId === snapshot.segmentId ? frame.value : { open: 0, shape: 0 }
         }} onReady={info => {
           setLiveInfo(info); setLiveError('')
-          window.deskPet.reportGeometry({ variant: snapshot.variant, modelId: info.id, aspect: info.aspect })
+          window.deskPet.reportGeometry({ variant: snapshot.variant, modelId: info.id, aspect: info.aspect, gestures: info.gestures })
         }} onError={setLiveError} />}
     </div>}
     {speaking && !!snapshot?.subtitle.trim() && <div className="pet-subtitle" aria-live="polite">{snapshot.subtitle}</div>}

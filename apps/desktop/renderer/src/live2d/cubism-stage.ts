@@ -3,21 +3,25 @@ import { Application, Assets, Container, extensions, type WebGLRenderer } from '
 import { configureCubismSDK, Live2DModel, Live2DPlugin, MotionPreloadStrategy, MotionPriority,
   type CubismInternalModel } from 'untitled-pixi-live2d-engine/cubism'
 import type { Live2DMotion, Live2DProfile } from '../../../../../packages/desktop-pet/src/live2d.ts'
-import type { PetState } from '../../../../../packages/desktop-pet/src/types.ts'
+import type { PetGesture, PetState } from '../../../../../packages/desktop-pet/src/types.ts'
+import type { GestureName } from '../../../../../packages/voice-core/src/gesture.ts'
+import { GestureMotion } from './gesture-motion'
 
 extensions.add(Live2DPlugin)
 configureCubismSDK({ memorySizeMB: 64 })
 
-export type ModelInfo = { id: string; parameters: string[]; physics: boolean; aspect: number }
+export type ModelInfo = { id: string; parameters: string[]; physics: boolean; aspect: number; gestures: readonly GestureName[] }
 export type StageState = {
   state: PetState
   reduced: boolean
   expression?: string
+  gesture?: PetGesture
   readMouth: () => { open: number; shape: number }
 }
 type Model = Live2DModel<CubismInternalModel>
 type Rect = { x: number; y: number; width: number; height: number }
-type Layer = { profile: Live2DProfile; model: Model; art: Rect; headCenter?: number; parameters: string[]; mouth: (open: number, shape: number) => void }
+type Layer = { profile: Live2DProfile; model: Model; art: Rect; headCenter?: number; parameters: string[];
+  mouth: (open: number, shape: number) => void; gestures: GestureMotion }
 const clamp = (x: number, low: number, high: number) => Math.max(low, Math.min(high, x))
 
 function artBounds(model: Model): Rect {
@@ -122,7 +126,7 @@ export class CubismStage {
     if (this.enabled === enabled) return
     this.enabled = enabled
     if (enabled && !this.lost) { this.layout(); this.app.start() }
-    else { this.app.stop(); this.open = this.shape = 0; this.pointer = undefined }
+    else { this.app.stop(); this.open = this.shape = 0; this.pointer = undefined; this.layer?.gestures.reset() }
   }
 
   model(profile: Live2DProfile): void {
@@ -169,9 +173,11 @@ export class CubismStage {
     const headArea = Object.values(candidate.internalModel.hitAreas).find(area => /^(head|face)$/iu.test(area.name))
     const head = headArea && candidate.internalModel.getDrawableBounds(headArea.index)
     const headCenter = head ? head.x + head.width / 2 : undefined
-    const layer = { profile: this.wanted, model: candidate, art, headCenter, parameters }
+    const gestures = new GestureMotion(core, parameters)
+    const layer = { profile: this.wanted, model: candidate, art, headCenter, parameters, gestures }
     if (old) this.app.stage.removeChild(old.model)
     this.layer = { ...layer, mouth: mouthDriver(layer) }
+    candidate.internalModel.on('afterMotionUpdate', () => gestures.apply())
     candidate.internalModel.on('beforeModelUpdate', () => this.layer?.model === candidate && this.layer.mouth(this.open, this.shape))
     this.app.stage.addChild(candidate)
     this.lastState = undefined
@@ -221,7 +227,7 @@ export class CubismStage {
   private tick(delta: number): void {
     const layer = this.layer
     if (!layer) return
-    const { state, reduced, expression, readMouth } = this.read()
+    const { state, reduced, expression, gesture, readMouth } = this.read()
     const { profile, model } = layer
     const dt = Math.min(90, delta)
     this.clock += dt / 1000
@@ -235,9 +241,14 @@ export class CubismStage {
     if (state !== this.lastState) {
       this.lastState = state
       if (!reduced && cue?.motion) this.play(cue.motion)
-      this.app.ticker.maxFPS = reduced ? 24 : state === 'off' || state === 'silent' ? 30 : 60
     }
-    const amount = reduced ? 0 : profile.style.gaze
+    const action = layer.gestures.prepare(gesture, dt, reduced)
+    const weight = layer.gestures.weight
+    const fps = reduced ? 24 : !action && !weight && (state === 'off' || state === 'silent') ? 30 : 60
+    if (this.app.ticker.maxFPS !== fps) this.app.ticker.maxFPS = fps
+    this.host.dataset.gesture = action ?? ''
+    this.host.dataset.gestureWeight = weight.toFixed(3)
+    const amount = reduced ? 0 : profile.style.gaze * (1 - Math.min(0.78, weight * 1.45))
     const look = state === 'thinking' || state === 'waiting' ? { x: 0.24, y: -0.17 }
       : state === 'listening' ? { x: 0.035, y: 0.08 } : { x: 0, y: 0 }
     const gaze = this.pointer ? { x: this.pointer.x * 0.35, y: this.pointer.y * 0.28 } : {
@@ -250,14 +261,15 @@ export class CubismStage {
     this.open = state !== 'speaking' ? 0 : this.open + (open - this.open) * (1 - Math.exp(-dt / (open > this.open ? 33 : 64)))
     this.shape += (mouth.shape - this.shape) * (1 - Math.exp(-dt / 70))
     this.host.dataset.mouth = this.open.toFixed(3)
-    model.update(dt)
+    try { model.update(dt) }
+    finally { layer.gestures.restore() }
   }
 
   private frameHeight(layer: Layer): number { return layer.art.height * (layer.profile.style.frame === 'portrait' ? 0.57 : 1) }
 
   private reportInfo(): void {
     const layer = this.layer
-    if (layer) this.report({ id: layer.profile.id, parameters: layer.parameters, physics: !!layer.model.internalModel.physics,
+    if (layer) this.report({ id: layer.profile.id, parameters: layer.parameters, physics: !!layer.model.internalModel.physics, gestures: layer.gestures.available,
       aspect: clamp(layer.art.width / this.frameHeight(layer), 0.35, 2.2) })
   }
 

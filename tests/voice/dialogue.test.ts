@@ -43,6 +43,40 @@ test('one Chat request streams direct text without a decision header', async () 
   await controller.close();
 });
 
+test('a split gesture directive stays out of speech and can settle without any prose', async () => {
+  const port = new FakePort(), events: DialogueEvent[] = [];
+  port.auto = false;
+  const controller = new DialogueController(port, preferences, event => events.push(event), undefined,
+    { gestureActions: () => ['shake_head', 'nod'] });
+  await controller.submit({ text: '摇头并回答', source: 'voice' });
+  assert.deepEqual(port.requests[0].gestureActions, ['shake_head', 'nod']);
+  for (const [index, text] of ['\n[ges', 'ture:shake_head:', 'subtle]\n'].entries()) {
+    port.listener?.({ type: 'text', attemptId: port.attempt, index, revision: 2, text });
+  }
+  assert.equal(events.some(event => event.type === 'assistant-delta' || event.type === 'gesture'), false);
+  port.listener?.({ type: 'text', attemptId: port.attempt, index: 3, revision: 2, text: '我不同意。' });
+  port.finish?.({ sessionId: 'session-1', status: 'completed' });
+  await settle();
+  const delivered = events.filter(event => event.type === 'assistant-delta' || event.type === 'gesture');
+  assert.deepEqual(delivered.map(event => event.type), ['assistant-delta', 'gesture']);
+  assert.deepEqual(delivered[1], { type: 'gesture', attemptId: port.attempt, generationId: 1,
+    gesture: { name: 'shake_head', strength: 'subtle' }, timing: 'speech' });
+  assert.equal(controller.ledger.snapshot()[0].generated, '我不同意。');
+  await controller.cancelOutput();
+
+  events.length = 0;
+  port.auto = true;
+  port.text = '[gesture:nod:normal]';
+  await controller.submit({ text: '只点头', source: 'voice' });
+  await settle();
+  assert.equal(events.some(event => event.type === 'assistant-delta' || event.type === 'error'), false);
+  assert.equal(events.find(event => event.type === 'decision')?.action, 'GESTURE');
+  assert.equal(events.find(event => event.type === 'gesture')?.timing, 'immediate');
+  assert.ok(events.some(event => event.type === 'assistant-state' && event.state === 'complete'));
+  assert.equal(controller.ledger.snapshot().at(-1)?.generated, '');
+  await controller.close();
+});
+
 test('hard local filters invoke no model and do not treat short answers as noise', async () => {
   const port = new FakePort();
   const controller = new DialogueController(port, preferences, () => {});

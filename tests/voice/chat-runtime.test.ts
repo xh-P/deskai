@@ -35,7 +35,7 @@ test('reopened conversation supplies its original role and delivered history aft
       return { accepted: true as const, sessionId: 'fixture', completed: Promise.resolve({ sessionId: 'fixture', status: 'completed' as const }) };
     }, async cancel() { return undefined; } };
     const dialogue = new DialogueController(port, { personaId: restored.persona.id, persona: restored.persona,
-      relationshipMode: restored.relationshipMode, voiceId: 'v', replyLanguage: 'auto' }, () => {}, undefined, restored.history);
+      relationshipMode: restored.relationshipMode, voiceId: 'v', replyLanguage: 'auto' }, () => {}, undefined, { history: restored.history });
     try {
       await dialogue.submit({ text: '继续聊刚才的话题。', source: 'text' });
       assert.equal(request?.persona?.revision, card.revision);

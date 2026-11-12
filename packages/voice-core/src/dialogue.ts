@@ -6,6 +6,7 @@ import type { ChatAccepted, ChatEvent, ChatSettlement, ChatTurnInput, DialoguePo
 import type { ChatPersonaId, RelationshipMode } from './persona-catalog.ts';
 import { PROMPT_VERSION, type Persona, type ReplyLanguage } from './prompts.ts';
 import type { CharacterLookupSummary } from './character-reference.ts';
+import { GestureReply, type Gesture, type GestureName } from './gesture.ts';
 
 export type DialoguePreferences = { personaId: ChatPersonaId; persona?: Persona; relationshipMode?: RelationshipMode;
   replyLanguage: ReplyLanguage; voiceId: string; characterKnowledge?: boolean };
@@ -16,6 +17,7 @@ export type DialogueEvent =
   | { type: 'user'; turnId: string; text: string; source: DeliveryMode }
   | { type: 'decision'; turnId: string; generationId: number; action: string; local: boolean }
   | { type: 'assistant-delta'; turnId: string; attemptId: string; generationId: number; text: string; source?: DeliveryMode }
+  | { type: 'gesture'; attemptId: string; generationId: number; gesture: Gesture; timing: 'speech' | 'immediate' }
   | { type: 'assistant-state'; turnId: string; attemptId?: string; generationId: number; state: 'complete' | 'interrupted' | 'error' }
   | { type: 'output-clear'; generationId: number }
   | { type: 'model-state'; state: 'idle' | 'generating' | 'cancelling' | 'waiting' | 'silent' | 'error'; code?: string }
@@ -26,13 +28,16 @@ type UserHistory = { role: 'user'; turnId: string; text: string };
 export type DialogueHistoryEntry = UserHistory | { role: 'assistant'; turnId: string; text: string; interrupted: boolean };
 type Active = { id: string; epoch: number; generation: number; input: DialogueInput; port: DialoguePort; accepted: boolean; canceled: boolean;
   attemptId?: string; failure?: string; finished?: boolean;
+  gestureActions?: readonly GestureName[]; reply?: GestureReply; emittedText?: boolean; gestureQueued?: boolean;
   attempts: string[]; completed?: Promise<ChatSettlement> };
+type DialogueOptions = { history?: readonly DialogueHistoryEntry[]; gestureActions?: () => readonly GestureName[] };
 
 /** Direct-text Chat streaming with explicit delivery projection and cancellation. */
 export class DialogueController {
   readonly ledger = new DeliveryLedger({ maxAttempts: 16, maxText: 12000 });
   private port: DialoguePort;
   private readonly speculative?: SpeculativeChat;
+  private readonly gestureActions?: () => readonly GestureName[];
   private preferences: DialoguePreferences;
   private emit: (event: DialogueEvent) => void;
   private active?: Active;
@@ -56,8 +61,10 @@ export class DialogueController {
 
   constructor(port: DialoguePort, preferences: DialoguePreferences, emit: (event: DialogueEvent) => void,
     speculative?: { port: DialoguePort; maxAgeMs: number; diagnostic?: (event: SpeculationDiagnostic) => void },
-    history: readonly DialogueHistoryEntry[] = []) {
+    options: DialogueOptions = {}) {
     this.port = port; this.preferences = { ...preferences }; this.emit = emit;
+    this.gestureActions = options.gestureActions;
+    const history = options.history ?? [];
     this.priorHistory = [...history];
     this.serial = history.reduce((serial, entry) => Math.max(serial, Number(entry.turnId.match(/^turn-(\d+)$/u)?.[1] ?? 0)), 0);
     if (speculative) this.speculative = new SpeculativeChat(speculative.port, speculative.maxAgeMs, speculative.diagnostic);
@@ -127,7 +134,7 @@ export class DialogueController {
       const prepared = identity && this.speculative?.claim(identity, request);
       if (!prepared) this.discardSpeculative(input.speculation);
       const state: Active = { id: turnId, epoch, generation: ++this.generation, input, port: prepared?.port ?? this.port, accepted: false,
-        canceled: false, attempts: [] };
+        canceled: false, attempts: [], gestureActions: request.gestureActions };
       this.active = state;
       this.emit({ type: 'model-state', state: 'generating' });
       const question = this.ledger.getPendingQuestion();
@@ -174,9 +181,11 @@ export class DialogueController {
 
   private chatRequest(input: DialogueInput): ChatTurnInput {
     const projection = this.projectHistory();
+    const gestureActions = this.gestureActions?.();
     return { text: input.text, hostContext: input.hostContext, personaId: this.preferences.personaId, persona: this.preferences.persona,
       characterKnowledge: input.characterKnowledge ?? this.preferences.characterKnowledge,
       relationshipMode: this.preferences.relationshipMode ?? 'friend', mode: input.source, replyLanguage: this.preferences.replyLanguage,
+      gestureActions: gestureActions?.length ? gestureActions : undefined,
       visibleHistory: projection.history, deliveryState: { attempts: projection.attempts,
         pendingQuestion: this.ledger.getPendingQuestion(), continuationOf: input.continuationOf,
         submittedUtteranceIds: input.utteranceIds ?? [], promptVersion: PROMPT_VERSION } };
@@ -203,25 +212,44 @@ export class DialogueController {
       this.counts.modelAttempts++;
       if (state.attemptId && state.attemptId !== event.attemptId) this.abandon(state);
       state.attemptId = event.attemptId;
+      state.reply = new GestureReply(state.gestureActions ?? []);
+      state.emittedText = false;
+      state.gestureQueued = false;
       state.attempts.push(event.attemptId);
       this.ledger.startAttempt(event.attemptId, state.id, state.input.source, true);
-      this.emit({ type: 'decision', turnId: state.id, generationId: state.generation, action: 'SPEAK', local: false });
       return;
     }
     if (event.type === 'text') {
-      if (event.attemptId !== state.attemptId || state.failure) return;
-      if (state.input.source === 'voice') this.outputAttempt = state;
-      this.ledger.appendGenerated(event.attemptId, event.text);
-      this.emit({ type: 'assistant-delta', turnId: state.id, attemptId: event.attemptId, generationId: state.generation, text: event.text, source: state.input.source });
+      if (event.attemptId !== state.attemptId || state.failure || !state.reply) return;
+      this.deliverText(state, event.attemptId, state.reply.append(event.text));
     } else if (event.type === 'attempt-end') {
       if (event.attemptId !== state.attemptId) return;
       if (event.outcome === 'abandoned') this.abandon(state);
     }
   }
 
+  private deliverText(state: Active, attemptId: string, text: string): void {
+    if (!text) return;
+    if (!state.emittedText) {
+      state.emittedText = true;
+      this.emit({ type: 'decision', turnId: state.id, generationId: state.generation, action: 'SPEAK', local: false });
+    }
+    if (state.input.source === 'voice') this.outputAttempt = state;
+    this.ledger.appendGenerated(attemptId, text);
+    this.emit({ type: 'assistant-delta', turnId: state.id, attemptId, generationId: state.generation, text, source: state.input.source });
+    // The first text delta opens the playback generation before a gesture is queued for it.
+    if (state.input.source === 'voice' && state.reply?.gesture && !state.gestureQueued && cleanSpeech(text)) {
+      state.gestureQueued = true;
+      this.emit({ type: 'gesture', attemptId, generationId: state.generation, gesture: state.reply.gesture, timing: 'speech' });
+    }
+  }
+
   private abandon(state: Active): void {
     if (state.attemptId && state.attempts.includes(state.attemptId)) this.ledger.interrupt(state.attemptId);
     this.emit({ type: 'assistant-state', turnId: state.id, attemptId: state.attemptId, generationId: state.generation, state: 'interrupted' });
+    state.attemptId = undefined;
+    state.reply = undefined;
+    if (this.outputAttempt === state) this.outputAttempt = undefined;
     state.generation = ++this.generation;
     this.emit({ type: 'output-clear', generationId: this.generation });
   }
@@ -230,15 +258,22 @@ export class DialogueController {
     state.finished = true;
     if (state.epoch !== this.epoch || this.closed) return;
     if (!state.canceled && !state.failure && settlement.status === 'completed') {
-      if (!state.attemptId) this.fail(state, 'CHAT_EMPTY_RESPONSE');
-      else if (state.attemptId) {
-        const attempt = this.ledger.snapshot().find(item => item.attemptId === state.attemptId);
-        if (!attempt?.generated.trim()) this.fail(state, 'CHAT_EMPTY_RESPONSE');
+      const attemptId = state.attemptId;
+      if (!attemptId) this.fail(state, 'CHAT_EMPTY_RESPONSE');
+      else {
+        this.deliverText(state, attemptId, state.reply?.finish() ?? '');
+        const text = this.ledger.snapshot().find(item => item.attemptId === attemptId)?.generated.trim() ?? '';
+        const gesture = state.reply?.gesture;
+        if (!text && !gesture) this.fail(state, 'CHAT_EMPTY_RESPONSE');
         else {
-          const question = attempt.generated.match(/[^。.!！?？\n]*[?？]\s*$/u)?.[0]?.trim();
-          if (question) this.ledger.setQuestionCandidate(state.attemptId, `question-${state.id}`, question,
-            state.input.source === 'voice' ? this.finalSegments.get(state.attemptId) : undefined);
-          this.emit({ type: 'assistant-state', turnId: state.id, attemptId: state.attemptId, generationId: state.generation, state: 'complete' });
+          const question = text.match(/[^。.!！?？\n]*[?？]\s*$/u)?.[0]?.trim();
+          if (question) this.ledger.setQuestionCandidate(attemptId, `question-${state.id}`, question,
+            state.input.source === 'voice' ? this.finalSegments.get(attemptId) : undefined);
+          if (!text) this.emit({ type: 'decision', turnId: state.id, generationId: state.generation, action: 'GESTURE', local: false });
+          if (gesture && (!text || state.input.source === 'text')) {
+            this.emit({ type: 'gesture', attemptId, generationId: state.generation, gesture, timing: 'immediate' });
+          }
+          this.emit({ type: 'assistant-state', turnId: state.id, attemptId, generationId: state.generation, state: 'complete' });
         }
       }
     } else if (!state.canceled && !state.failure) this.fail(state, settlement.code ?? 'MODEL_REQUEST_FAILED');

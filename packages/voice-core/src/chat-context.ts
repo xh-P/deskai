@@ -57,6 +57,7 @@ export function buildChatContent(input: ChatTurnInput, persona?: Persona): strin
     mode: input.mode ?? 'voice', replyLanguage: input.replyLanguage ?? 'auto',
     visibleHistory: projectionHistory(input.visibleHistory), deliveryState: projectionDelivery(input.deliveryState),
     currentUserText: text,
+    avatarGestures: input.gestureActions,
     hostContext: input.hostContext ?? null
   });
   if ([...projection].length > 16000) throw new Error('CHAT_CONTEXT_LENGTH');

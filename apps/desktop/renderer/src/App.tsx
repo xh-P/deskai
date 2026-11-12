@@ -203,6 +203,7 @@ export default function App() {
         setRetryable(event.retryable)
         break
       case 'knowledge': setKnowledgeLookup(event.result); break
+      case 'gesture':
       case 'usage': break
     }
   }, [addAssistantDelta, addEntry])
