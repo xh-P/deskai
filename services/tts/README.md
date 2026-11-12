@@ -22,3 +22,7 @@ PCM 到达后直接发出语音主体，最多保留 20 毫秒原始尾部用于
 在 `runtime/GPT-SoVITS` 中使用输出清单指定的 Python 和 FFmpeg，选 v2 及对应的基础权重。运行 `GPT_SoVITS/prepare_datasets/` 中的文本、HuBERT 和语义预处理，再由 `s2_train.py` 和 `s1_train.py` 分别导出 SoVITS `.pth` 和 GPT `.ckpt`。试听时用同一组权重及一条附有原文的参考音频加载 v2 推理。[v2 基础权重](https://huggingface.co/lj1995/GPT-SoVITS/tree/main/gsv-v2final-pretrained)
 
 南梦芽本机训练目录为 `training/minami_yume_v2/`。切片时序及日文标注见 `dataset_manifest.json`，训练配置、权重和试听分别位于 `configs/`、`weights/` 和 `audition/`。
+
+同一份南梦芽标注的 v5turbo 微调位于 `training/minami_yume_v5turbo/`。复用 v2 的音素与 HuBERT 特征，用 `s2Gv5turbo.pth` 提取语义码，再运行 `s2_train_v3_lora.py` 训练 SoVITS LoRA，并用 `s1_train.py` 从 `s1v3.ckpt` 微调 GPT。试听加载 v5turbo 底模、LoRA 和 v5 声码器。[v5 基础权重与声码器](https://huggingface.co/lj1995/GPT-SoVITS/tree/main/gsv-v5-pretrained)
+
+两版使用同一条留出参考和相同的中日文台词。`audition/` 中的对听 WAV 统一到 48 kHz 并匹配语音电平，先播 v2，停顿后播 v5turbo。原始样音、参考音频校验值和回转写见试听记录。
