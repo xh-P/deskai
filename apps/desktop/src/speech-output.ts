@@ -6,7 +6,8 @@ type Identity = { sessionId: string; turnId: string; attemptId: string; generati
 type Selection = VoiceSelection & { language?: 'auto' | 'zh' | 'ja' | 'all_zh' | 'all_ja' | 'en'; speed?: number };
 export type SpeechPort = Pick<LocalTtsService, 'synthesize'>;
 export type SpeechPlaybackReport = { sessionId: string; generationId: number; turnId?: string; attemptId?: string; voiceRevision?: number; segmentId?: string; chunkSeq?: number;
-  queuedSeconds?: number; playing: boolean; paused: boolean; completed?: boolean; chunkAccepted?: boolean; segmentCompleted?: boolean; errorCode?: string };
+  queuedSeconds?: number; playing: boolean; paused: boolean; completed?: boolean; chunkAccepted?: boolean;
+  segmentStarted?: boolean; segmentCompleted?: boolean; errorCode?: string };
 export type SpeechProgress = SpokenSentence & { turnId: string; attemptId: string; generationId: number; segmentId: string; completed: boolean };
 export type SpeechOutputEvent =
   | (Identity & { type: 'audio-chunk'; samples: Float32Array; sampleRate: number; channels: 1; format: 'pcm_f32'; chunkSeq: number; segmentFinal: boolean; final: boolean })
@@ -85,8 +86,8 @@ export class SpeechOutput {
     if (report.segmentCompleted && segment.complete && segment.sent === segment.chunks.length && report.chunkSeq === segment.chunks.length - 1) {
       this.progress(segment, true);
       this.segments = this.segments.filter(item => item !== segment);
-    } else if (report.playing) this.progress(segment, false);
-    this.state(report.paused ? 'paused' : report.playing ? 'playing' : 'buffering');
+    } else if (!this.paused && report.playing && report.segmentStarted) this.progress(segment, false);
+    this.state(this.paused || report.paused ? 'paused' : report.playing ? 'playing' : 'buffering');
     this.pump(); this.schedule();
   }
   private schedule(): void {

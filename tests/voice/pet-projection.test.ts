@@ -42,10 +42,17 @@ test('mouth and subtitles require a matching playback receipt; clear rejects sta
   activity.spoken({ generationId: 1, text: '真实句子', completed: false });
   assert.notEqual(state().state, 'speaking');
   activity.playback({ sessionId: 'session-1', generationId: 1, playing: true, paused: false });
-  activity.spoken({ generationId: 1, text: '真实句子', completed: false });
+  activity.spoken({ generationId: 1, attemptId: 'attempt-1', segmentId: 'segment-1', text: '真实句子', completed: false });
+  const mouth = { sessionId: 'session-1', generationId: 1, attemptId: 'attempt-1', segmentId: 'segment-1',
+    frame: 4096, sampleRate: 48000, open: .55, shape: -.2 };
+  assert.equal(activity.mouth(mouth), true);
+  assert.equal(activity.mouth(mouth), false, 'duplicate audio frames cannot reanimate the mouth');
+  assert.equal(activity.mouth({ ...mouth, frame: 4200, segmentId: 'next' }), false);
   assert.equal(state().state, 'speaking');
   assert.equal(state().subtitle, '真实句子');
   activity.output('pause', 1);
+  activity.playback({ sessionId: 'session-1', generationId: 1, playing: true, paused: false });
+  assert.equal(activity.mouth({ ...mouth, frame: 4500 }), false);
   assert.equal(state().state, 'paused');
   assert.equal(state().subtitle, '');
   activity.output('resume', 1);
@@ -59,6 +66,13 @@ test('mouth and subtitles require a matching playback receipt; clear rejects sta
   activity.playback({ sessionId: 'session-1', generationId: 2, playing: true, paused: false });
   activity.spoken({ generationId: 2, text: '新回执', completed: false });
   assert.equal(state().subtitle, '新回执');
+  for (const generationId of [3, 4, 5]) {
+    activity.output('clear', generationId);
+    assert.equal(activity.mouth({ ...mouth, generationId: generationId - 1, frame: 8000 }), false);
+    activity.playback({ sessionId: 'session-1', generationId, playing: true, paused: false });
+    activity.spoken({ generationId, attemptId: 'attempt-1', segmentId: 'segment-1', text: '恢复播报', completed: false });
+    assert.equal(activity.mouth({ ...mouth, generationId, frame: 10000 }), true);
+  }
   activity.stopSession();
   activity.playback({ sessionId: 'session-1', generationId: 2, playing: true, paused: false });
   assert.equal(state().state, 'off');

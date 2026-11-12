@@ -39,6 +39,12 @@ npm run host:ctl -- shutdown
 
 Work 会话使用 `deskai-work` dsh 预设。默认等待问题进入可在桌面答复的阶段为 5 秒，可在 [Work 配置](../../config/work-runtime.json)修改 `questionWaitSeconds`。原生前台提问、授权或完整会话从「原生会话」打开。升级仍在运行的源码 Host 时，等任务结算后执行 `npm run host:ctl -- shutdown`，再启动桌面应用以载入新订阅接口和预设。
 
+## Live2D 桌宠
+
+首次使用时运行 `npm run desktop:prepare-live2d`，再启动桌面。命令将已校验的 Cubism Core 5.2 与官方样例放入 `.cache/live2d`。从「角色」进入外观预览，选择样例或导入本地 `.model3.json`，调好取景、状态和口型后应用。静态造型仍可在外观中选择。[版本配置](../../config/live2d-models.json) · [Cubism 下载与许可](https://www.live2d.com/en/sdk/download/web/)
+
+`%APPDATA%\DeskAI2\live2d-library.json` 保存导入模型路径、调校和角色绑定。导入的模型包保留原路径，支持 PNG、JPEG 和 WebP 贴图。桌宠尺寸和位置继续在 `pet-settings.json` 中保存。[长门素材与调校](./live2d-tuning.md)
+
 ## 验证入口
 
 ```powershell
@@ -47,6 +53,7 @@ npm run desktop:test
 npm run desktop:dev -- --dialogue-smoke
 npm run desktop:smoke -- --input-wav 'C:\path\speech.wav'
 npm run desktop:dev -- --tts-smoke --real-model --input-wav 'C:\path\speech.wav'
+npm run desktop:dev -- --tts-smoke --real-model --with-live2d --input-wav 'C:\path\speech.wav'
 ```
 
 对话冒烟使用夹具模型。音频与 TTS 冒烟使用调用方提供的音频，报告分别写入 `outputs/desktop-validation/audio`、`dialogue` 或 `tts`。冒烟桌面和 Host 使用隔离的本机状态目录。TTS 冒烟默认用夹具对话，`--real-model` 另接入实际 dsh 规划和 Chat。

@@ -1,10 +1,11 @@
 import type { DialogueEvent } from '../../voice-core/src/dialogue.ts';
 import type { PetPreferences, PetSnapshot, PetState } from './types.ts';
+import type { MouthFrame } from './live2d.ts';
 
 type InputState = 'OFF' | 'LISTENING' | 'CAPTURING' | 'SETTLING' | 'TRANSCRIBING' | 'ACCUMULATING';
 type ModelState = 'idle' | 'generating' | 'cancelling' | 'waiting' | 'silent' | 'error';
 type Playback = { sessionId: string; generationId: number; playing: boolean; paused: boolean; completed?: boolean };
-type Progress = { generationId: number; text: string; completed: boolean };
+type Progress = { generationId: number; text: string; completed: boolean; attemptId?: string; segmentId?: string };
 
 /** Projects actual session, model and playback receipts into a visual state. */
 export class PetActivity {
@@ -16,7 +17,9 @@ export class PetActivity {
   private playbackGeneration = -1;
   private playbackPlaying = false;
   private playbackPaused = false;
-  private spokenText = '';
+  private held = false;
+  private segment?: Progress;
+  private lastMouthFrame = -1;
   private error = false;
 
   startSession(sessionId: string, captureArmed = false): void {
@@ -32,7 +35,9 @@ export class PetActivity {
     this.playbackGeneration = -1;
     this.playbackPlaying = false;
     this.playbackPaused = false;
-    this.spokenText = '';
+    this.held = false;
+    this.segment = undefined;
+    this.lastMouthFrame = -1;
     this.error = false;
   }
 
@@ -43,7 +48,8 @@ export class PetActivity {
     this.modelState = 'idle';
     this.playbackPlaying = false;
     this.playbackPaused = false;
-    this.spokenText = '';
+    this.held = false;
+    this.segment = undefined;
     this.error = retainError;
   }
 
@@ -78,56 +84,73 @@ export class PetActivity {
       this.output('clear', event.generationId);
     } else if (event.type === 'assistant-state' && event.generationId >= this.generationFloor) {
       if (event.state === 'interrupted' || event.state === 'error') {
-        this.spokenText = '';
+        this.segment = undefined;
         this.playbackPlaying = false;
         if (event.state === 'error') this.error = true;
       }
     } else if (event.type === 'error') {
       this.error = true;
-      this.spokenText = '';
+      this.segment = undefined;
       this.playbackPlaying = false;
     }
   }
 
   output(command: 'clear' | 'pause' | 'resume', generationId: number): void {
     if (!Number.isSafeInteger(generationId) || generationId < this.generationFloor) return;
+    this.held = command === 'pause';
     if (command === 'clear') {
       this.generationFloor = generationId;
       this.playbackGeneration = -1;
       this.playbackPlaying = false;
       this.playbackPaused = false;
-      this.spokenText = '';
+      this.segment = undefined;
+      this.lastMouthFrame = -1;
     } else if (command === 'pause') {
       this.playbackPaused = true;
       this.playbackPlaying = false;
-      this.spokenText = '';
+      this.segment = undefined;
     } else {
       this.playbackPaused = false;
       this.playbackPlaying = false;
-      this.spokenText = '';
+      this.segment = undefined;
     }
   }
 
   playback(report: Playback): void {
     if (!this.sessionId || report.sessionId !== this.sessionId || !Number.isSafeInteger(report.generationId) ||
         report.generationId < this.generationFloor) return;
+    if (this.playbackGeneration !== report.generationId) this.segment = undefined;
     this.playbackGeneration = report.generationId;
-    this.playbackPaused = report.paused === true;
+    this.playbackPaused = this.held || report.paused === true;
     this.playbackPlaying = report.playing === true && !this.playbackPaused && report.completed !== true;
-    if (!this.playbackPlaying) this.spokenText = '';
+    if (!this.playbackPlaying) this.segment = undefined;
   }
 
   spoken(progress: Progress): void {
     if (!this.sessionId || progress.generationId < this.generationFloor ||
         progress.generationId !== this.playbackGeneration || !this.playbackPlaying || this.playbackPaused) return;
-    this.spokenText = progress.completed ? '' : progress.text.slice(0, 160);
-    if (progress.completed) this.playbackPlaying = false;
+    if (progress.completed) {
+      if (this.segment?.segmentId === progress.segmentId) this.segment = undefined;
+    } else this.segment = progress;
+  }
+
+  mouth(frame: MouthFrame): boolean {
+    const current = this.segment;
+    if (!current || this.error || this.modelState === 'cancelling' || !this.playbackPlaying || this.playbackPaused ||
+        frame.sessionId !== this.sessionId || frame.generationId !== current.generationId ||
+        frame.attemptId !== current.attemptId || frame.segmentId !== current.segmentId ||
+        !Number.isSafeInteger(frame.frame) || frame.frame <= this.lastMouthFrame ||
+        !Number.isFinite(frame.sampleRate) || frame.sampleRate < 8000 || frame.sampleRate > 192000 ||
+        !Number.isFinite(frame.open) || frame.open < 0 || frame.open > 1 ||
+        !Number.isFinite(frame.shape) || Math.abs(frame.shape) > 1) return false;
+    this.lastMouthFrame = frame.frame;
+    return true;
   }
 
   fail(): void {
     if (!this.sessionId) return;
     this.error = true;
-    this.spokenText = '';
+    this.segment = undefined;
     this.playbackPlaying = false;
   }
 
@@ -138,7 +161,7 @@ export class PetActivity {
     if (this.sessionId) {
       if (this.error || this.modelState === 'error') state = 'error';
       else if (this.playbackPaused || this.modelState === 'cancelling') state = 'paused';
-      else if (this.playbackPlaying && this.spokenText) state = 'speaking';
+      else if (this.playbackPlaying && this.segment) state = 'speaking';
       else if (this.modelState === 'waiting') state = 'waiting';
       else if (this.modelState === 'silent') state = 'silent';
       else if (this.modelState === 'generating') state = 'thinking';
@@ -148,7 +171,8 @@ export class PetActivity {
     return {
       variant: preferences.variant, size: preferences.size, visible: preferences.visible,
       alwaysOnTop: preferences.alwaysOnTop, motionMode: preferences.motionMode, state,
-      subtitle: state === 'speaking' ? this.spokenText : '',
+      subtitle: state === 'speaking' ? this.segment!.text.slice(0, 160) : '',
+      attemptId: this.segment?.attemptId, segmentId: this.segment?.segmentId,
       sessionId: this.sessionId, generationId: Math.max(this.generationFloor, this.playbackGeneration),
     };
   }

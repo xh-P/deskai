@@ -3,12 +3,14 @@ import path from 'node:path';
 import { PET_VARIANTS, type PetGeometry, type PetPreferences, type PetPreferencePatch, type PetSnapshot } from '../../../packages/desktop-pet/src/types.ts';
 import { clampPetBounds, clampPetDragBounds, PetDrag, resizePetKeepingFeet } from '../../../packages/desktop-pet/src/drag.ts';
 import { defaultPetPreferences, loadPetPreferences, mergePetPreferences, savePetPreferences } from './pet-settings.ts';
+import type { Live2DProfile, MouthFrame } from '../../../packages/desktop-pet/src/live2d.ts';
 
 const petPage = 'deskai://app/index.html?pet=1';
 const names: Record<(typeof PET_VARIANTS)[number], string> = {
   'uniform-chibi': '校服 · Q 版', 'uniform-normal': '校服 · 原作比例',
   'witch-chibi': '魔法服 · Q 版', 'witch-normal': '魔法服 · 原作比例',
 };
+type Activity = Pick<PetSnapshot, 'state' | 'subtitle' | 'sessionId' | 'generationId' | 'attemptId' | 'segmentId'>;
 
 function overlap(a: Electron.Rectangle, b: Electron.Rectangle): number {
   return Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)) *
@@ -33,7 +35,8 @@ function clampToArea(bounds: Electron.Rectangle, area: Electron.Rectangle): Elec
 export class PetWindowManager {
   private window?: BrowserWindow;
   private preferences: PetPreferences = { ...defaultPetPreferences };
-  private snapshot: PetSnapshot;
+  private activity: Activity = { state: 'off', subtitle: '', sessionId: null, generationId: 0 };
+  private model?: Live2DProfile;
   private geometry = new Map<string, number>();
   private saveTimer?: ReturnType<typeof setTimeout>;
   private saving: Promise<unknown> = Promise.resolve();
@@ -45,18 +48,16 @@ export class PetWindowManager {
 
   constructor(private readonly userData: string, private readonly callbacks: {
     showMain: () => void; stopReply: () => void; changed: (snapshot: PetSnapshot) => void;
-  }, private readonly persist = true) {
-    this.snapshot = this.makeSnapshot('off', '', null, 0);
-  }
+  }, private readonly persist = true) {}
 
-  private makeSnapshot(state: PetSnapshot['state'], subtitle: string, sessionId: string | null, generationId: number): PetSnapshot {
+  getSnapshot(): PetSnapshot {
     return { variant: this.preferences.variant, size: this.preferences.size, visible: this.preferences.visible,
       alwaysOnTop: this.preferences.alwaysOnTop, motionMode: this.preferences.motionMode,
-      state, subtitle, sessionId, generationId };
+      ...this.activity, model: this.model };
   }
 
   private dimensions(): { width: number; height: number } {
-    const aspect = this.geometry.get(this.preferences.variant) ?? 0.8;
+    const aspect = this.geometry.get(this.model?.id ?? this.preferences.variant) ?? (this.model ? 1.12 : 0.8);
     return { width: Math.max(230, Math.round(this.preferences.size * aspect + 48)), height: this.preferences.size + 88 };
   }
 
@@ -75,7 +76,6 @@ export class PetWindowManager {
       catch (error) { this.started = false; throw error; }
       this.preferencesLoaded = true;
     }
-    this.snapshot = this.makeSnapshot(this.snapshot.state, this.snapshot.subtitle, this.snapshot.sessionId, this.snapshot.generationId);
     const dimensions = this.dimensions();
     const candidate = this.preferences.position
       ? { ...this.preferences.position, ...dimensions } : this.defaultBounds();
@@ -104,7 +104,6 @@ export class PetWindowManager {
       this.dragState.cancel();
       if (!this.quitting) {
         this.preferences.visible = false;
-        this.snapshot = this.makeSnapshot(this.snapshot.state, this.snapshot.subtitle, this.snapshot.sessionId, this.snapshot.generationId);
         this.publish();
         this.scheduleSave();
       }
@@ -120,17 +119,24 @@ export class PetWindowManager {
       event.senderFrame?.url === petPage;
   }
 
-  getSnapshot(): PetSnapshot { return { ...this.snapshot }; }
   getWindow(): BrowserWindow | undefined { return this.window && !this.window.isDestroyed() ? this.window : undefined; }
   showIfVisible(): void { if (this.preferences.visible) this.getWindow()?.showInactive(); }
   getPreferences(): PetPreferences { return { ...this.preferences, position: this.preferences.position && { ...this.preferences.position } }; }
   prepareToQuit(): void { this.quitting = true; }
 
-  setActivity(activity: Pick<PetSnapshot, 'state' | 'subtitle' | 'sessionId' | 'generationId'>): void {
-    const next = this.makeSnapshot(activity.state, activity.subtitle, activity.sessionId, activity.generationId);
-    if (JSON.stringify(next) === JSON.stringify(this.snapshot)) return;
-    this.snapshot = next;
+  setActivity({ state, subtitle, sessionId, generationId, attemptId, segmentId }: Activity, model?: Live2DProfile): void {
+    const next = { state, subtitle, sessionId, generationId, attemptId, segmentId };
+    if (model === this.model && JSON.stringify(next) === JSON.stringify(this.activity)) return;
+    const changedModel = model?.id !== this.model?.id;
+    this.activity = next;
+    this.model = model;
+    if (changedModel) { this.cancelDrag(); this.setOpaqueHit(false); this.resizeKeepingFeet(); }
     this.publish();
+  }
+
+  mouth(frame: MouthFrame): void {
+    const pet = this.getWindow();
+    if (this.model && pet?.isVisible()) pet.webContents.send('pet:mouth', frame);
   }
 
   update(value: unknown): PetSnapshot {
@@ -153,7 +159,6 @@ export class PetWindowManager {
         else void this.start().catch(error => { console.error('Pet window reopen failed:', error); });
       } else if (pet) { pet.hide(); this.setOpaqueHit(false); }
     }
-    this.snapshot = this.makeSnapshot(this.snapshot.state, this.snapshot.subtitle, this.snapshot.sessionId, this.snapshot.generationId);
     this.publish();
     this.scheduleSave();
     return this.getSnapshot();
@@ -162,10 +167,12 @@ export class PetWindowManager {
   reportGeometry(value: PetGeometry): void {
     if (!value || !PET_VARIANTS.includes(value.variant) || !Number.isFinite(value.aspect) ||
         value.aspect < 0.2 || value.aspect > 3) return;
-    const previous = this.geometry.get(value.variant);
+    if (value.modelId && this.model?.id !== value.modelId) return;
+    const key = value.modelId ?? value.variant;
+    const previous = this.geometry.get(key);
     if (previous !== undefined && Math.abs(previous - value.aspect) < 0.001) return;
-    this.geometry.set(value.variant, value.aspect);
-    if (value.variant === this.preferences.variant) {
+    this.geometry.set(key, value.aspect);
+    if (key === (this.model?.id ?? this.preferences.variant)) {
       this.cancelDrag();
       this.setOpaqueHit(false);
       this.resizeKeepingFeet(true);
@@ -245,7 +252,7 @@ export class PetWindowManager {
     return [
       { label: '显示桌宠', type: 'checkbox', checked: this.preferences.visible,
         click: () => { this.update({ visible: !this.preferences.visible }); } },
-      { label: '造型', submenu: variantItems },
+      { label: '静态造型', enabled: !this.model, submenu: variantItems },
       { label: '尺寸', submenu: sizeItems },
       { label: '保持置顶', type: 'checkbox', checked: this.preferences.alwaysOnTop,
         click: () => { this.update({ alwaysOnTop: !this.preferences.alwaysOnTop }); } },
@@ -254,10 +261,12 @@ export class PetWindowManager {
           click: () => { this.update({ motionMode: 'gentle' }); } },
         { label: '跟随系统', type: 'radio', checked: this.preferences.motionMode === 'system',
           click: () => { this.update({ motionMode: 'system' }); } },
+        { label: '减少动态', type: 'radio', checked: this.preferences.motionMode === 'reduced',
+          click: () => { this.update({ motionMode: 'reduced' }); } },
       ] },
       { type: 'separator' },
       { label: '打开主窗口', click: this.callbacks.showMain },
-      { label: '停止当前回复', enabled: Boolean(this.snapshot.sessionId), click: this.callbacks.stopReply },
+      { label: '停止当前回复', enabled: Boolean(this.activity.sessionId), click: this.callbacks.stopReply },
     ];
   }
 

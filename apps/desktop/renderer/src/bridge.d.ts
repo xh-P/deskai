@@ -10,6 +10,7 @@ import type { WorkUiCommand } from '../../../../packages/work-core/src/types.ts'
 import type { WorkTracePage, WorkTraceUpdate } from '../../../../packages/work-core/src/telemetry.ts'
 import type { VoiceDiagnostics } from '../../../../packages/voice-core/src/diagnostics.ts'
 import type { PetGeometry, PetPreferencePatch, PetSnapshot } from '../../../../packages/desktop-pet/src/types.ts'
+import type { Live2DApply, Live2DCatalog, MouthFrame } from '../../../../packages/desktop-pet/src/live2d.ts'
 import type { AecMode } from '../../../../packages/voice-core/src/aec-mode.ts'
 import type { EndpointConfig, InterruptionConfig } from '../../../../packages/voice-core/src/input-config.ts'
 
@@ -72,6 +73,7 @@ export interface PlaybackReport {
   segmentId?: string
   chunkSeq?: number
   segmentCompleted?: boolean
+  segmentStarted?: boolean
   chunkAccepted?: boolean
   queuedSeconds?: number
   errorCode?: string
@@ -160,6 +162,10 @@ export interface DeskaiBridge {
   sendFrame(frame: CaptureFrame): void
   onEvent(listener: (event: DeskaiEvent) => void): () => void
   playbackState(report: PlaybackReport): void
+  mouthFrame(frame: MouthFrame): void
+  getLive2DCatalog(): Promise<Live2DCatalog>
+  importLive2D(): Promise<{ catalog: Live2DCatalog; id: string } | null>
+  applyLive2D(input: Live2DApply): Promise<Live2DCatalog>
   loadPlaybackFixture(): Promise<{ generationId: number; wav: Uint8Array }>
   finishSmoke(report: SmokeReport): void
   finishDialogueSmoke(report: DialogueSmokeReport): void
@@ -171,6 +177,7 @@ declare global {
     deskPet: {
       getSnapshot(): Promise<PetSnapshot>
       onSnapshot(listener: (snapshot: PetSnapshot) => void): () => void
+      onMouth(listener: (frame: MouthFrame) => void): () => void
       setOpaqueHit(opaque: boolean): void
       drag(phase: 'start' | 'move' | 'end', pointerId: number): void
       showContextMenu(): void

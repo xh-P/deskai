@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import type { PetSnapshot, PetVariant } from '../../../../../packages/desktop-pet/src/types.ts'
+import type { MouthFrame } from '../../../../../packages/desktop-pet/src/live2d.ts'
 import { petMotionEnabled } from '../../../../../packages/desktop-pet/src/motion.ts'
 import { alphaBounds, faceRegions, paintFacePatch, type Rect } from './face'
+import Live2DView, { type Live2DControl } from '../live2d/Live2DView'
+import type { ModelInfo } from '../live2d/cubism-stage'
 import './pet.css'
 
 type Pose = 'idle' | 'blink' | 'speaking'
@@ -74,8 +77,12 @@ export default function PetApp() {
   const [reduced, setReduced] = useState(() => matchMedia('(prefers-reduced-motion: reduce)').matches)
   const [documentVisible, setDocumentVisible] = useState(() => document.visibilityState === 'visible')
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const stage = useRef<Live2DControl>(null)
+  const liveFrame = useRef<{ value: MouthFrame; at: number } | undefined>(undefined)
+  const [liveInfo, setLiveInfo] = useState<ModelInfo>()
+  const [liveError, setLiveError] = useState('')
   const dragRef = useRef<{ pointerId: number; x: number; y: number; moved: boolean;
-    variant: PetVariant; size: number } | null>(null)
+    appearance: string; size: number } | null>(null)
   const hitRef = useRef<boolean | null>(null)
   const loadEpoch = useRef(0)
   const slowFrames = useRef(0)
@@ -87,7 +94,8 @@ export default function PetApp() {
     void window.deskPet.getSnapshot().then(value => { if (mounted && !delivered) setSnapshot(value) })
       .catch(cause => { if (mounted) setError(String(cause)) })
     const unsubscribe = window.deskPet.onSnapshot(value => { delivered = true; if (mounted) setSnapshot(value) })
-    return () => { mounted = false; unsubscribe(); window.deskPet.setOpaqueHit(false) }
+    const unsubscribeMouth = window.deskPet.onMouth(value => { liveFrame.current = { value, at: performance.now() } })
+    return () => { mounted = false; unsubscribe(); unsubscribeMouth(); window.deskPet.setOpaqueHit(false) }
   }, [])
 
   useEffect(() => {
@@ -135,17 +143,22 @@ export default function PetApp() {
 
   const currentSet = set?.variant === snapshot?.variant ? set : null
   const visible = !!snapshot?.visible
-  const active = !!currentSet && visible && documentVisible
+  const model = snapshot?.model
+  const live = !!model && !!liveInfo && !liveError
+  const appearance = model?.id ?? snapshot?.variant
+  const active = (live || !!currentSet) && visible && documentVisible
+  const spriteActive = active && !live
   const animate = !!snapshot && petMotionEnabled(snapshot.motionMode, reduced)
   const speaking = active && snapshot?.state === 'speaking' && !!snapshot.sessionId
   const quietStatus = snapshot?.state === 'waiting' ? '等待'
     : snapshot?.state === 'silent' ? '安静'
       : snapshot?.state === 'paused' ? '暂停'
         : snapshot?.state === 'error' ? '异常' : ''
-  const figureWidth = currentSet && snapshot
-    ? snapshot.size * currentSet.idle.bounds.width / currentSet.idle.bounds.height : 0
+  const aspect = model ? liveInfo?.aspect ?? 1.12 : currentSet ? currentSet.idle.bounds.width / currentSet.idle.bounds.height : 0.8
+  const figureWidth = (snapshot?.size ?? 0) * aspect
+  useEffect(() => { setLiveError(''); if (!model) setLiveInfo(undefined) }, [model?.id])
   useEffect(() => {
-    if (!active || !animate || degraded || !currentSet?.blink) { setBlink(false); return }
+    if (!spriteActive || !animate || degraded || !currentSet?.blink) { setBlink(false); return }
     let blinkTimer: ReturnType<typeof setTimeout>
     let closeTimer: ReturnType<typeof setTimeout>
     const schedule = () => {
@@ -156,10 +169,10 @@ export default function PetApp() {
     }
     schedule()
     return () => { clearTimeout(blinkTimer); clearTimeout(closeTimer); setBlink(false) }
-  }, [active, animate, degraded, currentSet?.variant, currentSet?.blink])
+  }, [spriteActive, animate, degraded, currentSet?.variant, currentSet?.blink])
 
   useEffect(() => {
-    if (!speaking || degraded || !currentSet?.speaking) { setMouth(false); return }
+    if (!spriteActive || !speaking || degraded || !currentSet?.speaking) { setMouth(false); return }
     if (!animate) { setMouth(true); return }
     let timer: ReturnType<typeof setTimeout>
     let open = true
@@ -173,10 +186,10 @@ export default function PetApp() {
     }
     pulse()
     return () => { clearTimeout(timer); setMouth(false) }
-  }, [speaking, animate, degraded, currentSet?.variant, currentSet?.speaking])
+  }, [spriteActive, speaking, animate, degraded, currentSet?.variant, currentSet?.speaking])
 
   useLayoutEffect(() => {
-    if (!currentSet || !canvasRef.current) return
+    if (live || !currentSet || !canvasRef.current) return
     const canvas = canvasRef.current
     const redraw = () => {
       try {
@@ -193,7 +206,7 @@ export default function PetApp() {
     const observer = new ResizeObserver(redraw)
     observer.observe(canvas)
     return () => observer.disconnect()
-  }, [currentSet, visible, blink, mouth, animate, degraded])
+  }, [live, currentSet, visible, blink, mouth, animate, degraded])
 
   useEffect(() => {
     if (!attention) return
@@ -201,7 +214,8 @@ export default function PetApp() {
     return () => clearTimeout(timer)
   }, [attention])
 
-  const hit = useCallback((event: ReactMouseEvent<HTMLCanvasElement>): boolean => {
+  const hit = useCallback((event: ReactMouseEvent<HTMLDivElement>): boolean => {
+    if (live) return stage.current?.hit(event.clientX, event.clientY) ?? false
     if (!currentSet || !canvasRef.current) return false
     const rect = canvasRef.current.getBoundingClientRect()
     if (!rect.width || !rect.height) return false
@@ -211,7 +225,7 @@ export default function PetApp() {
     const height = currentSet.idle.image.naturalHeight
     if (x < 0 || y < 0 || x >= width || y >= height) return false
     return currentSet.idle.alpha[y * width + x] > 16
-  }, [currentSet])
+  }, [currentSet, live])
 
   const reportHit = (opaque: boolean) => {
     if (hitRef.current === opaque) return
@@ -228,18 +242,23 @@ export default function PetApp() {
 
   useEffect(() => {
     const drag = dragRef.current
-    if (!drag || (active && drag.variant === snapshot?.variant && drag.size === snapshot.size)) return
+    if (!drag || (active && drag.appearance === appearance && drag.size === snapshot?.size)) return
     dragRef.current = null
     window.deskPet.drag('end', drag.pointerId)
     hitRef.current = false
     window.deskPet.setOpaqueHit(false)
-  }, [active, snapshot?.variant, snapshot?.size])
+  }, [active, appearance, snapshot?.size])
 
   return <div className={`pet-root ${active ? 'pet-ready' : ''} ${animate ? '' : 'pet-reduced'} ${attention ? 'pet-attention' : ''} pet-${snapshot?.state ?? 'off'}`}
     data-variant={snapshot?.variant ?? ''} data-state={snapshot?.state ?? 'off'} data-ready={currentSet ? 'true' : 'false'}
+    data-live2d-ready={live && liveInfo?.id === model?.id ? model?.id : undefined}
     data-motion-mode={snapshot?.motionMode ?? ''} data-motion={animate ? 'on' : 'off'} data-system-reduced={reduced ? 'true' : 'false'}>
-    {currentSet && visible && <div className="pet-figure" style={{ width: figureWidth, height: snapshot.size }}><canvas ref={canvasRef} className="pet-body" aria-label="长门有希桌宠"
+    {snapshot && (currentSet || model) && <div className="pet-figure" hidden={!visible} style={{ width: figureWidth, height: snapshot.size }}
       onPointerMove={event => {
+        if (live) {
+          const rect = event.currentTarget.getBoundingClientRect()
+          stage.current?.gaze(2 * (event.clientX - rect.left) / rect.width - 1, 1 - 2 * (event.clientY - rect.top) / rect.height)
+        }
         const drag = dragRef.current
         if (drag) {
           if (drag.pointerId !== event.pointerId) return
@@ -251,16 +270,15 @@ export default function PetApp() {
           }
           if (Math.hypot(event.screenX - drag.x, event.screenY - drag.y) > 4) drag.moved = true
           window.deskPet.drag('move', drag.pointerId)
-          reportHit(hit(event))
         } else reportHit(hit(event))
       }}
-      onPointerLeave={() => reportHit(false)}
+      onPointerLeave={() => { stage.current?.restGaze(); reportHit(false) }}
       onPointerDown={event => {
         if (dragRef.current || event.button !== 0 || !hit(event)) return
         try { event.currentTarget.setPointerCapture(event.pointerId) }
         catch { return }
         dragRef.current = { pointerId: event.pointerId, x: event.screenX, y: event.screenY,
-          moved: false, variant: snapshot.variant, size: snapshot.size }
+          moved: false, appearance: appearance!, size: snapshot.size }
         reportHit(true)
         window.deskPet.drag('start', event.pointerId)
       }}
@@ -269,7 +287,10 @@ export default function PetApp() {
         if (!drag || drag.pointerId !== event.pointerId) return
         dragRef.current = null
         window.deskPet.drag('end', drag.pointerId)
-        if (!drag.moved && animate) setAttention(true)
+        if (!drag.moved && animate) {
+          if (live) stage.current?.tap()
+          else setAttention(true)
+        }
         reportHit(hit(event))
       }}
       onPointerCancel={event => {
@@ -284,11 +305,23 @@ export default function PetApp() {
         dragRef.current = null
         reportHit(false)
       }}
-      onContextMenu={event => { if (!hit(event)) return; event.preventDefault(); window.deskPet.showContextMenu() }} /></div>}
+      onContextMenu={event => { if (!hit(event)) return; event.preventDefault(); window.deskPet.showContextMenu() }}>
+      {currentSet && <canvas ref={canvasRef} className="pet-body" hidden={live} aria-label="静态桌宠" />}
+      {model && <Live2DView ref={stage} profile={model} state={snapshot.state} reduced={!animate}
+        enabled={visible && documentVisible} readMouth={() => {
+          const frame = liveFrame.current
+          return frame && performance.now() - frame.at <= 125 && frame.value.sessionId === snapshot.sessionId &&
+            frame.value.generationId === snapshot.generationId && frame.value.attemptId === snapshot.attemptId &&
+            frame.value.segmentId === snapshot.segmentId ? frame.value : { open: 0, shape: 0 }
+        }} onReady={info => {
+          setLiveInfo(info); setLiveError('')
+          window.deskPet.reportGeometry({ variant: snapshot.variant, modelId: info.id, aspect: info.aspect })
+        }} onError={setLiveError} />}
+    </div>}
     {speaking && !!snapshot?.subtitle.trim() && <div className="pet-subtitle" aria-live="polite">{snapshot.subtitle}</div>}
     {active && quietStatus && <div className={`pet-status pet-status-${snapshot?.state}`} aria-live="polite">
       <span className="pet-status-dot" aria-hidden="true" />{quietStatus}
     </div>}
-    {error && <div className="pet-error" role="alert">{error}</div>}
+    {(liveError || error) && <div className="pet-error" role="alert">{liveError || error}</div>}
   </div>
 }

@@ -59,6 +59,10 @@ contextBridge.exposeInMainWorld('deskai', Object.freeze({
   retrySpeech: () => ipcRenderer.invoke('deskai:retry-speech'),
   sendFrame: (frame: unknown) => ipcRenderer.send('deskai:frame', frame),
   playbackState: (state: unknown) => ipcRenderer.send('deskai:playback', state),
+  mouthFrame: (value: unknown) => ipcRenderer.send('deskai:mouth-frame', value),
+  getLive2DCatalog: () => ipcRenderer.invoke('deskai:live2d-catalog'),
+  importLive2D: () => ipcRenderer.invoke('deskai:live2d-import'),
+  applyLive2D: (input: unknown) => ipcRenderer.invoke('deskai:live2d-apply', input),
   loadPlaybackFixture: () => ipcRenderer.invoke('deskai:playback-fixture'),
   finishSmoke: (report: unknown) => ipcRenderer.send('deskai:finish-smoke', report),
   onEvent: (callback: (event: unknown) => void) => {

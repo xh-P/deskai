@@ -18,6 +18,8 @@ import { defaultPreferences, loadPreferences, savePreferences, mergePreferences,
 import { PetActivity } from '../../../packages/desktop-pet/src/projection.ts';
 import { PET_VARIANTS, type PetGeometry, type PetSnapshot } from '../../../packages/desktop-pet/src/types.ts';
 import { PetWindowManager, petPage } from './pet-window.ts';
+import { Live2DLibrary } from './live2d-library.ts';
+import type { Live2DApply, MouthFrame } from '../../../packages/desktop-pet/src/live2d.ts';
 import { loadInputRuntimeConfig, SpeechRuntime } from './speech-runtime.ts';
 import { WakeGate } from './wake-gate.ts';
 import { WorkWindow } from './work-window.ts';
@@ -50,6 +52,7 @@ const smokeMode = process.argv.includes('--smoke') || petSmoke;
 const dialogueSmoke = smokeMode && process.argv.includes('--dialogue-smoke');
 const ttsSmoke = smokeMode && process.argv.includes('--tts-smoke');
 const realModelSmoke = ttsSmoke && process.argv.includes('--real-model');
+const live2dSmoke = ttsSmoke && process.argv.includes('--with-live2d');
 const fakeMedia = process.argv.includes('--use-fake-device-for-media-stream');
 const hasInstanceLock = smokeMode || app.requestSingleInstanceLock();
 if (!hasInstanceLock) app.quit();
@@ -94,7 +97,10 @@ let activeConversation: ConversationRecord | undefined;
 const characterKnowledge = new CharacterKnowledge(root);
 let tray: Tray | undefined;
 let petWindow: PetWindowManager | undefined;
+let live2d: Live2DLibrary;
 const petActivity = new PetActivity();
+const lipSyncSmoke = { frames: 0, peak: 0, segments: new Set<string>(), firstAt: '', lastAt: '' };
+let live2dSample: Promise<{ model?: string; peak: number; frameIntervalP95?: number }> | undefined;
 let lastSpeechStatus: { status: string; detail?: string } = { status: '尚未准备语音识别' };
 let assetStatus: { ready: boolean; missing: string[] } = { ready: false, missing: [] };
 let preferenceWrite: Promise<unknown> = Promise.resolve();
@@ -143,7 +149,11 @@ const turnCoordinator = new DesktopTurnCoordinator({
 });
 
 function send(event: object) { if (window && !window.isDestroyed()) window.webContents.send('deskai:event', event); }
-function syncPet() { if (petWindow) petWindow.setActivity(petActivity.snapshot(petWindow.getPreferences())); }
+function syncPet() {
+  if (!petWindow) return;
+  const personaId = activeConversation?.persona.id ?? preferences.personaId;
+  petWindow.setActivity(petActivity.snapshot(petWindow.getPreferences()), petSmoke ? undefined : live2d.resolve(personaId));
+}
 function showMainWindow() { window?.show(); window?.focus(); }
 function stopCurrentReply() {
   if (!sessionId || !(turnCoordinator.busy || dialogue?.isGenerating || outputBusy || outputActive || outputPaused)) return;
@@ -302,6 +312,7 @@ async function stopSession(retainPetError = false) {
   dialogue = undefined;
   activeConversation = undefined;
   sessionId = '';
+  syncPet();
   outputActive = false;
   outputPaused = false;
   if (preparingService) {
@@ -474,6 +485,20 @@ ipcMain.handle('deskai:pet-preferences', (event, value: unknown) => {
   trusted(event);
   if (!petWindow) throw new Error('PET_NOT_READY');
   return petWindow.update(value);
+});
+ipcMain.handle('deskai:live2d-catalog', event => { trusted(event); return live2d.catalog(); });
+ipcMain.handle('deskai:live2d-import', async event => {
+  trusted(event);
+  const result = await dialog.showOpenDialog(window!, { title: '导入 Live2D 模型', properties: ['openFile'],
+    filters: [{ name: 'Cubism 模型清单', extensions: ['json'] }] });
+  return result.canceled ? null : live2d.import(result.filePaths[0]);
+});
+ipcMain.handle('deskai:live2d-apply', async (event, input: Live2DApply) => {
+  trusted(event);
+  characters.get(input?.personaId);
+  const catalog = await live2d.apply(input);
+  syncPet();
+  return catalog;
 });
 ipcMain.handle('pet:get-snapshot', event => {
   if (!petWindow?.owns(event)) throw new Error('UNTRUSTED_PET_RENDERER');
@@ -744,6 +769,7 @@ ipcMain.handle('deskai:preferences', async (event, value: unknown) => {
     const wakeChanged = JSON.stringify(next.wakePhrases) !== JSON.stringify(preferences.wakePhrases);
     if (!smokeMode) await savePreferences(app.getPath('userData'), next);
     preferences = next;
+    syncPet();
     if (voiceSelection) voiceOutput?.setSelection({ ...voiceSelection, language: next.replyLanguage, speed: next.speed });
     if (wakeChanged) { wakeGate.setPhrases(effectiveWakePhrases()); refreshListeningMode(true); }
     refreshOutput();
@@ -810,6 +836,36 @@ ipcMain.on('deskai:playback', (event, report: unknown) => {
   syncPet();
   refreshOutput();
   flushHostNotices();
+});
+ipcMain.on('deskai:mouth-frame', (event, value: MouthFrame) => {
+  trusted(event);
+  if (!value || !petActivity.mouth(value)) return;
+  petWindow?.mouth(value);
+  if (!live2dSmoke) return;
+  lipSyncSmoke.frames++;
+  lipSyncSmoke.peak = Math.max(lipSyncSmoke.peak, value.open);
+  lipSyncSmoke.segments.add(value.segmentId);
+  lipSyncSmoke.lastAt = new Date().toISOString();
+  lipSyncSmoke.firstAt ||= lipSyncSmoke.lastAt;
+  const pet = petWindow?.getWindow();
+  if (value.open > 0.2 && pet?.isVisible()) live2dSample ??= pet.webContents.executeJavaScript(`new Promise(resolve => {
+    const stage = document.querySelector('.live2d-view');
+    if (!stage) { resolve({ peak: 0 }); return; }
+    const intervals = [];
+    let previous = performance.now(), peak = Number(stage.dataset.mouth) || 0;
+    const observer = new MutationObserver(() => {
+      const at = performance.now();
+      intervals.push(at - previous); previous = at;
+      peak = Math.max(peak, Number(stage.dataset.mouth) || 0);
+    });
+    observer.observe(stage, { attributes: true, attributeFilter: ['data-mouth'] });
+    setTimeout(() => {
+      observer.disconnect();
+      intervals.sort((a, b) => a - b);
+      resolve({ model: document.querySelector('.pet-root')?.dataset.live2dReady, peak,
+        frameIntervalP95: intervals[Math.floor((intervals.length - 1) * .95)] });
+    }, 850);
+  })`).catch(() => ({ peak: 0 }));
 });
 ipcMain.handle('deskai:playback-fixture', async event => {
   trusted(event);
@@ -889,7 +945,11 @@ function maybeFinishTtsSmoke() {
   void (async () => {
     const directory = path.join(root, 'outputs/desktop-validation/tts');
     await mkdir(directory, { recursive: true });
-    await writeFile(path.join(directory, `desktop-smoke-${Date.now()}.json`), JSON.stringify(report, null, 2));
+    const renderer = live2dSmoke ? await live2dSample : undefined;
+    if (live2dSmoke) report.passed &&= !!renderer?.model && renderer.peak > 0.05 && lipSyncSmoke.frames > 0;
+    const live2dVoice = live2dSmoke ? { frames: lipSyncSmoke.frames, peak: lipSyncSmoke.peak, segments: lipSyncSmoke.segments.size,
+      firstAt: lipSyncSmoke.firstAt, lastAt: lipSyncSmoke.lastAt, renderer } : undefined;
+    await writeFile(path.join(directory, `desktop-smoke-${Date.now()}.json`), JSON.stringify({ ...report, live2d: live2dVoice }, null, 2));
     if (window && !window.isDestroyed()) await writeFile(path.join(directory, 'desktop-smoke.png'), (await window.webContents.capturePage()).toPNG());
     await stopSession(); await speech?.dispose(); await tts?.dispose(); shutdown = true; await closeHostClient(); app.exit(report.passed ? 0 : 1);
   })().catch(() => app.exit(1));
@@ -1073,7 +1133,9 @@ app.whenReady().then(async () => {
   wakeGate.setPhrases(effectiveWakePhrases());
   assetStatus = await inspectTtsAssets(root, assetRoot);
   const characterData = smokeMode ? undefined : app.getPath('userData');
-  [characters, conversations] = await Promise.all([CharacterStore.open(root, characterData), ConversationArchive.open(characterData)]);
+  [characters, conversations, live2d] = await Promise.all([
+    CharacterStore.open(root, characterData), ConversationArchive.open(characterData), Live2DLibrary.open(root, app.getPath('userData')),
+  ]);
   protocol.handle('deskai', async request => {
     const url = new URL(request.url);
     let relative;
@@ -1082,6 +1144,11 @@ app.whenReady().then(async () => {
     const file = path.resolve(rendererRoot, relative);
     if (url.hostname !== 'app' || !file.startsWith(rendererRoot + path.sep)) return new Response(null, { status: 403 });
     try {
+      if (relative.startsWith('live2d/')) {
+        const asset = await live2d.asset(relative.slice('live2d/'.length));
+        return asset ? new Response(new Uint8Array(asset.data), { headers: { 'Content-Type': asset.type, 'Cache-Control': 'no-store' } })
+          : new Response(null, { status: 404 });
+      }
       const mime: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
         '.css': 'text/css', '.png': 'image/png', '.wasm': 'application/wasm', '.onnx': 'application/octet-stream' };
       return new Response(new Uint8Array(await readFile(file)), { headers: {
@@ -1109,6 +1176,7 @@ app.whenReady().then(async () => {
     },
   }, !smokeMode);
   await petWindow.start(false);
+  syncPet();
   screen.on('display-removed', () => petWindow?.ensureVisible());
   screen.on('display-metrics-changed', () => petWindow?.ensureVisible());
   window = new BrowserWindow({ width: 1320, height: 860, minWidth: 700, minHeight: 560, show: !smokeMode,
@@ -1127,7 +1195,7 @@ app.whenReady().then(async () => {
     if (details.level === 3 || details.level === 'error') console.error('Renderer smoke:', String(details.message ?? '').slice(0, 500));
   });
   await window.loadURL(page);
-  if (!smokeMode) petWindow.showIfVisible();
+  if (!smokeMode || live2dSmoke) petWindow.showIfVisible();
   if (petSmoke) {
     const rendererErrors: string[] = [];
     petWindow.getWindow()?.webContents.on('console-message', event => {

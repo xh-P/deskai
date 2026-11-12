@@ -1,0 +1,43 @@
+{
+  "core": {
+    "version": "Cubism 5.2",
+    "url": "https://cubism.live2d.com/sdk-web/core/05/live2dcubismcore.min.js",
+    "sha256": "25ae938cb4fe282ce189b357bcc97e603d1e1f7ec78bf04150d401c23cdc792f"
+  },
+  "samples": {
+    "revision": "ed1e0b714826d92469b9e51cacc3346f4e393f03",
+    "sha256": "3b7d9dc30adc63da325b16fa9a76fc58001365a6be67ffbf8261afcc56f44333",
+    "models": [
+      {
+        "id": "sample-mao",
+        "name": "虹色真央 · Live2D 官方样例",
+        "file": "Mao/Mao.model3.json",
+        "style": {
+          "frame": "portrait",
+          "mouthGain": 0.82,
+          "mouth": { "open": "ParamA", "wide": "ParamI", "round": "ParamU" },
+          "cues": {
+            "listening": { "expression": "exp_01" },
+            "speaking": { "expression": "exp_04" },
+            "tap": { "motion": { "group": "TapBody", "index": 0 } }
+          }
+        }
+      },
+      {
+        "id": "sample-haru",
+        "name": "Haru · Live2D 官方样例",
+        "file": "Haru/Haru.model3.json",
+        "style": {
+          "frame": "portrait",
+          "mouthGain": 0.86,
+          "mouth": { "open": "ParamMouthOpenY", "form": "ParamMouthForm" },
+          "cues": {
+            "off": { "motion": { "group": "Idle", "index": 0 } },
+            "tap": { "motion": { "group": "TapBody", "index": 0 } }
+          }
+        }
+      }
+    ]
+  },
+  "defaultModelId": "sample-mao"
+}

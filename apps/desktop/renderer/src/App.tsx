@@ -12,6 +12,7 @@ import { aecCaptureOptions } from '../../../../packages/voice-core/src/aec-mode.
 import { PcmPlayer } from './player'
 import Workbench from './workbench/Workbench'
 import CharacterEditor from './CharacterEditor'
+import AppearancePanel from './live2d/AppearancePanel'
 import type { HostSnapshot } from '../../../host/src/protocol.ts'
 import './style.css'
 
@@ -120,7 +121,10 @@ export default function App() {
       window.deskai.playbackState(report)
       playbackRef.current = report.playing
       setPlayback(report.completed ? '播放完成' : report.paused ? '已暂停' : report.playing ? '播放中' : '空闲')
-    }, message => { setError(message); window.deskai.playbackState({ sessionId: opened.sessionId, generationId: generationFloor.current, playing: false, paused: false, errorCode: 'PLAYER_ERROR' }) })
+    }, message => {
+      setError(message)
+      window.deskai.playbackState({ sessionId: opened.sessionId, generationId: generationFloor.current, playing: false, paused: false, errorCode: 'PLAYER_ERROR' })
+    }, frame => window.deskai.mouthFrame(frame))
     try {
       await player.initialize()
       player.setVolume(preferencesRef.current?.volume ?? 0.8)
@@ -643,9 +647,6 @@ export default function App() {
   const selectedVoiceName = selectedVoice?.name ?? '常态有希 · v2'
   const ttsLabel = ({ starting: '正在启动', loading: '正在加载模型', warming: '正在预热', switching: '正在切换声音', ready: '已就绪', error: '出错，可恢复', stopped: '已停止' } as Record<string, string>)[ttsState.split(' · ')[0]] ?? ttsState
   const inputLabel = ({ OFF: '未开启', LISTENING: '等待你说话', CAPTURING: '正在收音', SETTLING: '等待续句', TRANSCRIBING: '正在识别', ACCUMULATING: '等待续句', DECIDING: '正在提交' } as Record<string, string>)[inputState] ?? inputState
-  const petStateLabel = ({ off: '未开始', listening: '倾听', recognizing: '识别', thinking: '思考', speaking: '说话',
-    paused: '暂停', waiting: '等待', silent: '安静', error: '异常' } as Record<string, string>)[petSnapshot?.state ?? 'off']
-
   return <>
     <header className="desktop-bar">
       <div className="desktop-brand"><span aria-hidden="true">D</span>DeskAI</div>
@@ -661,23 +662,7 @@ export default function App() {
       <div hidden={page !== 'work'}><Workbench snapshot={hostSnapshot} /></div>
       <div hidden={page !== 'character'} className="shell role-shell">
         <header className="view-heading"><h1>角色与声音</h1><p>{role?.displayName ?? ''} · {selectedVoiceName}</p></header>
-        <section className="preferences" aria-label="桌宠设置">
-          <label>桌宠造型<select value={petSnapshot?.variant ?? 'uniform-chibi'} onChange={event => changePet({ variant: event.target.value as PetSnapshot['variant'] })}>
-            <option value="uniform-chibi">校服 · Q 版</option><option value="uniform-normal">校服 · 原作比例</option>
-            <option value="witch-chibi">魔法服 · Q 版</option><option value="witch-normal">魔法服 · 原作比例</option>
-          </select></label>
-          <label>桌宠高度 {petSnapshot?.size ?? 220} px<input aria-label="桌宠高度" type="range" min="120" max="360" step="10" value={petSnapshot?.size ?? 220} onChange={event => changePet({ size: Number(event.target.value) })} /></label>
-          <label>桌宠显示<select value={String(petSnapshot?.visible ?? true)} onChange={event => changePet({ visible: event.target.value === 'true' })}>
-            <option value="true">显示</option><option value="false">隐藏</option>
-          </select></label>
-          <label>桌宠置顶<select value={String(petSnapshot?.alwaysOnTop ?? true)} onChange={event => changePet({ alwaysOnTop: event.target.value === 'true' })}>
-            <option value="true">保持置顶</option><option value="false">普通窗口层级</option>
-          </select></label>
-          <label>桌宠动画<select value={petSnapshot?.motionMode ?? 'gentle'} onChange={event => changePet({ motionMode: event.target.value as PetSnapshot['motionMode'] })}>
-            <option value="gentle">轻微动画</option><option value="system">跟随系统</option>
-          </select></label>
-          <span>桌宠状态：{petStateLabel} · 位置可拖动调整</span>
-        </section>
+        {page === 'character' && <AppearancePanel key={roleId} personaId={roleId} snapshot={petSnapshot} changePet={changePet} />}
         <section className="preferences" aria-label="对话设置">
           <label>角色声音<select value={selectedVoice?.id ?? ''} disabled={!voices.length || starting} onChange={event => void changeSetting({ voiceId: event.target.value, referenceId: '' })}>
             {!selectedVoice && <option value="" disabled>等待声音资源</option>}

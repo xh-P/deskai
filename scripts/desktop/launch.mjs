@@ -7,12 +7,12 @@ import { loadTtsRuntime } from '../../packages/tts-adapter/src/runtime.ts';
 import { buildDesktop, root } from './build.mjs';
 
 const { values: { smoke: audioSmoke, 'dialogue-smoke': dialogueSmoke, 'tts-smoke': ttsSmoke,
-  'pet-smoke': petSmoke, 'real-model': realModel, 'input-wav': inputWav } } = parseArgs({ options: {
+  'pet-smoke': petSmoke, 'real-model': realModel, 'with-live2d': withLive2D, 'input-wav': inputWav } } = parseArgs({ options: {
   smoke: { type: 'boolean' }, 'dialogue-smoke': { type: 'boolean' }, 'tts-smoke': { type: 'boolean' },
-  'pet-smoke': { type: 'boolean' }, 'real-model': { type: 'boolean' }, 'input-wav': { type: 'string' },
+  'pet-smoke': { type: 'boolean' }, 'real-model': { type: 'boolean' }, 'with-live2d': { type: 'boolean' }, 'input-wav': { type: 'string' },
 } });
 const modes = [audioSmoke, dialogueSmoke, ttsSmoke, petSmoke].filter(Boolean);
-if (modes.length > 1 || realModel && !ttsSmoke) throw new Error('请选择一个冒烟模式。--real-model 用于 TTS 冒烟。');
+if (modes.length > 1 || (realModel || withLive2D) && !ttsSmoke) throw new Error('请选择一个冒烟模式。--real-model 和 --with-live2d 用于 TTS 冒烟。');
 const smoke = modes.length === 1;
 const audioInput = !!(audioSmoke || ttsSmoke);
 if (audioInput !== !!inputWav) throw new Error('音频和 TTS 冒烟需要 --input-wav <音频路径>。');
@@ -47,6 +47,7 @@ try {
   if (dialogueSmoke) args.push('--dialogue-smoke');
   if (ttsSmoke) args.push('--tts-smoke');
   if (realModel) args.push('--real-model');
+  if (withLive2D) args.push('--with-live2d');
   const child = spawn(electronExe, args, { cwd: root, env, stdio: 'inherit', windowsHide: smoke });
   if (smoke) timer = setTimeout(() => {
     if (child.pid) spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });

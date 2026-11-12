@@ -1,4 +1,5 @@
 import type { DeskaiEvent, PlaybackReport } from './bridge'
+import type { MouthFrame } from '../../../../packages/desktop-pet/src/live2d.ts'
 
 type AudioChunk = Extract<DeskaiEvent, { type: 'audio-chunk' }>
 type OutputCommand = Extract<DeskaiEvent, { type: 'output-command' }>
@@ -18,6 +19,7 @@ export class PcmPlayer {
     private readonly sessionId: string,
     private readonly report: (state: PlaybackReport) => void,
     private readonly onError: (message: string) => void,
+    private readonly mouth: (frame: MouthFrame) => void,
   ) {}
 
   async initialize(): Promise<void> {
@@ -31,6 +33,12 @@ export class PcmPlayer {
       if (data.generationId !== this.generationId) return
       if (data.type === 'render-start') {
         this.renderStart = { generationId: data.generationId, contextFrame: data.contextFrame }
+        return
+      }
+      if (data.type === 'mouth') {
+        const open = Math.sqrt(Math.max(0, Math.min(1, (data.rms * this.volume - 0.007) / 0.18)))
+        this.mouth({ sessionId: this.sessionId, generationId: data.generationId, attemptId: data.attemptId,
+          segmentId: data.segmentId, frame: data.frame, sampleRate: data.sampleRate, open, shape: data.shape })
         return
       }
       if (data.type === 'overflow') {

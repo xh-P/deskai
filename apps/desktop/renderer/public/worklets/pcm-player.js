@@ -11,6 +11,12 @@ class PcmPlayer extends AudioWorkletProcessor {
     this.sequences = new Map()
     this.identity = {}
     this.rate = 16000
+    this.visualSegment = undefined
+    this.mouthCount = 0
+    this.mouthEnergy = 0
+    this.mouthBright = 0
+    this.mouthLow = 0
+    this.mouthFilter = 1 - Math.exp(-2 * Math.PI * 850 / sampleRate)
     this.port.onmessage = ({ data }) => this.command(data)
   }
 
@@ -29,12 +35,14 @@ class PcmPlayer extends AudioWorkletProcessor {
       this.started = false
       this.sequences.clear()
       this.identity = {}
+      this.resetMouth()
       this.report()
       return
     }
     if (data.type === 'pause' || data.type === 'resume') {
       if (data.generationId !== this.generationId) return
       this.paused = data.type === 'pause'
+      this.resetMouth()
       this.report()
       return
     }
@@ -58,9 +66,23 @@ class PcmPlayer extends AudioWorkletProcessor {
     if (identity.sequenceKey) this.sequences.set(identity.sequenceKey, data.chunkSeq + 1)
     delete identity.sequenceKey
     this.queue.push({ samples: data.samples, sampleRate: data.sampleRate, final: data.final, segmentFinal: data.segmentFinal, identity })
-    this.identity = identity
     this.rate = data.sampleRate
     this.report(false, identity, { chunkAccepted: true })
+  }
+
+  resetMouth() {
+    this.visualSegment = undefined
+    this.mouthCount = this.mouthEnergy = this.mouthBright = this.mouthLow = 0
+  }
+
+  emitMouth(frame) {
+    if (!this.mouthCount) return
+    const rms = Math.sqrt(this.mouthEnergy / this.mouthCount)
+    const shape = this.mouthEnergy > 0 ? Math.max(-1, Math.min(1, (Math.sqrt(this.mouthBright / this.mouthEnergy) - 0.5) * 2.5)) : 0
+    const { attemptId, segmentId } = this.identity
+    this.port.postMessage({ type: 'mouth', generationId: this.generationId, attemptId, segmentId,
+      frame, sampleRate, rms, shape })
+    this.mouthCount = this.mouthEnergy = this.mouthBright = 0
   }
 
   report(completed = false, identity = this.identity, extra = {}) {
@@ -86,18 +108,37 @@ class PcmPlayer extends AudioWorkletProcessor {
       const frac = this.offset - at
       const first = head.samples[at] ?? 0
       const second = head.samples[at + 1] ?? this.queue[1]?.samples[0] ?? first
-      channel[i] = first + (second - first) * frac
+      const sample = first + (second - first) * frac
+      channel[i] = sample
+      if (head.identity.segmentId !== this.visualSegment) {
+        this.emitMouth(currentFrame + i)
+        this.resetMouth()
+        this.visualSegment = head.identity.segmentId
+        if (this.visualSegment) this.report(false, head.identity, { segmentStarted: true })
+      }
       const step = head.sampleRate / sampleRate
       this.offset += step
       this.renderedSamples += step
       this.identity = head.identity
       this.rate = head.sampleRate
+      if (this.visualSegment) {
+        this.mouthLow += (sample - this.mouthLow) * this.mouthFilter
+        this.mouthEnergy += sample * sample
+        const bright = sample - this.mouthLow
+        this.mouthBright += bright * bright
+        if (++this.mouthCount >= sampleRate / 34) this.emitMouth(currentFrame + i)
+      }
       if (this.offset >= head.samples.length) {
         const overshootSeconds = (this.offset - head.samples.length) / head.sampleRate
         this.queue.shift()
         this.offset = overshootSeconds * (this.queue[0]?.sampleRate || head.sampleRate)
-        if (!this.queue.length) this.offset = 0
+        if (head.segmentFinal || !this.queue.length) this.emitMouth(currentFrame + i)
+        if (!this.queue.length) {
+          this.offset = 0
+          this.resetMouth()
+        }
         if (head.segmentFinal || head.final && !this.queue.length) this.report(!this.queue.length, head.identity, { segmentCompleted: Boolean(head.segmentFinal) })
+        else if (!this.queue.length) this.report(false, head.identity)
       }
     }
     this.tick += channel.length

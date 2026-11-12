@@ -1,8 +1,10 @@
+import type { Live2DProfile } from './live2d.ts';
+
 export const PET_VARIANTS = ['uniform-chibi', 'uniform-normal', 'witch-chibi', 'witch-normal'] as const;
 export type PetVariant = typeof PET_VARIANTS[number];
 export type PetState = 'off' | 'listening' | 'recognizing' | 'thinking' | 'speaking' |
   'paused' | 'waiting' | 'silent' | 'error';
-export type PetMotionMode = 'gentle' | 'system';
+export type PetMotionMode = 'gentle' | 'system' | 'reduced';
 
 export type PetPreferences = {
   variant: PetVariant;
@@ -29,6 +31,9 @@ export type PetSnapshot = {
   subtitle: string;
   sessionId: string | null;
   generationId: number;
+  attemptId?: string;
+  segmentId?: string;
+  model?: Live2DProfile;
 };
 
-export type PetGeometry = { variant: PetVariant; aspect: number };
+export type PetGeometry = { variant: PetVariant; modelId?: string; aspect: number };

@@ -37,6 +37,7 @@ const input32 = { type: 'enqueue', ...identity, sampleRate: 32000, samples: new 
 identified.command(input32)
 identified.command(input32)
 assert.ok(messages.some(m => m.chunkAccepted && m.segmentId === 'seg' && m.attemptId === 'a' && m.voiceRevision === 2))
+assert.equal(messages.some(m => m.segmentStarted && m.segmentId === 'seg'), false, 'enqueue alone cannot start the subtitle')
 const before = messages.filter(m => m.segmentCompleted && m.segmentId === 'seg').length
 let frames32 = 0
 while (identified.queue.length && frames32 < 10000) {
@@ -45,6 +46,9 @@ while (identified.queue.length && frames32 < 10000) {
 }
 assert.ok(Math.abs(frames32 - 4800) < 128, '32kHz input keeps its 100ms duration in a 48kHz context')
 assert.equal(messages.filter(m => m.segmentCompleted && m.segmentId === 'seg').length - before, 1, 'duplicate chunk never repeats a sentence')
+assert.ok(messages.some(m => m.segmentStarted && m.segmentId === 'seg'))
+assert.ok(messages.some(m => m.type === 'mouth' && m.segmentId === 'seg' && m.attemptId === 'a' && Math.abs(m.rms - .5) < .01),
+  'the mouth envelope comes from rendered samples')
 identified.command({ type: 'enqueue', ...identity, segmentId: 'seg48', sampleRate: 48000, samples: new Float32Array(4800).fill(.25), segmentFinal: true })
 let frames48 = 0
 while (identified.queue.length && frames48 < 10000) {

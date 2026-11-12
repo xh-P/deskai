@@ -20,7 +20,7 @@ export function mergePetPreferences(previous: PetPreferences, value: unknown): P
   }
   if ('visible' in patch && typeof patch.visible !== 'boolean') throw new Error('INVALID_PET_VISIBILITY');
   if ('alwaysOnTop' in patch && typeof patch.alwaysOnTop !== 'boolean') throw new Error('INVALID_PET_TOPMOST');
-  if ('motionMode' in patch && patch.motionMode !== 'gentle' && patch.motionMode !== 'system') {
+  if ('motionMode' in patch && patch.motionMode !== 'gentle' && patch.motionMode !== 'system' && patch.motionMode !== 'reduced') {
     throw new Error('INVALID_PET_MOTION_MODE');
   }
   return { ...previous, ...patch as PetPreferencePatch };
