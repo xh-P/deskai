@@ -13,10 +13,10 @@
 
 ## 从输入到交付
 
-1. 语音帧先按当前采集会话和输出代次进入分段。待机使用 SenseVoice 识别唤醒词，连续会话默认使用 Qwen3-ASR。短静音允许候选转写及候选回复，续说和插话让旧候选失效。
+1. 语音帧先按当前采集会话和输出代次进入分段。待机使用 SenseVoice 识别唤醒词，连续会话默认使用 Qwen3-ASR。短静音允许候选转写及候选回复。识别结果就绪时界面显示临时预览，续说会撤回旧预览。正式用户消息在受理后进入会话记录。
 2. 正式输入使用当前归档会话。规划器读取 Host 本轮冻结的候选和能力。普通对话走 Chat。涉及任务或应用时，Host 校验候选、消歧并返回实际回执。切换角色或会话会撤销尚未受理的规划，已受理 Work 仍按操作 ID 可查。[对话引用](../../apps/host/src/conversation-control.ts)
 3. Chat 使用角色快照、关系和已交付历史。启用知识检索时，按角色 ID 查询对应索引，将命中的片段和定位送入本轮。候选回复只在正式文本、角色和 Host 上下文匹配后放行。语音回复由 TTS v2 合成并回传 PCM，文字回复由界面确认显示。[对话投影](../../packages/voice-core/src/chat-context.ts) · [投机回复](../../packages/voice-core/src/speculative-chat.ts) · [知识检索](../../apps/desktop/src/character-knowledge.ts)
-4. 输出以会话、代次、Attempt、片段和音色修订校验身份。合成器回传原始 PCM，SpeechOutput 发出语音主体并标记短尾块。播放器到达尾块时以可用的下一段起音决定交叉淡化或自然收尾。后段合成失败只撤回失败片段，前段播完后回退文字。打断时清掉旧 PCM，等待已取消的合成退出。语音历史依据实际播放回执，文字历史收录界面确认过的正文。[PCM Worklet](../../apps/desktop/renderer/public/worklets/pcm-player.js) · [交付账本](../../packages/voice-core/src/delivery.ts)
+4. 输出以会话、代次、Attempt、片段和音色修订校验身份。合成器回传原始 PCM，SpeechOutput 发出语音主体并标记短尾块。播放器完整消费当前段的波形后，才裁剪下一段确认的低能量片头。末端残余电平在段后短暂衰减，下一段有可用的安静前沿时将衰减衔接到该处。后段合成失败只撤回失败片段，前段播完后回退文字。打断时清掉旧 PCM，等待已取消的合成退出。语音历史依据实际播放回执，文字历史收录界面确认过的正文。[PCM Worklet](../../apps/desktop/renderer/public/worklets/pcm-player.js) · [交付账本](../../packages/voice-core/src/delivery.ts)
 
 ## Work 的持久化与验收
 

@@ -10,6 +10,10 @@
 - [角色卡](../../config/personas)与[角色语料](../../config/character-knowledge)按角色 ID 对应。运行 `npm run desktop:prepare-knowledge` 建立或更新本地索引。此命令使用 uv、Python 3.12 和固定版本的 multilingual-e5-small ONNX 模型。可用 `DESKAI_KNOWLEDGE_DOWNLOAD_PROXY` 指定下载代理。[长门角色知识](./character-research/README.md)
 - `DESKAI_ASSET_ROOT` 可指定模型与运行时资源根目录。源码配置与派生构建产物以仓库为根。
 
+经典蓝牙耳机在使用自带麦克风时会进入免提通话模式，播放带宽随之下降。可在「角色 → 声音与设备设置」单独选择电脑或外置麦克风，耳机继续作为输出设备。更换输入后暂停并重新开启麦克风。[Windows 蓝牙音频模式](https://learn.microsoft.com/en-us/windows-hardware/drivers/bluetooth/bluetooth-classic-audio#selection-of-a2dp-and-hfp-endpoints)
+
+「技术设置与诊断」的语音时序包含 ASR 完成、识别预览发送、正式提交、模型开始、TTS 首块和播放开始。播放开始是 Worklet 开始渲染样本的回执，设备的可听时间还受片头波形和音频链路影响。
+
 ## Host 和数据目录
 
 桌面按需启动 Host，也可在单独终端运行 `npm run host:serve`。桌面和 CLI 使用同一个 `DESKAI_HOST_DIR` 时连接同一个 Host。Windows 默认目录如下。

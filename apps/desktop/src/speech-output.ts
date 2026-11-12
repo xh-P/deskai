@@ -226,7 +226,7 @@ export class SpeechOutput {
     const floats = new Float32Array(previous + pcm.byteLength / 2);
     floats.set(segment.tail);
     for (let i = previous; i < floats.length; i++) floats[i] = pcm.getInt16((i - previous) * 2, true) / 32768;
-    // Release the speech body immediately and retain only the editable waveform edge.
+    // Release the speech body immediately and retain a short block for the end marker.
     const bodyEnd = Math.max(0, floats.length - Math.ceil(segment.rate * tailSeconds));
     for (let i = 0; i < bodyEnd; i += segment.rate) segment.chunks.push(floats.subarray(i, Math.min(bodyEnd, i + segment.rate)));
     segment.tail = floats.slice(bodyEnd);

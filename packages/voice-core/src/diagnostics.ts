@@ -1,9 +1,10 @@
 import type { InputDiagnostic } from './index.ts';
 
 export type OutputDiagnostic = {
-  type: 'input-submitted' | 'input-accepted' | 'model-started' | 'model-first-text' | 'model-decision'
+  type: 'transcript-previewed' | 'input-submitted' | 'input-accepted' | 'model-started' | 'model-first-text' | 'model-decision'
     | 'speculative-started' | 'speculative-confirmed' | 'speculative-discarded'
-    | 'tts-started' | 'tts-first-pcm' | 'tts-finished' | 'tts-failed' | 'playback-enqueued' | 'interruption-confirmed' | 'output-cleared';
+    | 'tts-started' | 'tts-first-pcm' | 'tts-finished' | 'tts-failed' | 'playback-enqueued' | 'playback-started'
+    | 'interruption-confirmed' | 'output-cleared';
   monotonicMs: number;
   sessionId: string;
   turnId?: string;
@@ -36,7 +37,7 @@ export class OutputTimeline {
   record(type: OutputDiagnostic['type'], fields: Fields, once = false): void {
     if (once && this.rows.some(row => row.type === type && row.sessionId === fields.sessionId
       && row.turnId === fields.turnId && row.attemptId === fields.attemptId && row.segmentId === fields.segmentId
-      && row.generationId === fields.generationId)) return;
+      && row.generationId === fields.generationId && row.inputRevision === fields.inputRevision)) return;
     const row: OutputDiagnostic = { type, monotonicMs: performance.now(), sessionId: fields.sessionId };
     for (const key of ['turnId', 'attemptId', 'segmentId'] as const) {
       if (fields[key] !== undefined) row[key] = fields[key];

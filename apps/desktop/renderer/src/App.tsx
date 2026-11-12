@@ -44,6 +44,7 @@ export default function App() {
   const [playback, setPlayback] = useState('空闲')
   const [mediaSettings, setMediaSettings] = useState<MediaTrackSettings | null>(null)
   const [entries, setEntries] = useState<Entry[]>([])
+  const [transcriptPreview, setTranscriptPreview] = useState<{ inputRevision: number; text: string } | null>(null)
   const [error, setError] = useState('')
   const [speechError, setSpeechError] = useState('')
   const [textDraft, setTextDraft] = useState('')
@@ -88,6 +89,7 @@ export default function App() {
   const acceptSession = useCallback((opened: SessionStart) => {
     if (currentSession.current !== opened.sessionId) {
       setEntries(opened.history.map(entry => ({ ...entry, id: ++nextEntry.current, completed: true })))
+      setTranscriptPreview(null)
       setKnowledgeLookup(null)
       setSpeechError('')
     }
@@ -310,6 +312,7 @@ export default function App() {
     generationFloor.current = 0
     acknowledged.current.clear()
     lastTranscript.current = ''
+    setTranscriptPreview(null)
     const old = captureRef.current
     const oldOutput = outputRef.current
     captureRef.current = null
@@ -459,7 +462,7 @@ export default function App() {
         case 'dialogue': handleDialogue(event.event); break
         case 'conversation-changed':
           setSession(current => current && { ...current, conversation: event.conversation, history: [] })
-          setEntries([]); setKnowledgeLookup(null); setReferenceCard(null)
+          setEntries([]); setTranscriptPreview(null); setKnowledgeLookup(null); setReferenceCard(null)
           void refreshConversations().catch(showError)
           break
         case 'reference-card': setReferenceCard(event.card); break
@@ -492,6 +495,10 @@ export default function App() {
           }
           break
         case 'input-state': setInputState(event.state); break
+        case 'transcript-preview':
+          setTranscriptPreview(current => event.text ? { inputRevision: event.inputRevision, text: event.text }
+            : current?.inputRevision === event.inputRevision ? null : current)
+          break
         case 'ready-text': if (smoke.current && event.text.trim()) addEntry('system', `待提交：${event.text}`); break
         case 'error': setError(event.code === 'MISSING_CREDENTIAL' ? '模型凭据未配置：语音识别或对话服务尚未接通。请在 dsh 配置后重试。' : event.message); break
         case 'output-command': outputRef.current?.player.command(event); break
@@ -759,7 +766,9 @@ export default function App() {
             <li key={hit.id}>{hit.source} · {hit.locator} · 距离 {hit.distance.toFixed(3)}</li>)}</ul>}
         </details>
         <section className="conversation" aria-label="对话记录">
-          {entries.length === 0 ? <p className="empty">可直接输入文字开始对话，或点击“开始语音对话”自动监听和识别。</p> : entries.map(entry => <div className={`entry ${entry.role}`} data-attempt-id={entry.attemptId} key={entry.id}><small>{entry.role === 'user' ? '你' : entry.role === 'assistant' ? `助手${entry.interrupted ? ' · 已中断' : ''}` : '轮次状态'}</small><p>{entry.text}</p></div>)}
+          {entries.length === 0 && !transcriptPreview && <p className="empty">可直接输入文字开始对话，或点击“开始语音对话”自动监听和识别。</p>}
+          {entries.map(entry => <div className={`entry ${entry.role}`} data-attempt-id={entry.attemptId} key={entry.id}><small>{entry.role === 'user' ? '你' : entry.role === 'assistant' ? `助手${entry.interrupted ? ' · 已中断' : ''}` : '轮次状态'}</small><p>{entry.text}</p></div>)}
+          {transcriptPreview && <div className="entry user" role="status"><small>你 · 识别预览</small><p>{transcriptPreview.text}</p></div>}
         </section>
         {referenceCard && <fieldset className="reference-card" disabled={selectingReference || modelState === 'planning'}>
           <legend>{referenceCard.message}</legend>

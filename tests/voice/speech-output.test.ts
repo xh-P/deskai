@@ -26,6 +26,9 @@ test('timing diagnostics stay bounded, exclude conversation/audio fields, and re
   assert.equal(trace.snapshot()[0].segmentId, '20');
   trace.clear();
   assert.deepEqual(trace.snapshot(), []);
+  for (const inputRevision of [1, 1, 2]) trace.record('transcript-previewed', { ...identity, inputRevision }, true);
+  assert.deepEqual(trace.snapshot().map(row => row.inputRevision), [1, 2]);
+  assert.doesNotMatch(JSON.stringify(trace.snapshot()), /private speech|samples|"text"/u);
 });
 const settle = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 function sentences(raw: string) {
@@ -200,7 +203,7 @@ test('validated PCM starts before synthesis settles, retains its tail, and prese
   f.ack(f.chunks()[3]);
   f.complete(); tts.finish(); await settle();
   assert.equal(f.chunks().length, 5);
-  assert.equal(f.chunks()[4].samples.length, tts.rate * .020, 'only the small editable tail waits for completion');
+  assert.equal(f.chunks()[4].samples.length, tts.rate * .020, 'only the small final block waits for completion');
   assert.equal(f.chunks()[4].segmentFinal, true);
   assert.equal(f.chunks()[4].final, true);
   assert.equal(f.progress.filter(p => p.completed).length, 0);

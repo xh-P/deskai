@@ -90,6 +90,7 @@ export type DeskaiEvent =
   | { type: 'session-ended'; sessionId: string; reason: string }
   | { type: 'status'; sessionId?: string; status: string; detail?: string }
   | { type: 'transcript'; sessionId: string; text: string; utteranceId?: number }
+  | { type: 'transcript-preview'; sessionId: string; inputRevision: number; text?: string }
   | { type: 'input-state'; sessionId: string; state: string }
   | { type: 'ready-text'; sessionId: string; text: string; eligible?: boolean }
   | { type: 'error'; sessionId?: string; code: string; message: string }

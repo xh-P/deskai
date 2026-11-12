@@ -14,7 +14,7 @@
 - **B3 已完成**。确认插话后移交首音，清除旧播放代次，并在取消的合成退出后接续下一轮。[上游插话检测](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/asr/barge_in_detector.py) · [本地语音输出](../../apps/desktop/src/speech-output.ts)
 - **B4 已完成**。Qwen3-ASR 常驻 worker 使用固定上游提交的 CUDA Graph 解码，记录实际引擎和推理耗时。端点复用候选转写并在续说时作废。[上游静态解码](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/asr/qwen_cuda_graph.py) · [本地 Qwen worker](../../services/asr/qwen_worker.py)
 - **B5 已完成**。提前缓冲语音候选回复，正式输入和上下文匹配时放行，续说、打断、超时及 Work 意图使候选作废。[上游投机轮](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/server/speculative_turn.py) · [本地投机控制](../../packages/voice-core/src/speculative-chat.ts)
-- **本地播报衔接已完成**。首段直发，后续按实际播放余量调度。两段音频就绪时根据波形短暂衔接，后段未就绪或失败时前段自然收尾。常用设备上的听感待验收。[播报验证](./verification.md#短句播报与合成失败)
+- **本地播报衔接已完成**。首段直发，后续按实际播放余量调度。每段完整播放原始波形，段末残余衰减可衔接到下一段的安静前沿。后段失败时前段自然播完。常用设备上的听感待验收。[播报验证](./verification.md#短句播报与合成失败)
 
 B1 已撤下。识别错字样例和准确率评测曾由 DeskAI2 自拟。上游实际提供可选的 ASR_CONTEXT 与提示回显过滤。错字专项暂缓。[上游识别配置](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/config/catalog/voice/conversation_asr.json) · [回显过滤](https://github.com/Code-Amadeus/Amadeus/blob/be9b97aef2ac3affb200998f8af3aab72aa22f6c/asr/text_filter.py)
 

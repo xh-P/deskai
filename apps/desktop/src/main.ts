@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { LocalDshSpeech, type SpeechStatus } from '../../../packages/dsh-adapter/src/speech.ts';
 import { createChatRuntime } from './chat-runtime.ts';
-import { createInputController, encodePcm16Wav, type InputController, type InputDiagnostic } from '../../../packages/voice-core/src/index.ts';
+import { createInputController, encodePcm16Wav, type InputController, type InputDiagnostic, type Ready } from '../../../packages/voice-core/src/index.ts';
 import { VAD_FRAME_SAMPLES } from '../../../packages/voice-core/src/input-config.ts';
 import type { CaptureFrame } from '../renderer/src/bridge.d.ts';
 import { DialogueController, type DialogueEvent, type DialoguePreferences } from '../../../packages/voice-core/src/dialogue.ts';
@@ -149,6 +149,11 @@ const turnCoordinator = new DesktopTurnCoordinator({
 });
 
 function send(event: object) { if (window && !window.isDestroyed()) window.webContents.send('deskai:event', event); }
+function showTranscriptPreview(input: Ready, text?: string) {
+  if (sessionId !== input.sessionId) return;
+  if (text) outputTimeline.record('transcript-previewed', input, true);
+  send({ type: 'transcript-preview', sessionId: input.sessionId, inputRevision: input.inputRevision, text });
+}
 function syncPet() {
   if (!petWindow) return;
   const personaId = activeConversation?.persona.id ?? preferences.personaId;
@@ -252,6 +257,7 @@ function attachOutput() {
     },
     onSegment: progress => {
       if (dialogue !== activeDialogue || !sessionId) return;
+      if (!progress.completed) outputTimeline.record('playback-started', { ...progress, sessionId }, true);
       activeDialogue.recordPlayback(progress); refreshOutput();
       petActivity.spoken(progress); syncPet();
       if (progress.completed) { ttsMetrics.playedSegments++; checkpointConversation(); }
@@ -600,18 +606,22 @@ async function openConversation(requestedId?: string) {
     },
     onStop: stopCurrentReply,
     onCandidate: candidate => {
-      const host = desktopHost?.cached();
-      if (smokeMode && !realModelSmoke || !captureArmed || candidate.sessionId !== sessionId || !host ||
-          turnCoordinator.busy || voiceSubmitting || outputActive || outputBusy || outputPaused) return;
+      if (smokeMode && !realModelSmoke || !captureArmed || candidate.sessionId !== sessionId) return;
       const route = inputRoutes.get(candidate.utteranceIds[0]);
       const preview = smokeMode ? { accepted: true, text: candidate.text } : route && wakeGate.preview(candidate.text, route, performance.now());
       if (!preview?.accepted) return;
+      showTranscriptPreview(candidate, preview.text);
+      const host = desktopHost?.cached();
+      if (!host || turnCoordinator.busy || voiceSubmitting || outputActive || outputBusy || outputPaused) return;
       dialogue?.prepareSpeculative({
         text: preview.text, source: 'voice', continuationOf: candidate.continuationOf, utteranceIds: candidate.utteranceIds,
         hostContext: dialogueContext(host, { kind: 'chat' }), speculation: candidate,
       });
     },
-    onCandidateRevoked: candidate => dialogue?.discardSpeculative(candidate),
+    onCandidateRevoked: candidate => {
+      showTranscriptPreview(candidate);
+      dialogue?.discardSpeculative(candidate);
+    },
     onBoundary: event => {
       if (event.type === 'discarded' || event.type === 'overflow') for (const id of event.utteranceIds) inputRoutes.delete(id);
       if (event.type === 'overflow' || event.type === 'discarded' && /ASR|queue/.test(event.reason ?? '')) {
@@ -651,6 +661,7 @@ async function openConversation(requestedId?: string) {
         if (!admitted?.accepted) { controller.discardReady(ready.utteranceIds); return; }
         text = admitted.text;
       }
+      showTranscriptPreview(ready, text);
       voiceSubmitting = true;
       outputTimeline.record('input-submitted', ready);
       const current = controller;

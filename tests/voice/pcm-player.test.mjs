@@ -49,6 +49,7 @@ assert.equal(messages.filter(m => m.segmentCompleted && m.segmentId === 'seg').l
 assert.ok(messages.some(m => m.segmentStarted && m.segmentId === 'seg'))
 assert.ok(messages.some(m => m.type === 'mouth' && m.segmentId === 'seg' && m.attemptId === 'a' && Math.abs(m.rms - .5) < .01),
   'the mouth envelope comes from rendered samples')
+while (identified.release) identified.process([], [[new Float32Array(128)]])
 identified.command({ type: 'enqueue', ...identity, segmentId: 'seg48', sampleRate: 48000, samples: new Float32Array(4800).fill(.25), segmentFinal: true })
 let frames48 = 0
 while (identified.queue.length && frames48 < 10000) {
@@ -65,21 +66,22 @@ assert.equal(identified.queue.length, 0, 'old identity is rejected after clearin
 const tail = { ...identity, type: 'enqueue', sampleRate: 48000, samples: new Float32Array(960).fill(.02), segmentFinal: true }
 const next = { ...tail, segmentId: 'next', samples: new Float32Array(3840).fill(.001) }
 next.samples.fill(.3, 1920)
-for (const mode of ['ready', 'discarded', 'discarded-during-overlap']) {
+for (const mode of ['ready', 'late', 'discarded', 'discarded-after-tail']) {
   const ready = mode === 'ready'
   const boundary = new Player()
   boundary.command({ ...tail, samples: tail.samples.slice() })
-  boundary.command({ ...next, samples: next.samples.slice(), segmentFinal: ready })
+  if (mode !== 'late') boundary.command({ ...next, samples: next.samples.slice(), segmentFinal: ready })
   const rendered = new Float32Array(1921)
-  const beforeDiscard = mode === 'discarded-during-overlap' ? 480 : 0
+  const beforeDiscard = mode === 'discarded-after-tail' ? tail.samples.length + 32 : 0
   if (beforeDiscard) boundary.process([], [[rendered.subarray(0, beforeDiscard)]])
-  if (!ready) {
+  if (mode.startsWith('discarded')) {
     boundary.command({ ...next, type: 'discard' })
     boundary.command({ ...next, chunkSeq: 1 })
   }
   boundary.process([], [[rendered.subarray(beforeDiscard)]])
-  assert.ok(Math.abs(rendered[0] - .02) < 1e-6, 'the tail begins at its original level')
-  assert.ok(Math.abs(rendered[959] - (ready ? .001 : 0)) < 1e-6, 'tail blends into quiet pre-roll or decays to zero')
+  assert.deepEqual(rendered.slice(0, tail.samples.length), tail.samples, 'all previous PCM plays at its original level')
+  assert.ok(rendered[960] > .019, 'a brief release begins after the original tail')
+  assert.ok(Math.abs(rendered[1152] - (ready ? .001 : 0)) < 1e-6, 'only the next quiet lead or the release is shaped')
   assert.ok(Math.abs(rendered[1920] - (ready ? .3 : 0)) < 1e-6, 'the next onset is intact, or its discarded audio stays silent')
 }
 console.log('renderer-player: pass')

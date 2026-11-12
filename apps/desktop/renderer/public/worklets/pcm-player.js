@@ -4,8 +4,7 @@ const onsetProbeSeconds = .120
 const onsetPrerollSeconds = .020
 const onsetFloor = 10 ** (-50 / 20)
 const onsetPeak = 10 ** (-38 / 20)
-const tailFloor = 10 ** (-28 / 20)
-const tailPeak = 10 ** (-20 / 20)
+const releaseMaxSeconds = .004
 
 function quietFrame(samples, start, end, rmsLimit, peakLimit) {
   let energy = 0
@@ -17,31 +16,12 @@ function quietFrame(samples, start, end, rmsLimit, peakLimit) {
   return energy < rmsLimit * rmsLimit * (end - start)
 }
 
-function quietPrefix(samples, length, rate) {
+function firstOnset(samples, length, rate) {
   const frame = Math.round(rate * edgeFrameSeconds)
   for (let start = 0; start + frame <= length; start += frame) {
-    if (!quietFrame(samples, start, start + frame, onsetFloor, onsetPeak)) {
-      return Math.max(0, start - Math.round(rate * onsetPrerollSeconds))
-    }
+    if (!quietFrame(samples, start, start + frame, onsetFloor, onsetPeak)) return start
   }
-  return 0
-}
-
-function quietTail(samples, frame, limit) {
-  let end = samples.length
-  const start = end - limit
-  while (end > start && quietFrame(samples, Math.max(start, end - frame), end, tailFloor, tailPeak)) {
-    end = Math.max(start, end - frame)
-  }
-  return samples.length - end
-}
-
-function blendTail(samples, length, head, start) {
-  const from = samples.length - length
-  for (let i = 0; i < length; i++) {
-    const weight = length === 1 ? 1 : .5 - .5 * Math.cos(Math.PI * i / (length - 1))
-    samples[from + i] = samples[from + i] * (1 - weight) + (head ? head[start + i] * weight : 0)
-  }
+  return -1
 }
 
 function segmentKey({ sessionId, turnId, attemptId, voiceRevision, segmentId }) {
@@ -57,6 +37,7 @@ class PcmPlayer extends AudioWorkletProcessor {
     this.renderedSamples = 0
     this.paused = false
     this.started = false
+    this.release = undefined
     this.tick = 0
     this.sequences = new Map()
     this.nextHead = new Float32Array(Math.ceil(maxPcmRate * onsetProbeSeconds))
@@ -84,6 +65,7 @@ class PcmPlayer extends AudioWorkletProcessor {
       this.renderedSamples = 0
       this.paused = false
       this.started = false
+      this.release = undefined
       this.sequences.clear()
       this.identity = {}
       this.resetMouth()
@@ -102,10 +84,6 @@ class PcmPlayer extends AudioWorkletProcessor {
       const key = segmentKey(data)
       this.sequences.set(key, null)
       const head = this.queue[0]
-      if (head?.mixedWith === key) {
-        blendTail(head.samples, head.samples.length - Math.ceil(this.offset))
-        head.mixedWith = undefined
-      }
       this.queue = this.queue.filter(chunk => chunk.key !== key)
       if (this.queue[0] !== head) {
         this.offset = 0
@@ -139,48 +117,53 @@ class PcmPlayer extends AudioWorkletProcessor {
     this.report(false, identity, { chunkAccepted: true })
   }
 
-  followingPrefix(current) {
-    const next = this.queue[1]
+  followingOnset(current) {
+    const next = this.queue[0]
     if (!next?.key || next.identity.attemptId !== current.identity.attemptId ||
-        next.identity.voiceRevision !== current.identity.voiceRevision || next.sampleRate !== current.sampleRate) return 0
+        next.identity.voiceRevision !== current.identity.voiceRevision) return -1
     const limit = Math.round(next.sampleRate * onsetProbeSeconds)
     let length = 0
-    for (let index = 1; index < this.queue.length && length < limit; index++) {
+    for (let index = 0; index < this.queue.length && length < limit; index++) {
       const chunk = this.queue[index]
       if (chunk.key !== next.key) break
       const samples = chunk.samples.subarray(0, limit - length)
       this.nextHead.set(samples, length)
       length += samples.length
     }
-    return quietPrefix(this.nextHead, length, next.sampleRate)
+    return firstOnset(this.nextHead, length, next.sampleRate)
   }
 
-  prepareTail(chunk) {
-    chunk.prepared = true
-    const frame = Math.round(chunk.sampleRate * edgeFrameSeconds)
-    const limit = Math.min(chunk.samples.length, 4 * frame)
-    const quiet = quietTail(chunk.samples, frame, limit)
-    const prefix = this.followingPrefix(chunk)
-    const overlap = Math.min(quiet, prefix)
-    if (overlap > 1) {
-      chunk.mixedWith = this.queue[1].key
-      blendTail(chunk.samples, overlap, this.nextHead, prefix - overlap)
-    } else {
-      const quietEnd = quietFrame(chunk.samples, chunk.samples.length - Math.min(frame, limit),
-        chunk.samples.length, onsetFloor, onsetPeak)
-      blendTail(chunk.samples, quietEnd ? Math.min(frame, limit) : quiet || limit)
-    }
-    // A detected onset remains in the queue. Consume only its confirmed quiet prefix.
-    let remaining = prefix
-    while (remaining > 0) {
-      const next = this.queue[1]
-      if (remaining < next.samples.length) {
-        next.samples = next.samples.subarray(remaining)
+  finishSpeech(chunk, lastSample) {
+    const next = this.queue[0]
+    const onset = this.followingOnset(chunk)
+    const preroll = onset > 0 ? Math.min(onset, Math.round(next.sampleRate * onsetPrerollSeconds)) : 0
+    // Trim only confirmed silence in the following segment, after consuming the original tail.
+    let skip = Math.max(0, onset - preroll)
+    while (skip > 0) {
+      const leading = this.queue[0]
+      if (skip < leading.samples.length) {
+        leading.samples = leading.samples.subarray(skip)
         break
       }
-      remaining -= next.samples.length
-      this.queue.splice(1, 1)
+      skip -= leading.samples.length
+      this.queue.shift()
     }
+    if (lastSample === 0) return
+    // Release the residual level after the last PCM sample, into quiet pre-roll when it fits.
+    const seconds = Math.min(releaseMaxSeconds, .001 * Math.log2(1 + Math.abs(lastSample) / onsetFloor))
+    const frames = Math.ceil(seconds * sampleRate)
+    const intoNext = preroll > 0 && preroll - this.offset >= frames * next.sampleRate / sampleRate
+    this.release = { from: lastSample, frames, position: 0, key: intoNext ? next.key : undefined }
+  }
+
+  releaseSample(sample = 0) {
+    const release = this.release
+    const weight = .5 + .5 * Math.cos(Math.PI * ++release.position / release.frames)
+    if (release.position === release.frames) {
+      this.release = undefined
+      if (!this.queue.length) this.report(true)
+    }
+    return sample + (release.from - sample) * weight
   }
 
   resetMouth() {
@@ -201,7 +184,7 @@ class PcmPlayer extends AudioWorkletProcessor {
   report(completed = false, identity = this.identity, extra = {}) {
     const queuedSeconds = this.queuedSeconds()
     this.port.postMessage({ type: 'state', generationId: this.generationId, ...identity,
-      playing: !this.paused && queuedSeconds > 0, paused: this.paused, completed,
+      playing: !this.paused && (queuedSeconds > 0 || Boolean(this.release)), paused: this.paused, completed,
       renderedSamples: Math.floor(this.renderedSamples), queuedSamples: Math.round(queuedSeconds * this.rate), queuedSeconds,
       sampleRate: this.rate, ...extra })
   }
@@ -215,14 +198,19 @@ class PcmPlayer extends AudioWorkletProcessor {
       this.started = true
       this.port.postMessage({ type: 'render-start', generationId: this.generationId, contextFrame: currentFrame })
     }
-    for (let i = 0; i < channel.length && this.queue.length; i++) {
+    for (let i = 0; i < channel.length; i++) {
       const head = this.queue[0]
-      if (head.segmentFinal && !head.prepared) this.prepareTail(head)
+      if (this.release && (!this.release.key || this.release.key !== head?.key)) {
+        channel[i] = this.releaseSample()
+        continue
+      }
+      if (!head) break
       const at = Math.floor(this.offset)
       const frac = this.offset - at
       const first = head.samples[at] ?? 0
-      const second = head.samples[at + 1] ?? this.queue[1]?.samples[0] ?? first
-      const sample = first + (second - first) * frac
+      const second = head.samples[at + 1] ?? (head.segmentFinal ? first : this.queue[1]?.samples[0] ?? first)
+      const interpolated = first + (second - first) * frac
+      const sample = this.release ? this.releaseSample(interpolated) : interpolated
       channel[i] = sample
       if (head.identity.segmentId !== this.visualSegment) {
         this.emitMouth(currentFrame + i)
@@ -246,12 +234,13 @@ class PcmPlayer extends AudioWorkletProcessor {
         const overshootSeconds = (this.offset - head.samples.length) / head.sampleRate
         this.queue.shift()
         this.offset = overshootSeconds * (this.queue[0]?.sampleRate || head.sampleRate)
+        if (head.segmentFinal) this.finishSpeech(head, sample)
         if (head.segmentFinal || !this.queue.length) this.emitMouth(currentFrame + i)
         if (!this.queue.length) {
           this.offset = 0
           this.resetMouth()
         }
-        if (head.segmentFinal || head.final && !this.queue.length) this.report(!this.queue.length, head.identity, { segmentCompleted: Boolean(head.segmentFinal) })
+        if (head.segmentFinal || head.final && !this.queue.length) this.report(!this.queue.length && !this.release, head.identity, { segmentCompleted: Boolean(head.segmentFinal) })
         else if (!this.queue.length) this.report(false, head.identity)
       }
     }
