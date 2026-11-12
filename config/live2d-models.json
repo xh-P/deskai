@@ -4,6 +4,38 @@
     "url": "https://cubism.live2d.com/sdk-web/core/05/live2dcubismcore.min.js",
     "sha256": "25ae938cb4fe282ce189b357bcc97e603d1e1f7ec78bf04150d401c23cdc792f"
   },
+  "bundled": [
+    {
+      "id": "nagato-uniform",
+      "name": "长门有希 · 常服",
+      "file": "apps/desktop/models/live2d/nagato-uniform/nagato-uniform.model3.json",
+      "style": {
+        "frame": "full",
+        "gaze": 0.66,
+        "mouthGain": 1.12,
+        "cues": {
+          "listening": { "expression": "专注" },
+          "thinking": { "expression": "思索" },
+          "tap": { "motion": { "group": "Nod", "index": 0 } }
+        }
+      }
+    },
+    {
+      "id": "nagato-witch",
+      "name": "长门有希 · 魔法服",
+      "file": "apps/desktop/models/live2d/nagato-witch/nagato-witch.model3.json",
+      "style": {
+        "frame": "full",
+        "gaze": 0.66,
+        "mouthGain": 1.12,
+        "cues": {
+          "listening": { "expression": "专注" },
+          "thinking": { "expression": "思索" },
+          "tap": { "motion": { "group": "Nod", "index": 0 } }
+        }
+      }
+    }
+  ],
   "samples": {
     "revision": "ed1e0b714826d92469b9e51cacc3346f4e393f03",
     "sha256": "3b7d9dc30adc63da325b16fa9a76fc58001365a6be67ffbf8261afcc56f44333",

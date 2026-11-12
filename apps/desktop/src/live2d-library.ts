@@ -5,7 +5,7 @@ import { defaultLive2DStyle, type Live2DApply, type Live2DCatalog, type Live2DMo
   type Live2DProfile, type Live2DStyle } from '../../../packages/desktop-pet/src/live2d.ts';
 
 type Definition = { id: string; name: string; file: string; style?: Partial<Live2DStyle> };
-type Config = { core: { sha256: string }; samples: { models: Definition[] } };
+type Config = { core: { sha256: string }; bundled: Definition[]; samples: { models: Definition[] } };
 type Saved = { models: Definition[]; bindings: Live2DCatalog['bindings']; styles: Record<string, Live2DStyle> };
 type Bundle = { file: string; root: string; profile: Live2DProfile; references: Map<string, string>; entry: string; manifest: string };
 const coreName = 'live2dcubismcore.min.js';
@@ -137,8 +137,9 @@ export class Live2DLibrary {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') library.issues.push('无法读取 Live2D 外观设置。');
     }
     const local = Array.isArray(library.saved.models) ? library.saved.models : [];
-    const bundled = config.samples.models.map(model => ({ ...model, file: path.join(assetRoot, model.file) }));
-    for (const [models, source] of [[bundled, 'sample'], [local, 'local']] as const) {
+    const bundled = config.bundled.map(model => ({ ...model, file: path.join(root, model.file) }));
+    const samples = config.samples.models.map(model => ({ ...model, file: path.join(assetRoot, model.file) }));
+    for (const [models, source] of [[bundled, 'bundled'], [samples, 'sample'], [local, 'local']] as const) {
       for (const model of models) {
         try {
           if (!/^[\w-]+$/u.test(model.id) || library.bundles.has(model.id)) throw new Error('模型标识无效。');
@@ -147,7 +148,7 @@ export class Live2DLibrary {
           if (savedStyle) bundle.profile.style = tuning(bundle.profile, savedStyle);
           library.bundles.set(model.id, bundle);
         } catch {
-          if (source === 'local') library.issues.push(`${model.name}的模型文件不可用。`);
+          if (source !== 'sample') library.issues.push(`${model.name}的模型文件不可用。`);
         }
       }
     }

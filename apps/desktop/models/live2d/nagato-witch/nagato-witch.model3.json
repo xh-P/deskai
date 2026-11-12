@@ -1,0 +1,70 @@
+{
+	"Version": 3,
+	"FileReferences": {
+		"Moc": "nagato-witch.moc3",
+		"Textures": [
+			"nagato-witch.2048/texture_00.png"
+		],
+		"Physics": "nagato-witch.physics3.json",
+		"DisplayInfo": "nagato-witch.cdi3.json",
+		"Expressions": [
+			{
+				"Name": "专注",
+				"File": "nagato-witch.focus.exp3.json"
+			},
+			{
+				"Name": "思索",
+				"File": "nagato-witch.reflect.exp3.json"
+			},
+			{
+				"Name": "柔和",
+				"File": "nagato-witch.warm.exp3.json"
+			}
+		],
+		"Motions": {
+			"Idle": [
+				{
+					"File": "nagato-witch.idle.motion3.json"
+				}
+			],
+			"Blink": [
+				{
+					"File": "nagato-witch.blink.motion3.json"
+				}
+			],
+			"Nod": [
+				{
+					"File": "nagato-witch.nod.motion3.json"
+				}
+			],
+			"Shake": [
+				{
+					"File": "nagato-witch.shake.motion3.json"
+				}
+			]
+		}
+	},
+	"Groups": [
+		{
+			"Target": "Parameter",
+			"Name": "EyeBlink",
+			"Ids": [
+				"ParamEyeLOpen",
+				"ParamEyeROpen"
+			]
+		},
+		{
+			"Target": "Parameter",
+			"Name": "LipSync",
+			"Ids": [
+				"ParamMouthOpenY"
+			]
+		}
+	],
+	"HitAreas": [
+		{
+			"Name": "Head",
+			"Id": "ArtMeshFace"
+		}
+	]
+}

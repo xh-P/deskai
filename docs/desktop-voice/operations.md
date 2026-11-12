@@ -41,11 +41,11 @@ Work 会话使用 `deskai-work` dsh 预设。默认等待问题进入可在桌�
 
 ## Live2D 桌宠
 
-桌宠默认显示现有长门造型。首次使用 Live2D 时运行 `npm run desktop:prepare-live2d`，再启动桌面。命令将已校验的 Cubism Core 5.2 与官方样例放入 `.cache/live2d`。在「角色」页的「桌宠模型」选择样例，或导入本地 `.model3.json`。预览并调好取景、状态和口型后，点「应用到角色」切换桌宠。选择「静态造型」并应用可切回长门。[版本配置](../../config/live2d-models.json) · [Cubism 下载与许可](https://www.live2d.com/en/sdk/download/web/)
+桌宠默认显示现有长门造型。首次使用 Live2D 时运行 `npm run desktop:prepare-live2d`，再启动桌面。命令将已校验的 Cubism Core 5.2 与官方样例放入 `.cache/live2d`。在「角色」页的「桌宠模型」选择长门常服、魔法服、官方样例或导入本地 `.model3.json`。预览并调好取景、状态和口型后，点「应用到角色」切换桌宠。选择「静态造型」并应用可切回静态桌宠。[长门模型](./nagato-live2d.md) · [版本配置](../../config/live2d-models.json) · [Cubism 下载与许可](https://www.live2d.com/en/sdk/download/web/)
 
 `%APPDATA%\DeskAI2\live2d-library.json` 保存导入模型路径、调校和角色绑定。导入的模型包保留原路径，支持 PNG、JPEG 和 WebP 贴图。桌宠尺寸和位置继续在 `pet-settings.json` 中保存。[长门素材与调校](./live2d-tuning.md)
 
-应用 Mao 或 Haru 后，等桌宠加载完成。在语音会话中说或输入「轻轻摇头，同时用一句话说出你的看法」可以试播报同步。说「只点一下头，不要说话」可以试无声动作。还可以请角色向左或向右歪头，向上下左右看。每次回复最多带一个动作，减少动态效果模式会缩小动作幅度。播放中插话时观察嘴型和动作回收，桌宠随输入状态回到倾听。[角色动作与绑定](./live2d-tuning.md#角色动作)
+应用长门常服或魔法服后，等桌宠加载完成。在语音会话中说或输入「轻轻摇头，同时用一句话说出你的看法」可以试播报同步。说「只点一下头，不要说话」可以试无声动作。还可以请角色向左或向右歪头，向上下左右看。每次回复最多带一个动作，减少动态效果模式会缩小动作幅度。播放中插话时观察嘴型和动作回收，桌宠随输入状态回到倾听。[角色动作与绑定](./live2d-tuning.md#角色动作)
 
 ## 验证入口
 

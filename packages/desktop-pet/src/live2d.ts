@@ -15,7 +15,7 @@ export type Live2DStyle = {
 export type Live2DProfile = {
   id: string;
   name: string;
-  source: 'sample' | 'local';
+  source: 'bundled' | 'sample' | 'local';
   url: string;
   textures: string[];
   expressions: string[];
