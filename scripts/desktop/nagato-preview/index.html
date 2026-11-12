@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>长门有希 · 常服 Live2D</title>
+    <link rel="stylesheet" href="./preview.css">
+    <script src="/core.js"></script>
+    <script type="module" src="./preview.mjs"></script>
+  </head>
+  <body>
+    <main class="review">
+      <section class="stage" aria-label="常服模型预览">
+        <div class="viewport" id="viewport"></div>
+        <div class="frames" role="group" aria-label="取景">
+          <button type="button" data-frame="full" aria-pressed="true">全身</button>
+          <button type="button" data-frame="head" aria-pressed="false">头肩</button>
+          <button type="button" data-frame="arm" aria-pressed="false">袖臂</button>
+        </div>
+        <p class="status" id="status" role="status">正在加载模型…</p>
+      </section>
+      <aside class="panel">
+        <header>
+          <h1>长门有希</h1>
+          <p>常服 Live2D 小样</p>
+        </header>
+        <fieldset id="controls" disabled>
+          <legend class="visually-hidden">模型控制</legend>
+          <label class="slider">左右转头 <output id="yaw-value">0°</output>
+            <input id="yaw" type="range" min="-24" max="24" value="0">
+          </label>
+          <label class="slider">抬头低头 <output id="pitch-value">0°</output>
+            <input id="pitch" type="range" min="-18" max="18" value="0">
+          </label>
+          <div class="buttons">
+            <button id="blink" type="button">眨眼</button>
+            <button id="glasses" type="button" aria-pressed="false">眼镜</button>
+          </div>
+          <div class="arm">
+            <label class="slider">右臂抬手 <output id="lift-value">0%</output>
+              <input id="lift" type="range" min="0" max="100" value="0">
+            </label>
+            <div class="ends"><span>垂手</span><span>抬起</span></div>
+            <button id="play" type="button" class="primary">播放抬手</button>
+            <p class="hint">拖动滑杆可停在任意姿态。切到「袖臂」放大查看腕部和衣身的遮盖。</p>
+          </div>
+          <button id="reset" type="button" class="reset">复位</button>
+        </fieldset>
+      </aside>
+    </main>
+  </body>
+</html>

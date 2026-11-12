@@ -15,6 +15,7 @@
     "desktop:prepare-asr": "node scripts/desktop/prepare-amadeus-asr.mjs",
     "desktop:prepare-knowledge": "node scripts/desktop/prepare-character-knowledge.mjs",
     "desktop:prepare-live2d": "node scripts/desktop/prepare-live2d.mjs",
+    "desktop:preview-nagato": "node scripts/desktop/preview-nagato.mjs",
     "desktop:test": "node --experimental-strip-types --test \"tests/**/*.test.*\"",
     "desktop:pet-smoke": "node scripts/desktop/launch.mjs --pet-smoke",
     "desktop:smoke": "node scripts/desktop/launch.mjs --smoke"

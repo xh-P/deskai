@@ -1,0 +1,497 @@
+{
+	"Version": 3,
+	"Parameters": [
+		{
+			"Id": "ParamArmLift",
+			"GroupId": "",
+			"Name": "Right arm lift"
+		},
+		{
+			"Id": "ParamGlasses",
+			"GroupId": "",
+			"Name": "Glasses"
+		},
+		{
+			"Id": "ParamAngleX",
+			"GroupId": "ParamGroupFace",
+			"Name": "Angle X"
+		},
+		{
+			"Id": "ParamAngleY",
+			"GroupId": "ParamGroupFace",
+			"Name": "Angle Y"
+		},
+		{
+			"Id": "ParamAngleZ",
+			"GroupId": "ParamGroupFace",
+			"Name": "Angle Z"
+		},
+		{
+			"Id": "ParamEyeLOpen",
+			"GroupId": "ParamGroupEyes",
+			"Name": "Left Eye Open"
+		},
+		{
+			"Id": "ParamEyeROpen",
+			"GroupId": "ParamGroupEyes",
+			"Name": "Right Eye Open"
+		},
+		{
+			"Id": "ParamEyeBallX",
+			"GroupId": "ParamGroupEyes",
+			"Name": "EyeBall X"
+		},
+		{
+			"Id": "ParamEyeBallY",
+			"GroupId": "ParamGroupEyes",
+			"Name": "EyeBall Y"
+		},
+		{
+			"Id": "ParamEyeBallForm",
+			"GroupId": "ParamGroupEyes",
+			"Name": "Eye Jelly"
+		},
+		{
+			"Id": "ParamBrowLY",
+			"GroupId": "ParamGroupBrows",
+			"Name": "Left Brow Y"
+		},
+		{
+			"Id": "ParamBrowRY",
+			"GroupId": "ParamGroupBrows",
+			"Name": "Right Brow Y"
+		},
+		{
+			"Id": "ParamMouthForm",
+			"GroupId": "ParamGroupMouth",
+			"Name": "Mouth Form"
+		},
+		{
+			"Id": "ParamMouthOpenY",
+			"GroupId": "ParamGroupMouth",
+			"Name": "Mouth Open"
+		},
+		{
+			"Id": "ParamBodyAngleX",
+			"GroupId": "ParamGroupBody",
+			"Name": "Body Angle X"
+		},
+		{
+			"Id": "ParamBodyAngleY",
+			"GroupId": "ParamGroupBody",
+			"Name": "Body Angle Y"
+		},
+		{
+			"Id": "ParamBodyAngleZ",
+			"GroupId": "ParamGroupBody",
+			"Name": "Body Angle Z"
+		},
+		{
+			"Id": "ParamBodyLean",
+			"GroupId": "ParamGroupBody",
+			"Name": "Body Lean"
+		},
+		{
+			"Id": "ParamProportion",
+			"GroupId": "ParamGroupBody",
+			"Name": "Proportion (Chibi)"
+		},
+		{
+			"Id": "ParamBreath",
+			"GroupId": "ParamGroupBody",
+			"Name": "Breath"
+		},
+		{
+			"Id": "ParamHairFront",
+			"GroupId": "ParamGroupPhysics",
+			"Name": "Front Hair Sway"
+		},
+		{
+			"Id": "ParamHairBack",
+			"GroupId": "ParamGroupPhysics",
+			"Name": "Back Hair Sway"
+		}
+	],
+	"ParameterGroups": [
+		{
+			"Id": "ParamGroupFace",
+			"GroupId": "",
+			"Name": "Face"
+		},
+		{
+			"Id": "ParamGroupEyes",
+			"GroupId": "",
+			"Name": "Eyes"
+		},
+		{
+			"Id": "ParamGroupBrows",
+			"GroupId": "",
+			"Name": "Brows"
+		},
+		{
+			"Id": "ParamGroupMouth",
+			"GroupId": "",
+			"Name": "Mouth"
+		},
+		{
+			"Id": "ParamGroupBody",
+			"GroupId": "",
+			"Name": "Body"
+		},
+		{
+			"Id": "ParamGroupPhysics",
+			"GroupId": "",
+			"Name": "Physics"
+		}
+	],
+	"Parts": [
+		{
+			"Id": "PartHead",
+			"Name": "Head"
+		},
+		{
+			"Id": "PartHairBack",
+			"Name": "Back Hair"
+		},
+		{
+			"Id": "PartFace",
+			"Name": "Face"
+		},
+		{
+			"Id": "PartHairFront",
+			"Name": "Front Hair"
+		},
+		{
+			"Id": "PartHeadAccessories",
+			"Name": "Head Accessories"
+		},
+		{
+			"Id": "PartExtra",
+			"Name": "Extra"
+		},
+		{
+			"Id": "PartBody",
+			"Name": "Body"
+		}
+	],
+	"CombinedParameters": [
+		[
+			"ParamAngleX",
+			"ParamAngleY"
+		],
+		[
+			"ParamBodyAngleX",
+			"ParamBodyAngleY"
+		],
+		[
+			"ParamEyeBallX",
+			"ParamEyeBallY"
+		]
+	],
+	"Drawables": [
+		{
+			"Id": "ArtMeshLayer",
+			"Name": "Front crown"
+		},
+		{
+			"Id": "ArtMeshLayerL",
+			"Name": "Fringe L"
+		},
+		{
+			"Id": "ArtMeshLayer2",
+			"Name": "Fringe center"
+		},
+		{
+			"Id": "ArtMeshLayerR",
+			"Name": "Fringe R"
+		},
+		{
+			"Id": "ArtMeshLayerL2",
+			"Name": "Side hair L"
+		},
+		{
+			"Id": "ArtMeshLayerR2",
+			"Name": "Side hair R"
+		},
+		{
+			"Id": "ArtMeshLayer3",
+			"Name": "Fringe roots underpaint"
+		},
+		{
+			"Id": "ArtMeshEyewear",
+			"Name": "Glasses"
+		},
+		{
+			"Id": "ArtMeshMouth",
+			"Name": "Mouth / Neutral lower line"
+		},
+		{
+			"Id": "ArtMeshMouth2",
+			"Name": "Mouth / Neutral upper line"
+		},
+		{
+			"Id": "ArtMeshMouth3",
+			"Name": "Mouth / Open lower lip"
+		},
+		{
+			"Id": "ArtMeshMouth4",
+			"Name": "Mouth / Open upper lip"
+		},
+		{
+			"Id": "ArtMeshMouth6",
+			"Name": "Mouth / Upper teeth"
+		},
+		{
+			"Id": "ArtMeshMouth5",
+			"Name": "Mouth / Tongue"
+		},
+		{
+			"Id": "ArtMeshMouth7",
+			"Name": "Mouth / Open cavity"
+		},
+		{
+			"Id": "ArtMeshIrides",
+			"Name": "Eye L / Closed lash"
+		},
+		{
+			"Id": "ArtMeshIrides2",
+			"Name": "Eye L / Lower lash"
+		},
+		{
+			"Id": "ArtMeshIrides3",
+			"Name": "Eye L / Upper lash"
+		},
+		{
+			"Id": "ArtMeshIrides4",
+			"Name": "Eye L / Glints"
+		},
+		{
+			"Id": "ArtMeshIrides5",
+			"Name": "Eye L / Iris and pupil"
+		},
+		{
+			"Id": "ArtMeshIrides6",
+			"Name": "Eye L / Sclera"
+		},
+		{
+			"Id": "ArtMeshIrides7",
+			"Name": "Eye R / Closed lash"
+		},
+		{
+			"Id": "ArtMeshIrides8",
+			"Name": "Eye R / Lower lash"
+		},
+		{
+			"Id": "ArtMeshIrides9",
+			"Name": "Eye R / Upper lash"
+		},
+		{
+			"Id": "ArtMeshIrides10",
+			"Name": "Eye R / Glints"
+		},
+		{
+			"Id": "ArtMeshIrides11",
+			"Name": "Eye R / Iris and pupil"
+		},
+		{
+			"Id": "ArtMeshIrides12",
+			"Name": "Eye R / Sclera"
+		},
+		{
+			"Id": "ArtMeshNose",
+			"Name": "Nose"
+		},
+		{
+			"Id": "ArtMeshEyebrowL",
+			"Name": "Brow L"
+		},
+		{
+			"Id": "ArtMeshEyebrowR",
+			"Name": "Brow R"
+		},
+		{
+			"Id": "ArtMeshLayer4",
+			"Name": "Front crown shadow"
+		},
+		{
+			"Id": "ArtMeshLayer5",
+			"Name": "Fringe L shadow"
+		},
+		{
+			"Id": "ArtMeshLayer6",
+			"Name": "Fringe center shadow"
+		},
+		{
+			"Id": "ArtMeshLayer7",
+			"Name": "Fringe R shadow"
+		},
+		{
+			"Id": "ArtMeshLayer8",
+			"Name": "Side hair L shadow"
+		},
+		{
+			"Id": "ArtMeshLayer9",
+			"Name": "Side hair R shadow"
+		},
+		{
+			"Id": "ArtMeshFace",
+			"Name": "Face base"
+		},
+		{
+			"Id": "ArtMeshLayer10",
+			"Name": "Bow knot"
+		},
+		{
+			"Id": "ArtMeshLayerL3",
+			"Name": "Left ribbon"
+		},
+		{
+			"Id": "ArtMeshLayerR3",
+			"Name": "Right ribbon"
+		},
+		{
+			"Id": "ArtMeshNeckwearL",
+			"Name": "Left collar"
+		},
+		{
+			"Id": "ArtMeshNeckwearR",
+			"Name": "Right collar"
+		},
+		{
+			"Id": "ArtMeshLayer11",
+			"Name": "Cuff R raised"
+		},
+		{
+			"Id": "ArtMeshLayer12",
+			"Name": "Forearm sleeve R raised"
+		},
+		{
+			"Id": "ArtMeshLayer13",
+			"Name": "Upper sleeve R raised"
+		},
+		{
+			"Id": "ArtMeshHandwear",
+			"Name": "Hand R raised"
+		},
+		{
+			"Id": "ArtMeshLayer14",
+			"Name": "Cuff R mid"
+		},
+		{
+			"Id": "ArtMeshLayer15",
+			"Name": "Forearm sleeve R mid"
+		},
+		{
+			"Id": "ArtMeshLayer16",
+			"Name": "Upper sleeve R mid"
+		},
+		{
+			"Id": "ArtMeshHandwear2",
+			"Name": "Hand R mid"
+		},
+		{
+			"Id": "ArtMeshLayerL4",
+			"Name": "Cuff L"
+		},
+		{
+			"Id": "ArtMeshLayerR4",
+			"Name": "Cuff R"
+		},
+		{
+			"Id": "ArtMeshLayerL5",
+			"Name": "Forearm sleeve L"
+		},
+		{
+			"Id": "ArtMeshLayerR5",
+			"Name": "Forearm sleeve R"
+		},
+		{
+			"Id": "ArtMeshLayerL6",
+			"Name": "Upper sleeve L"
+		},
+		{
+			"Id": "ArtMeshLayerR6",
+			"Name": "Upper sleeve R"
+		},
+		{
+			"Id": "ArtMeshHandwearL",
+			"Name": "Hand L"
+		},
+		{
+			"Id": "ArtMeshHandwearR",
+			"Name": "Hand R"
+		},
+		{
+			"Id": "ArtMeshLayer17",
+			"Name": "Cardigan bodice"
+		},
+		{
+			"Id": "ArtMeshLayer18",
+			"Name": "Uniform bib and crest"
+		},
+		{
+			"Id": "ArtMeshLayer19",
+			"Name": "Center skirt panel"
+		},
+		{
+			"Id": "ArtMeshBottomwearL",
+			"Name": "Left skirt pleats"
+		},
+		{
+			"Id": "ArtMeshBottomwearR",
+			"Name": "Right skirt pleats"
+		},
+		{
+			"Id": "ArtMeshLayerL7",
+			"Name": "Left loafer"
+		},
+		{
+			"Id": "ArtMeshLayerR7",
+			"Name": "Right loafer"
+		},
+		{
+			"Id": "ArtMeshLayerL8",
+			"Name": "Left sock"
+		},
+		{
+			"Id": "ArtMeshLayerR8",
+			"Name": "Right sock"
+		},
+		{
+			"Id": "ArtMeshLegwearL",
+			"Name": "Left leg"
+		},
+		{
+			"Id": "ArtMeshLegwearR",
+			"Name": "Right leg"
+		},
+		{
+			"Id": "ArtMeshBottomwear",
+			"Name": "Skirt back folds"
+		},
+		{
+			"Id": "ArtMeshEarsL",
+			"Name": "Ear L"
+		},
+		{
+			"Id": "ArtMeshEarsR",
+			"Name": "Ear R"
+		},
+		{
+			"Id": "ArtMeshNeck",
+			"Name": "Neck"
+		},
+		{
+			"Id": "ArtMeshBackHair",
+			"Name": "Back hair base"
+		},
+		{
+			"Id": "ArtMeshLayerL9",
+			"Name": "Nape L"
+		},
+		{
+			"Id": "ArtMeshLayerR9",
+			"Name": "Nape R"
+		}
+	]
+}

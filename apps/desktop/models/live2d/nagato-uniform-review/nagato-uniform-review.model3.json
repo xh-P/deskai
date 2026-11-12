@@ -1,0 +1,79 @@
+{
+	"Version": 3,
+	"FileReferences": {
+		"Moc": "nagato-uniform-review.moc3",
+		"Textures": [
+			"nagato-uniform-review.2048/texture_00.png"
+		],
+		"Physics": "nagato-uniform-review.physics3.json",
+		"DisplayInfo": "nagato-uniform-review.cdi3.json",
+		"Expressions": [
+			{
+				"Name": "专注",
+				"File": "nagato-uniform-review.focus.exp3.json"
+			},
+			{
+				"Name": "思索",
+				"File": "nagato-uniform-review.reflect.exp3.json"
+			},
+			{
+				"Name": "柔和",
+				"File": "nagato-uniform-review.warm.exp3.json"
+			},
+			{
+				"Name": "眼镜",
+				"File": "nagato-uniform-review.glasses.exp3.json"
+			}
+		],
+		"Motions": {
+			"Idle": [
+				{
+					"File": "nagato-uniform-review.idle.motion3.json"
+				}
+			],
+			"Blink": [
+				{
+					"File": "nagato-uniform-review.blink.motion3.json"
+				}
+			],
+			"Nod": [
+				{
+					"File": "nagato-uniform-review.nod.motion3.json"
+				}
+			],
+			"Shake": [
+				{
+					"File": "nagato-uniform-review.shake.motion3.json"
+				}
+			],
+			"右臂抬手": [
+				{
+					"File": "nagato-uniform-review.motion.motion3.json"
+				}
+			]
+		}
+	},
+	"Groups": [
+		{
+			"Target": "Parameter",
+			"Name": "EyeBlink",
+			"Ids": [
+				"ParamEyeLOpen",
+				"ParamEyeROpen"
+			]
+		},
+		{
+			"Target": "Parameter",
+			"Name": "LipSync",
+			"Ids": [
+				"ParamMouthOpenY"
+			]
+		}
+	],
+	"HitAreas": [
+		{
+			"Name": "Head",
+			"Id": "ArtMeshFace"
+		}
+	]
+}

@@ -1,5 +1,13 @@
 # 长门有希 Live2D
 
+## 新版常服交互审阅
+
+在项目根目录运行 `npm run desktop:preview-nagato`，打开终端显示的本地网址。首次准备 Cubism Core 时先运行 `npm run desktop:prepare-live2d`。预览可以左右转头、抬头低头、眨眼、开关眼镜和播放右臂抬手。选择「袖臂」并拖动滑杆，可以停在动作中间查看遮盖。角色页也可通过「导入模型」打开小样。[模型清单](../../apps/desktop/models/live2d/nagato-uniform-review/nagato-uniform-review.model3.json) · [可编辑工程](../../apps/desktop/models/live2d/nagato-uniform-review/nagato-uniform-review.cmo3)
+
+小样从已审阅的 72 层常服 PSD 起模，加入四张 GPT 补绘的中段袖臂图层。右肩固定在衣领下，抬手参数联动上臂、前臂、袖口和手。前臂随视角缩短，手背和指尖单独配准。抬手从垂手出发，抬到腰前稍停后放下，动作以 `.motion3.json` 随模型导出。[PSD2Live 3.6.7](https://github.com/tsunehimatoi/psd2live/tree/v3.6.7) · [Cubism 绘制顺序](https://docs.live2d.com/en/cubism-editor-manual/draworder/) · [Cubism 姿势切换](https://docs.live2d.com/en/cubism-editor-manual/change-pose/) · [Inkinesis](https://github.com/codewayco/Inkinesis)
+
+已复开可编辑工程，核对 76 个网格、22 个参数及默认站姿。Chrome WebGL 验证了连续抬手、眨眼和眼镜开关，DeskAI 模型库通过导入和重新读取。抬手在 46%、47%、50%、82%、83% 和完全抬起时检查了肩袖和手腕。两处切换会随手腕转动切换袖褶和手指画法，实际观感在交互审阅时确认。常服通过评审后进入魔法服制作。
+
 ## 在桌面使用
 
 启动源码版桌面，打开「角色」，在「桌宠模型」选择「长门有希 · 常服」或「长门有希 · 魔法服」，预览后点「应用到角色」。首次使用时，如界面提示 Cubism Core 未准备，运行 `npm run desktop:prepare-live2d` 后重新启动。两套都以全身取景打开。近看嘴型可改为「主播半身」。[外观配置](../../config/live2d-models.json)

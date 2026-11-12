@@ -1,0 +1,12 @@
+{
+    "Type": "Live2D Expression",
+    "FadeInTime": 0.2,
+    "FadeOutTime": 0.2,
+    "Parameters": [
+        {
+            "Id": "ParamGlasses",
+            "Value": 1.0,
+            "Blend": "Overwrite"
+        }
+    ]
+}
