@@ -84,7 +84,7 @@ test('resumed speech revokes the first candidate and the matching final turn rel
   assert.equal(speculative.cancels, 1);
   speculative.calls[0].emit({ type: 'text', attemptId: 'stale', index: 1, revision: 3, text: '迟到内容。' });
   assert.equal(speculative.calls.length, 2);
-  speak(speculative.calls[1], 'final', '可以。');
+  speak(speculative.calls[1], 'final', '当然可以继续。');
   assert.deepEqual(events, []);
   assert.deepEqual(synthesis, []);
 
@@ -92,9 +92,9 @@ test('resumed speech revokes the first candidate and the matching final turn rel
   await tick();
   assert.equal(receipts, 1);
   assert.deepEqual(events.filter(event => event.type === 'user').map(event => event.text), ['今天天气怎么样？']);
-  assert.deepEqual(events.filter(event => event.type === 'assistant-delta').map(event => event.text), ['可以。']);
+  assert.deepEqual(events.filter(event => event.type === 'assistant-delta').map(event => event.text), ['当然可以继续。']);
   assert.equal(ordinary.calls.length, 0);
-  assert.deepEqual(synthesis, ['可以。']);
+  assert.deepEqual(synthesis, ['当然可以继续。']);
   await dialogue.cancelOutput();
   assert.equal(speculative.cancels, 2);
   assert.equal(ordinary.cancels, 0);

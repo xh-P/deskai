@@ -6,7 +6,7 @@
 
 - [输入配置](../../config/voice/input-runtime.json)管理唤醒词、AEC、插话、端点和转写路由。SenseVoice 提供待机唤醒，连续对话默认 Qwen3-ASR。准备方法见 [ASR 服务](../../services/asr/README.md)。
 - [对话配置](../../config/voice/chat-runtime.json)管理 Chat 路由与候选回复。dsh 默认读取 `deskai2-voice`、共享配置或 `web` 中已保存的模型路由。OpenAI-compatible 路由在配置中引用保存密钥的环境变量名。Work 规划继续走 dsh。
-- [输出配置](../../config/voice/output-runtime.json)管理 GPT-SoVITS v2 资源路径、稳定声音 ID、默认声音和流式参数。模型与参考音频需提前放在配置指定位置。[TTS 服务](../../services/tts/README.md)
+- [输出配置](../../config/voice/output-runtime.json)管理 GPT-SoVITS v2 资源、声音、流式参数和片段收尾。模型与参考音频需提前放在配置指定位置。短句可合成一段，合成失败时界面显示错误代码，可在「技术设置与诊断」刷新查看语音时序。[TTS 服务](../../services/tts/README.md)
 - [角色卡](../../config/personas)与[角色语料](../../config/character-knowledge)按角色 ID 对应。运行 `npm run desktop:prepare-knowledge` 建立或更新本地索引。此命令使用 uv、Python 3.12 和固定版本的 multilingual-e5-small ONNX 模型。可用 `DESKAI_KNOWLEDGE_DOWNLOAD_PROXY` 指定下载代理。[长门角色知识](./character-research/README.md)
 - `DESKAI_ASSET_ROOT` 可指定模型与运行时资源根目录。源码配置与派生构建产物以仓库为根。
 

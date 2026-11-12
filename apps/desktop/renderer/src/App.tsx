@@ -45,6 +45,7 @@ export default function App() {
   const [mediaSettings, setMediaSettings] = useState<MediaTrackSettings | null>(null)
   const [entries, setEntries] = useState<Entry[]>([])
   const [error, setError] = useState('')
+  const [speechError, setSpeechError] = useState('')
   const [textDraft, setTextDraft] = useState('')
   const [sendingText, setSendingText] = useState(false)
   const [referenceCard, setReferenceCard] = useState<ReferenceClarification | null>(null)
@@ -88,6 +89,7 @@ export default function App() {
     if (currentSession.current !== opened.sessionId) {
       setEntries(opened.history.map(entry => ({ ...entry, id: ++nextEntry.current, completed: true })))
       setKnowledgeLookup(null)
+      setSpeechError('')
     }
     currentSession.current = opened.sessionId
     setSession(opened)
@@ -499,7 +501,12 @@ export default function App() {
           setTtsState(event.status.state + (event.status.code ? ` · ${event.status.code}` : ''))
           if (event.status.state === 'ready') void window.deskai.getRuntime().then(info => { setRuntime(info); setPreferences(info.preferences) })
           break
-        case 'speech-state': if (event.state === 'error') setError('语音合成失败，本轮保留文字；可点击恢复语音。'); break
+        case 'speech-state':
+          if (event.state === 'error') {
+            const code = event.code && /^[A-Za-z0-9_]{1,64}$/u.test(event.code) ? `（${event.code}）` : ''
+            setSpeechError(`语音输出失败${code}。本轮文字仍可阅读，可点击「恢复语音服务」。`)
+          } else if (event.state === 'playing') setSpeechError('')
+          break
       }
     })
     void window.deskai.getRuntime().then(info => {
@@ -707,11 +714,13 @@ export default function App() {
             <label>关闭主窗口<select value={String(preferences?.closeToTray ?? true)} onChange={event => void changeSetting({ closeToTray: event.target.value === 'true' })}>
               <option value="true">隐藏到托盘（会话继续）</option><option value="false">退出并释放服务</option>
             </select></label>
-            <button className="secondary" onClick={() => void window.deskai.retrySpeech().then(() => window.deskai.getRuntime()).then(setRuntime).catch(cause => setError(describeMediaError(cause)))}>恢复语音服务</button>
+            <button className="secondary" onClick={() => void window.deskai.retrySpeech().then(() => {
+              setSpeechError(''); return window.deskai.getRuntime()
+            }).then(setRuntime).catch(showError)}>恢复语音服务</button>
           </div>
           <p>声音、人格、语言分别设置。系统睡眠会结束会话；恢复后请重新开启。设备名称需麦克风授权后才可能显示。</p>
         </details>
-        {page === 'character' && error && <p className="error" role="alert">{error}</p>}
+        {page === 'character' && (error || speechError) && <p className="error" role="alert">{error || speechError}</p>}
         <details><summary>技术设置与诊断</summary><p>会话：{session?.sessionId ?? '无'} · 运行模式：{runtime?.fakeMedia ? '模拟设备' : '普通设备'}</p>
           {!!runtime?.assetStatus?.missing.length && <p>缺少本地资源：{runtime.assetStatus.missing.join('、')}</p>}
           <p>浏览器实际麦克风设置</p><pre>{mediaSettings ? JSON.stringify(mediaSettings, null, 2) : '未获取'}</pre>
@@ -726,7 +735,7 @@ export default function App() {
           <div><small>输入状态</small><strong>{inputLabel}</strong></div>
           <div><small>播放</small><strong>{playback}</strong></div>
         </section>
-        {page === 'dialogue' && error && <p className="error" role="alert">{error}</p>}
+        {page === 'dialogue' && (error || speechError) && <p className="error" role="alert">{error || speechError}</p>}
         <details className="settings" onToggle={event => { if (event.currentTarget.open) void refreshConversations().catch(showError) }}>
           <summary>{session ? `${session.conversation.displayName} · 第 ${session.conversation.revision} 版${session.conversation.relationship ? ` · ${session.conversation.relationship}` : ''}` : '会话'}</summary>
           <div className="actions conversation-actions">

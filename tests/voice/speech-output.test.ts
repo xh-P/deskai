@@ -145,6 +145,32 @@ function outputFixture(tts = new FakeTts()) {
   return { output, tts, events, progress, finals, errors, delta, complete, chunks, ack };
 }
 
+test('short replies join before synthesis, ignore punctuation-only fragments, and release on timeout or clear', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = outputFixture(); f.tts.seconds = .1;
+  f.delta('嗯，我在。'); await settle();
+  assert.equal(f.tts.requests.length, 0);
+  f.delta('有什么事？'); f.delta('”\n'); f.complete(); await settle();
+  assert.deepEqual(f.tts.requests.map(request => request.text), ['嗯，我在。有什么事？']);
+  f.ack(f.chunks()[0], { completed: true });
+  assert.equal(f.progress[0].rawText, '嗯，我在。有什么事？');
+  assert.deepEqual(f.errors, []);
+
+  f.delta('好的。', 2, 'b'); await settle();
+  t.mock.timers.tick(250); await settle();
+  assert.equal(f.tts.requests.at(-1)?.text, '好的。');
+  f.output.command('clear', 3);
+  f.delta('旧句。', 3, 'c'); await settle();
+  f.output.command('clear', 4);
+  t.mock.timers.tick(250); await settle();
+  assert.equal(f.tts.requests.length, 2);
+
+  f.delta('はい。继续吗？', 5, 'd'); f.complete(5, 'd'); await settle();
+  assert.deepEqual(f.tts.requests.slice(2).map(request => [request.text, request.language]),
+    [['はい。', 'all_ja'], ['继续吗？', 'all_zh']]);
+  await f.output.close();
+});
+
 test('validated PCM starts before synthesis settles, retains its tail, and preserves every sample and receipt bound', async () => {
   const tts = new SettlingTts(), f = outputFixture(tts);
   f.delta('首句已经完整。'); await settle();
@@ -212,7 +238,7 @@ test('failure or cancel after early PCM clears playback without delivering the s
 
 test('one synthesis runs, at most two sentences look ahead, pause stops work, and PCM is receipt-driven', async () => {
   const f = outputFixture();
-  f.delta('第一句。第二句。第三句。第四句。'); f.complete();
+  f.delta('这是完整的第一句。这是完整的第二句。这是完整的第三句。这是完整的第四句。'); f.complete();
   await settle();
   assert.equal(f.tts.requests.length, 2);
   assert.equal(f.tts.maxRunning, 1);
@@ -309,7 +335,7 @@ test('complete synthesis-to-worklet receipt loop delivers each cleaned sentence 
     registerProcessor: (_name: string, type: unknown) => { Worklet = type; },
   });
   const player = new Worklet();
-  f.delta('**第一句**。\n```js\nsecret()\n```\n第二句。最後ですか？'); f.complete();
+  f.delta('**第一句用来验证播报**。\n```js\nsecret()\n```\n第二句应该正常播放。最後ですか？'); f.complete();
   let eventCursor = 0, maxQueued = 0;
   for (let tick = 0; tick < 1000 && f.progress.filter(p => p.completed).length < 3; tick++) {
     await settle();
@@ -322,7 +348,7 @@ test('complete synthesis-to-worklet receipt loop delivers each cleaned sentence 
     maxQueued = Math.max(maxQueued, player.queuedSeconds());
     for (let block = 0; block < 10; block++) player.process([], [[new Float32Array(128)]]);
   }
-  assert.equal(f.progress.filter(p => p.completed).map(p => p.text).join(''), '第一句。第二句。最後ですか？');
+  assert.equal(f.progress.filter(p => p.completed).map(p => p.text).join(''), '第一句用来验证播报。第二句应该正常播放。最後ですか？');
   assert.equal(new Set(f.progress.filter(p => p.completed).map(p => p.segmentId)).size, 3);
   assert.ok(maxQueued <= 3.01);
   assert.equal(f.tts.maxRunning, 1);

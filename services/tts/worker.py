@@ -34,7 +34,8 @@ def error_code(exc):
         return "CUDA_OUT_OF_MEMORY"
     if isinstance(exc, FileNotFoundError):
         return "RESOURCE_MISSING"
-    if str(exc) in ("CUDA_UNAVAILABLE", "RESOURCE_MISSING", "INCORRECT_MODEL_VERSION_OR_DEVICE"):
+    if str(exc) in ("CUDA_UNAVAILABLE", "RESOURCE_MISSING", "INCORRECT_MODEL_VERSION_OR_DEVICE",
+                    "TTS_NO_AUDIO", "TTS_INVALID_PCM"):
         return str(exc)
     return type(exc).__name__
 
@@ -107,6 +108,12 @@ class Service:
         self.overlap_length = streaming["overlapLength"]
         if type(self.streaming) is not bool or any(type(n) is not int or n < 1 for n in (self.min_chunk_length, self.overlap_length)):
             raise ValueError("Invalid streaming settings")
+        ending = config.get("phraseEnding", {})
+        self.fade_ms = ending.get("fadeMs", 16)
+        self.pause_ms = ending.get("pauseMs", 85)
+        if (type(self.fade_ms) is not int or not 1 <= self.fade_ms <= 50
+                or type(self.pause_ms) is not int or not 0 <= self.pause_ms <= 250):
+            raise ValueError("Invalid phrase ending settings")
         self.reference = None
         self.revision = 0
         self.state = "loading"
@@ -239,33 +246,55 @@ class Service:
             return dict(chunks=0, samples=0, canceled=True)
         iterator = self.pipeline.run(request)
         chunks, samples, first_pcm, has_signal = 0, 0, None, False
+        rate, received = 0, 0
+        tail = np.empty(0, dtype=np.int16)
+
+        def send_pcm(audio):
+            nonlocal chunks, samples, first_pcm
+            first_pcm = first_pcm or time.perf_counter()
+            header = dict(v=1, event="audio.chunk", requestId=job.request_id, **job.identity,
+                          voiceId=self.voice["id"], referenceId=self.reference["id"],
+                          chunkSeq=chunks, sampleRate=rate, channels=1, format="pcm_s16le",
+                          samples=len(audio))
+            future = asyncio.run_coroutine_threadsafe(
+                self.emit_pcm(ws, job, header, audio.astype("<i2", copy=False).tobytes()), loop)
+            future.result(timeout=6)
+            chunks += 1
+            samples += len(audio)
+
         torch.cuda.reset_peak_memory_stats()
         try:
             for sample_rate, audio in iterator:
                 if job.canceled.is_set():
                     break
                 if audio.ndim != 1 or audio.dtype != np.int16:
-                    raise RuntimeError("INVALID_PCM")
+                    raise RuntimeError("TTS_INVALID_PCM")
                 if not audio.size:
                     continue
+                if sample_rate == 16000 and not np.any(audio):
+                    continue  # GPT-SoVITS returns 16 kHz silence when no speech was produced.
+                if sample_rate not in (24000, 32000, 48000) or (rate and rate != sample_rate):
+                    raise RuntimeError("TTS_INVALID_PCM")
+                rate = sample_rate
                 has_signal = has_signal or bool(np.any(audio))
-                samples += len(audio)
-                if sample_rate not in (24000, 32000, 48000) or samples > sample_rate * MAX_AUDIO_SECONDS:
-                    raise RuntimeError("PCM_RATE_OR_DURATION_LIMIT")
-                first_pcm = first_pcm or time.perf_counter()
-                header = dict(v=1, event="audio.chunk", requestId=job.request_id, **job.identity,
-                              voiceId=self.voice["id"], referenceId=self.reference["id"],
-                              chunkSeq=chunks, sampleRate=sample_rate, channels=1, format="pcm_s16le",
-                              samples=len(audio))
-                future = asyncio.run_coroutine_threadsafe(
-                    self.emit_pcm(ws, job, header, audio.astype("<i2", copy=False).tobytes()), loop)
-                future.result(timeout=6)
-                chunks += 1
+                received += len(audio)
+                if received > rate * MAX_AUDIO_SECONDS:
+                    raise RuntimeError("TTS_INVALID_PCM")
+                joined = np.concatenate((tail, audio)) if tail.size else audio
+                fade_samples = rate * self.fade_ms // 1000
+                if joined.size > fade_samples:
+                    send_pcm(joined[:-fade_samples])
+                tail = joined[-fade_samples:]
         finally:
             iterator.close()
         torch.cuda.synchronize()
-        if not job.canceled.is_set() and (chunks == 0 or not has_signal):
-            raise RuntimeError("NO_PCM")
+        if not job.canceled.is_set():
+            if not has_signal:
+                raise RuntimeError("TTS_NO_AUDIO")
+            gain = np.linspace(1, 0, tail.size + 1, dtype=np.float32)[1:]
+            released = np.rint(tail * gain).astype(np.int16)
+            pause = min(rate * self.pause_ms // 1000, rate * MAX_AUDIO_SECONDS - received)
+            send_pcm(np.pad(released, (0, pause)))
         return dict(chunks=chunks, samples=samples, canceled=job.canceled.is_set(),
                     firstPCMSeconds=round(first_pcm - started, 3) if first_pcm else None,
                     elapsedSeconds=round(time.perf_counter() - started, 3),

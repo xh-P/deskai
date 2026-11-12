@@ -18,5 +18,6 @@
     "GPT_weights_v2/Tsuruya_20241002-e10.ckpt": "tsuruya-v2",
     "GPT_weights_v2/OldMikuru_20241002-e10.ckpt": "mikuru-adult-v2"
   },
-  "streaming": { "enabled": true, "minChunkLength": 16, "overlapLength": 2 }
+  "streaming": { "enabled": true, "minChunkLength": 16, "overlapLength": 2 },
+  "phraseEnding": { "fadeMs": 16, "pauseMs": 85 }
 }

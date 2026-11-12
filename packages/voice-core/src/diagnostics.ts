@@ -13,6 +13,7 @@ export type OutputDiagnostic = {
   inputRevision?: number;
   utteranceIds?: number[];
   durationMs?: number;
+  code?: string;
 };
 export type QwenAsrDiagnostics = {
   startup: {
@@ -44,6 +45,7 @@ export class OutputTimeline {
       if (fields[key] !== undefined) row[key] = fields[key];
     }
     if (fields.utteranceIds) row.utteranceIds = [...fields.utteranceIds];
+    if (fields.code && /^[A-Za-z0-9_]{1,64}$/u.test(fields.code)) row.code = fields.code;
     this.rows.push(row);
     if (this.rows.length > 100) this.rows.shift();
   }

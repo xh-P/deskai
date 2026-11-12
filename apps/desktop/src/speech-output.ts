@@ -14,12 +14,30 @@ export type SpeechOutputEvent =
   | { type: 'output-command'; sessionId: string; command: 'clear' | 'pause' | 'resume'; generationId: number }
   | { type: 'speech-state'; sessionId: string; state: 'idle' | 'buffering' | 'playing' | 'paused' | 'error'; code?: string };
 type Segment = SpokenSentence & Identity & { chunks: Float32Array[]; rate: number; samples: number; complete: boolean; sent: number; received: Set<number> };
-type Attempt = { turnId: string; attemptId: string; generationId: number; stream: SentenceStream; ended: boolean; serial: number; lastId?: string; finalReported: boolean };
+type HeldPhrase = { sentence: SpokenSentence; timer?: ReturnType<typeof setTimeout> };
+type Attempt = { turnId: string; attemptId: string; generationId: number; stream: SentenceStream; ended: boolean; serial: number;
+  lastId?: string; finalReported: boolean; heldPhrase?: HeldPhrase; nextSentence?: SpokenSentence };
 type Options = { sessionId: string; selection: Selection; port: SpeechPort; emit: (event: SpeechOutputEvent) => void;
   onSegment?: (progress: SpeechProgress) => void; onFinalSegment?: (attemptId: string, segmentId: string) => void;
   onError?: (code: string, attemptId?: string) => void };
 
-/** One CUDA request, at most two bounded sentences, and <=3s acknowledged renderer lookahead. */
+const shortPhraseCharacters = 5;
+const shortPhraseWaitMs = 220;
+
+function nextSpoken(stream: SentenceStream): SpokenSentence | undefined {
+  let sentence: SpokenSentence | undefined;
+  do { sentence = stream.next(); } while (sentence && !sentence.text);
+  return sentence;
+}
+
+function synthesisLanguage(text: string, language: Selection['language']) {
+  if (language === 'zh' || language === 'all_zh') return 'all_zh';
+  if (language === 'ja' || language === 'all_ja') return 'all_ja';
+  if (language === 'en') return 'en';
+  return /[\u3040-\u30ff]/u.test(text) ? 'all_ja' : /\p{Script=Han}/u.test(text) ? 'all_zh' : 'en';
+}
+
+/** One CUDA request, two bounded phrases, and <=3s acknowledged renderer lookahead. */
 export class SpeechOutput {
   private selection: Selection;
   private attempt?: Attempt;
@@ -93,8 +111,7 @@ export class SpeechOutput {
   private schedule(): void {
     const attempt = this.attempt;
     if (!attempt || this.closed || this.paused || this.running || this.segments.length >= 2 || this.queuedSeconds > 3) return;
-    let sentence: SpokenSentence | undefined;
-    do { sentence = attempt.stream.next(); } while (sentence && !sentence.text);
+    const sentence = this.nextPhrase(attempt);
     if (!sentence) {
       if (attempt.ended && attempt.lastId && !attempt.finalReported) {
         attempt.finalReported = true; this.options.onFinalSegment?.(attempt.attemptId, attempt.lastId);
@@ -110,9 +127,7 @@ export class SpeechOutput {
     const controller = new AbortController();
     const selection = { ...this.selection };
     this.state('buffering');
-    const language = selection.language === 'zh' || selection.language === 'all_zh' ? 'all_zh'
-      : selection.language === 'ja' || selection.language === 'all_ja' ? 'all_ja'
-      : selection.language === 'en' ? 'en' : /[\u3040-\u30ff]/u.test(sentence.text) ? 'all_ja' : /\p{Script=Han}/u.test(sentence.text) ? 'all_zh' : 'en';
+    const language = synthesisLanguage(sentence.text, selection.language);
     if ((!selection.language || selection.language === 'auto') && /[\p{Script=Cyrillic}\p{Script=Greek}\p{Script=Arabic}\p{Script=Hangul}]/u.test(sentence.text)) {
       this.fail('UNSUPPORTED_SPEECH_LANGUAGE'); return;
     }
@@ -142,6 +157,29 @@ export class SpeechOutput {
       .finally(() => { this.running = undefined; this.pump(); this.schedule(); });
     this.running = { controller, settled };
   }
+  private nextPhrase(attempt: Attempt): SpokenSentence | undefined {
+    const held = attempt.heldPhrase;
+    const first = held?.sentence ?? attempt.nextSentence ?? nextSpoken(attempt.stream);
+    attempt.nextSentence = undefined;
+    if (!first || (first.text.match(/[\p{L}\p{N}]/gu)?.length ?? 0) >= shortPhraseCharacters) return first;
+
+    const next = nextSpoken(attempt.stream);
+    if (next || attempt.ended || (held && !held.timer)) {
+      clearTimeout(held?.timer);
+      attempt.heldPhrase = undefined;
+      const language = this.selection.language;
+      if (next && synthesisLanguage(first.text, language) === synthesisLanguage(next.text, language)) {
+        return attempt.stream.join(first, next);
+      }
+      attempt.nextSentence = next;
+      return first;
+    }
+    if (!held) {
+      const pending: HeldPhrase = { sentence: first };
+      pending.timer = setTimeout(() => { pending.timer = undefined; this.schedule(); }, shortPhraseWaitMs);
+      attempt.heldPhrase = pending;
+    }
+  }
   private pump(): void {
     if (this.closed || this.paused || this.awaiting) return;
     // Start validated PCM while the worker is settling, but retain the final
@@ -161,6 +199,7 @@ export class SpeechOutput {
   private clear(generationId: number): void {
     if (generationId < this.generation) return;
     if (this.attempt) {
+      clearTimeout(this.attempt.heldPhrase?.timer);
       this.invalidated.add(this.attempt.attemptId);
       if (this.invalidated.size > 24) this.invalidated.delete(this.invalidated.values().next().value!);
     }

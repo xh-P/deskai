@@ -3,7 +3,7 @@ export type SpokenSentence = { text: string; rawText: string; rawStart: number; 
 const action = /微笑|点头|搖頭|摇头|抬头|低头|眨眼|看着|翻开|叹气|笑う|頷|うなず|ため息|見つめ|首を|smil|nod|sigh|laugh|shrug|looks? at|turns? (?:to|away)|動作|动作/iu;
 
 export function cleanSpeech(raw: string): string {
-  return raw.replace(/```[\s\S]*?(?:```|$)/gu, ' ')
+  const text = raw.replace(/```[\s\S]*?(?:```|$)/gu, ' ')
     .replace(/~~~[\s\S]*?(?:~~~|$)/gu, ' ')
     .replace(/`[^`]*(?:`|$)/gu, ' ')
     .replace(/!\[[^\]]*\]\([^)]*\)/gu, ' ')
@@ -14,6 +14,7 @@ export function cleanSpeech(raw: string): string {
     .replace(/[（(【\[]([^\n）)】\]]*)(?:[）)】\]]|$)/gmu, (match, inner: string) => action.test(inner) ? ' ' : match)
     .replace(/(?:^|\n)\s*(?:#{1,6}\s*|[-+*]\s+|\d+[.)]\s+)/gu, ' ')
     .replace(/[*_~#]/gu, '').replace(/[\t\r\n ]+/gu, ' ').trim();
+  return /[\p{L}\p{N}]/u.test(text) ? text : '';
 }
 
 /** Holds incomplete markup/tokens until their boundary is known; bounded by the reply budget. */
@@ -29,6 +30,9 @@ export class SentenceStream {
     this.raw += text;
   }
   finish(): void { this.ended = true; }
+  join(first: SpokenSentence, next: SpokenSentence): SpokenSentence {
+    return this.span(first.rawStart, next.rawEnd);
+  }
   next(): SpokenSentence | undefined {
     if (this.cursor === this.raw.length) return;
     const start = this.cursor;
@@ -73,6 +77,9 @@ export class SentenceStream {
   }
   private take(start: number, end: number): SpokenSentence {
     this.cursor = end;
+    return this.span(start, end);
+  }
+  private span(start: number, end: number): SpokenSentence {
     const rawText = this.raw.slice(start, end);
     return { text: cleanSpeech(rawText), rawText, rawStart: start, rawEnd: end };
   }

@@ -15,6 +15,14 @@
 - 模拟麦克风接通实际 Qwen CUDA Graph、dsh 规划与对话、GPU TTS v2。完成 4 次转写，播放期间收到 246 帧输入，并收到 3 段完整播放回执。报告在 `outputs/desktop-validation/tts/desktop-smoke-1794431837907.json`。
 - 从正常状态目录启动独立 Host。CLI 读取新账本中的默认项目与空操作列表，再正常请求停止。
 
+## 短句播报与合成失败
+
+- 最近一轮的「嗯，我在。有什么事？」原先生成两个独立请求。长门 v2 实测两段 PCM 的末样本均有信号。后续回复里的独立结束引号进入 TTS 后，真实 worker 返回无音频错误。
+- 桌面合并及时到达的同语言短句，跳过纯符号，保留播放回执的原文跨度。GPT-SoVITS v2 在片段尾部淡出并补短暂停顿。语音提示及合成时序可显示错误代码。
+- 38 项相关 TypeScript 回归、9 项 Python TTS 协议检查、桌面类型检查及隔离 Vite 构建通过。回归含短句合并、超时释放、跨语言、取消旧句、纯标点及连续播放。
+- Luna Max 用真实长门 v2 `ref-01`、桌面播报调度和私有 WebSocket 完成三轮合成与模拟播放回执。示例合成一次，含结束引号的后一轮和单独「嗯。」均完成，语音错误为零。示例末样本为零，静音尾部为 85 毫秒。本机报告与试听位于 `.cache/tts-triage/phrase-smoke-report.json` 和 `.cache/tts-triage/fixed-joined.wav`。
+- 常用扬声器或耳机上的听感与连续语音使用留待实际试听。
+
 ## H1 与 H4 真实对话
 
 2026-11-12 在 dsh `deepseek-account / deepseek-flash` 上，使用长门第 4 版和朋友模式。三个问题分别从两个新会话开始，单独开关检索。可用[对照探针](../../scripts/desktop/character-e2e.mjs)复测。

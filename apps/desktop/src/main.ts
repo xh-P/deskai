@@ -233,7 +233,8 @@ function attachOutput() {
         if (current()) outputTimeline.record('tts-finished', { ...identity, durationMs: performance.now() - started });
         return result;
       } catch (error) {
-        if (current()) outputTimeline.record('tts-failed', { ...identity, durationMs: performance.now() - started });
+        if (current() && !signal?.aborted) outputTimeline.record('tts-failed', { ...identity,
+          durationMs: performance.now() - started, code: error instanceof Error ? error.message : undefined });
         throw error;
       }
     },
