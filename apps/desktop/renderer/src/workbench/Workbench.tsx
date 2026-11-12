@@ -215,7 +215,7 @@ export default function Workbench({ snapshot }: { snapshot: HostSnapshot | null 
       </div>
     </aside>
     <div className="wb-main">
-      {!modal && error && <p className="wb-alert wb-banner" role="alert">{error}</p>}
+      {!modal && error && <p className="wb-alert" role="alert">{error}</p>}
       {snapshot && task ? <TaskView key={task.id} snapshot={snapshot} task={task} attempts={attempts} busy={busy} error={error}
         send={send} onArtifacts={attemptId => openModal({ type: 'artifacts', attemptId })} />
         : <div className="wb-empty-view">

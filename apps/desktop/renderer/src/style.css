@@ -9,7 +9,6 @@
   --desktop-accent: #99e2ca;
   --desktop-ink: #112820;
   --desktop-error: #f2a5a8;
-  --desktop-alert: #302329;
   font-family: Inter, "Microsoft YaHei UI", "Segoe UI", sans-serif;
   color: var(--desktop-text);
   background: var(--desktop-bg);
@@ -26,7 +25,6 @@
   --desktop-accent: #12745c;
   --desktop-ink: #fff;
   --desktop-error: #963d46;
-  --desktop-alert: #f7e4e6;
   color-scheme: light;
 }
 * { box-sizing: border-box; }
@@ -84,7 +82,7 @@ strong { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 .reference-card li button { display: grid; gap: 4px; width: 100%; text-align: left; }
 .reference-card li span { font-size: 12px; overflow-wrap: anywhere; }
 .hint { margin: 0; font-size: 13px; }
-.error { margin: 0; padding: 12px; border-radius: 9px; color: var(--desktop-error); background: var(--desktop-alert); }
+.error { margin: 0; color: var(--desktop-error); overflow-wrap: anywhere; }
 details { background: var(--desktop-surface); padding: 10px 12px; border-radius: 8px; color: var(--desktop-muted); font-size: 13px; }
 summary { cursor: pointer; }
 .settings .preferences { margin-top: 12px; border: 0; padding: 0; }

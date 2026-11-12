@@ -10,7 +10,6 @@
   --wb-blue: #a1c9f2;
   --wb-warn: #efcb89;
   --wb-error: #f2a5a8;
-  --wb-alert: #302329;
   display: grid;
   grid-template-columns: minmax(200px, 235px) minmax(0, 1fr);
   height: calc(100dvh - var(--desktop-bar));
@@ -33,7 +32,6 @@
   --wb-blue: #225f98;
   --wb-warn: #7f4b09;
   --wb-error: #963d46;
-  --wb-alert: #f7e4e6;
   color-scheme: light;
 }
 
@@ -75,8 +73,7 @@
 .wb button.wb-icon { padding: 0; width: 31px; height: 31px; font-size: 19px; line-height: 1; }
 .wb button.wb-danger { color: var(--wb-error); }
 .wb button[aria-pressed="true"] { color: var(--wb-accent); }
-.wb-alert { padding: 10px 12px; color: var(--wb-error); background: var(--wb-alert); border-radius: 7px; overflow-wrap: anywhere; }
-.wb-banner { border-radius: 0; }
+.wb-alert { padding: 10px 12px; color: var(--wb-error); overflow-wrap: anywhere; }
 .wb-empty { padding: 18px; }
 
 .wb-sidebar {
