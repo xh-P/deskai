@@ -5,7 +5,7 @@ import { defaultLive2DStyle, type Live2DApply, type Live2DCatalog, type Live2DMo
   type Live2DProfile, type Live2DStyle } from '../../../packages/desktop-pet/src/live2d.ts';
 
 type Definition = { id: string; name: string; file: string; style?: Partial<Live2DStyle> };
-type Config = { core: { sha256: string }; samples: { models: Definition[] }; defaultModelId: string };
+type Config = { core: { sha256: string }; samples: { models: Definition[] } };
 type Saved = { models: Definition[]; bindings: Live2DCatalog['bindings']; styles: Record<string, Live2DStyle> };
 type Bundle = { file: string; root: string; profile: Live2DProfile; references: Map<string, string>; entry: string; manifest: string };
 const coreName = 'live2dcubismcore.min.js';
@@ -117,12 +117,12 @@ export class Live2DLibrary {
   private core?: Buffer;
   private readonly issues: string[] = [];
 
-  private constructor(private readonly storage: string, private readonly config: Config) {}
+  private constructor(private readonly storage: string) {}
 
   static async open(root: string, userData: string): Promise<Live2DLibrary> {
     const config = JSON.parse(await readFile(path.join(root, 'config/live2d-models.json'), 'utf8')) as Config;
     const assetRoot = path.join(root, '.cache/live2d');
-    const library = new Live2DLibrary(path.join(userData, 'live2d-library.json'), config);
+    const library = new Live2DLibrary(path.join(userData, 'live2d-library.json'));
     const core = await readFile(path.join(assetRoot, coreName)).catch(() => undefined);
     if (core && createHash('sha256').update(core).digest('hex') === config.core.sha256) library.core = core;
     if (!library.core) library.issues.push('Cubism Core 未准备，请运行 npm run desktop:prepare-live2d。');
@@ -155,14 +155,13 @@ export class Live2DLibrary {
   }
 
   catalog(): Live2DCatalog {
-    return { coreReady: !!this.core, defaultModelId: this.config.defaultModelId,
-      models: [...this.bundles.values()].map(bundle => bundle.profile), bindings: this.saved.bindings ?? {}, issues: this.issues.slice() };
+    return { coreReady: !!this.core, models: [...this.bundles.values()].map(bundle => bundle.profile),
+      bindings: this.saved.bindings, issues: this.issues.slice() };
   }
 
   resolve(personaId: string): Live2DProfile | undefined {
-    const id = this.saved.bindings?.[personaId];
-    const profile = id === null ? undefined : this.bundles.get(id ?? this.config.defaultModelId)?.profile;
-    return this.core ? profile : undefined;
+    const id = this.saved.bindings[personaId];
+    return this.core && id ? this.bundles.get(id)?.profile : undefined;
   }
 
   async import(file: string): Promise<{ catalog: Live2DCatalog; id: string }> {

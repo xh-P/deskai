@@ -26,7 +26,6 @@ export type Live2DProfile = {
 };
 export type Live2DCatalog = {
   coreReady: boolean;
-  defaultModelId: string;
   models: Live2DProfile[];
   bindings: Record<string, string | null>;
   issues: string[];

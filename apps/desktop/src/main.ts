@@ -152,7 +152,7 @@ function send(event: object) { if (window && !window.isDestroyed()) window.webCo
 function syncPet() {
   if (!petWindow) return;
   const personaId = activeConversation?.persona.id ?? preferences.personaId;
-  petWindow.setActivity(petActivity.snapshot(petWindow.getPreferences()), petSmoke ? undefined : live2d.resolve(personaId));
+  petWindow.setActivity(petActivity.snapshot(petWindow.getPreferences()), live2d.resolve(personaId));
 }
 function showMainWindow() { window?.show(); window?.focus(); }
 function stopCurrentReply() {
@@ -1136,6 +1136,12 @@ app.whenReady().then(async () => {
   [characters, conversations, live2d] = await Promise.all([
     CharacterStore.open(root, characterData), ConversationArchive.open(characterData), Live2DLibrary.open(root, app.getPath('userData')),
   ]);
+  if (live2dSmoke) {
+    const catalog = live2d.catalog();
+    const sample = catalog.models.find(model => model.source === 'sample');
+    if (!catalog.coreReady || !sample) throw new Error('Live2D smoke requires npm run desktop:prepare-live2d.');
+    await live2d.apply({ personaId: preferences.personaId, modelId: sample.id });
+  }
   protocol.handle('deskai', async request => {
     const url = new URL(request.url);
     let relative;

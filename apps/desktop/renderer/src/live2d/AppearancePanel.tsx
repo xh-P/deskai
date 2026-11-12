@@ -48,7 +48,7 @@ export default function AppearancePanel({ personaId, snapshot, changePet }: {
     void window.deskai.getLive2DCatalog().then(value => {
       if (!active) return
       setCatalog(value)
-      const binding = value.bindings[personaId] === null ? '' : value.bindings[personaId] ?? value.defaultModelId
+      const binding = value.bindings[personaId] ?? ''
       choose(value.models.some(model => model.id === binding) ? binding : '', value)
     }).catch(cause => { if (active) setError(String(cause)) })
     return () => { active = false }

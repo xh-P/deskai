@@ -4,7 +4,7 @@
 
 ## I. Live2D 角色
 
-本机默认使用官方 Mao，也可选择 Haru 或导入模型。角色页支持独立预览和调校，透明桌宠使用同一渲染器。参考 Amadeus 的模型资源检查、加载代次与嘴型驱动，将状态和 PCM 信号接到 DeskAI2 的现有桌宠与输出链路。[实际架构](./architecture.md#live2d-呈现) · [长门素材与调校](./live2d-tuning.md)
+桌宠默认显示现有的长门造型。角色页可选用 Mao、Haru 或导入模型，预览和调校后应用到角色。透明桌宠与独立预览共用 Live2D 渲染器。参考 Amadeus 的模型资源检查、加载代次与嘴型驱动，将状态和 PCM 信号接到 DeskAI2 的现有桌宠与输出链路。[实际架构](./architecture.md#live2d-呈现) · [长门素材与调校](./live2d-tuning.md)
 
 ### 模型和渲染选型
 

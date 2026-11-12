@@ -37,6 +37,6 @@
 
 ## Live2D 呈现
 
-- Main 的 Live2D 库校验模型清单和同目录资源引用，通过 `deskai://app/live2d/` 提供登记的文件。模型配置与角色默认选择保存在桌面数据目录，角色卡和归档会话仍各自持有原有身份。透明窗口管理位置、缩放、置顶和鼠标命中。[模型库](../../apps/desktop/src/live2d-library.ts) · [窗口管理](../../apps/desktop/src/pet-window.ts)
+- Main 的 Live2D 库校验模型清单和同目录资源引用，通过 `deskai://app/live2d/` 提供登记的文件。模型配置与角色显式选择保存在桌面数据目录。角色未应用模型时，桌宠使用现有长门造型。透明窗口管理位置、缩放、置顶和鼠标命中。[模型库](../../apps/desktop/src/live2d-library.ts) · [窗口管理](../../apps/desktop/src/pet-window.ts)
 - 预览和桌宠各拥有一个 Pixi WebGL 场景。渲染器以实测网格范围和头部命中区构图，执行模型表情、动作、呼吸、视线及物理。换模型时提交最新完成的加载结果，释放旧模型与贴图。隐藏时停止帧循环，图形上下文恢复时重建。[渲染场景](../../apps/desktop/renderer/src/live2d/cubism-stage.ts) · [角色外观](../../apps/desktop/renderer/src/live2d/AppearancePanel.tsx)
 - 播放 Worklet 在 PCM 进入输出图时发出句子开始回执和约 34 Hz 的幅度与频谱形状信号。Main 用会话、播放代次、Attempt、句子与帧号过滤，并将归一化值传给桌宠。暂停、清除或旧会话结束会撤销当前呈现；下一段字幕随实际输出开始。[PCM Worklet](../../apps/desktop/renderer/public/worklets/pcm-player.js) · [桌宠状态投影](../../packages/desktop-pet/src/projection.ts)

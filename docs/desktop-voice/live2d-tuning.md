@@ -2,7 +2,7 @@
 
 ![长门有希冬装半身立绘参考](./art/nagato-live2d-reference.png)
 
-这张 1055 × 1491 的透明立绘用于定脸、服装和半身取景。预留了发顶与肩膀的空间，便于确定后续分层边界。制作长门模型时可从这张图确认方向。当前桌宠的可动模型使用官方 Mao 和 Haru 样例。[立绘原文件](./art/nagato-live2d-reference.png) · [官方样例](https://www.live2d.com/en/learn/sample/)
+这张 1055 × 1491 的透明立绘用于确定脸部、服装和半身取景，预留了发顶与肩膀的分层空间。长门的 Live2D 模型待拆层和绑定。桌宠启动默认使用现有的长门造型，官方 Mao 和 Haru 样例可在「角色」页选用。[立绘原文件](./art/nagato-live2d-reference.png) · [官方样例](https://www.live2d.com/en/learn/sample/)
 
 ## 可协助的事项
 
