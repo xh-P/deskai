@@ -1,6 +1,7 @@
 import type { DialogueEvent, DialogueHistoryEntry } from '../../../../packages/voice-core/src/dialogue.ts'
 import type { Persona } from '../../../../packages/voice-core/src/prompts.ts'
 import type { CharacterDraft, CharacterSummary, ConversationSummary } from '../../src/character-store.ts'
+import type { SpeechOutputEvent } from '../../src/speech-output.ts'
 import type { ReferenceClarification, ReferenceSelection } from '../../../../packages/voice-core/src/coordination.ts'
 import type { HostSnapshot } from '../../../host/src/protocol.ts'
 import type { ExportReceipt } from '../../../../packages/app-core/src/exports.ts'
@@ -94,10 +95,7 @@ export type DeskaiEvent =
   | { type: 'error'; sessionId?: string; code: string; message: string }
   | { type: 'capture-command'; command: 'pause' | 'resume' }
   | { type: 'tts-status'; status: { state: string; code?: string; voiceId?: string } }
-  | { type: 'speech-state'; sessionId: string; state: string; code?: string }
-  | { type: 'output-command'; sessionId: string; command: 'pause' | 'resume' | 'clear'; generationId: number }
-  | { type: 'audio-chunk'; sessionId: string; generationId: number; samples: Float32Array; sampleRate: number; final?: boolean;
-      turnId?: string; attemptId?: string; voiceRevision?: number; segmentId?: string; chunkSeq?: number; segmentFinal?: boolean }
+  | SpeechOutputEvent
 
 export interface SmokeReport {
   simulated: true

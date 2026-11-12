@@ -2,6 +2,7 @@ import type { DeskaiEvent, PlaybackReport } from './bridge'
 import type { MouthFrame } from '../../../../packages/desktop-pet/src/live2d.ts'
 
 type AudioChunk = Extract<DeskaiEvent, { type: 'audio-chunk' }>
+type AudioDiscard = Extract<DeskaiEvent, { type: 'audio-discard' }>
 type OutputCommand = Extract<DeskaiEvent, { type: 'output-command' }>
 
 /** The renderer owns one context for microphone VAD and all application playback. */
@@ -87,6 +88,11 @@ export class PcmPlayer {
       sessionId: chunk.sessionId, turnId: chunk.turnId, attemptId: chunk.attemptId, voiceRevision: chunk.voiceRevision,
       segmentId: chunk.segmentId, chunkSeq: chunk.chunkSeq, segmentFinal: chunk.segmentFinal,
     }, [samples.buffer])
+  }
+
+  discard(segment: AudioDiscard): void {
+    if (segment.sessionId !== this.sessionId || segment.generationId !== this.generationId) return
+    this.node?.port.postMessage({ ...segment, type: 'discard' })
   }
 
   async playFixture(wav: Uint8Array, generationId: number): Promise<void> {

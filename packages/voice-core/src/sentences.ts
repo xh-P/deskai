@@ -1,5 +1,6 @@
 /** A spoken sentence keeps its source span: cleaned speech is never a raw prefix. */
 export type SpokenSentence = { text: string; rawText: string; rawStart: number; rawEnd: number };
+export type SpeechBoundaries = { sentence?: SpokenSentence; clause?: SpokenSentence };
 const action = /微笑|点头|搖頭|摇头|抬头|低头|眨眼|看着|翻开|叹气|笑う|頷|うなず|ため息|見つめ|首を|smil|nod|sigh|laugh|shrug|looks? at|turns? (?:to|away)|動作|动作/iu;
 
 export function cleanSpeech(raw: string): string {
@@ -30,12 +31,10 @@ export class SentenceStream {
     this.raw += text;
   }
   finish(): void { this.ended = true; }
-  join(first: SpokenSentence, next: SpokenSentence): SpokenSentence {
-    return this.span(first.rawStart, next.rawEnd);
-  }
-  next(): SpokenSentence | undefined {
+  next(select?: (boundaries: SpeechBoundaries) => SpokenSentence | undefined): SpokenSentence | undefined {
     if (this.cursor === this.raw.length) return;
     const start = this.cursor;
+    let sentence: SpokenSentence | undefined, clause: SpokenSentence | undefined;
     let fence = '', inline = false, brackets = 0, emphasis = '';
     for (let i = start; i < this.raw.length; i++) {
       const triple = this.raw.slice(i, i + 3);
@@ -70,14 +69,17 @@ export class SentenceStream {
       if (!url && i - start >= this.maxSentence && /[\p{Script=Han}\u3040-\u30ff]/u.test(char)) boundary = true;
       // Markup and URLs are held above. A confirmed terminator needs no later
       // model token; periods alone still require their whitespace lookahead.
-      if (boundary) return this.take(start, i + 1);
+      if (boundary) { sentence = this.span(start, i + 1); break; }
+      if (select && !clause && !url && /[，,；;]/u.test(char)
+          && !(char === ',' && digit(this.raw[i - 1]) && (!this.raw[i + 1] || digit(this.raw[i + 1])))) {
+        const candidate = this.span(start, i + 1);
+        if (candidate.text) clause = candidate;
+      }
     }
-    if (this.ended) return this.take(start, this.raw.length);
-    return;
-  }
-  private take(start: number, end: number): SpokenSentence {
-    this.cursor = end;
-    return this.span(start, end);
+    if (!sentence && this.ended) sentence = this.span(start, this.raw.length);
+    const next = select ? select({ sentence, clause }) : sentence;
+    if (next) this.cursor = next.rawEnd;
+    return next;
   }
   private span(start: number, end: number): SpokenSentence {
     const rawText = this.raw.slice(start, end);

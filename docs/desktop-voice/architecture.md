@@ -7,7 +7,7 @@
 ## 进程与职责
 
 - **Electron Renderer** 提供对话、工作与角色三页。Work 工作台按任务显示执行时间线，按 Attempt 查看模型指标、输入请求和交付。麦克风、输出参考、AEC、Silero VAD、插话确认及 PCM 播放在本地 AudioWorklet 和音频图中运行。Preload 暴露有限 IPC，主进程检查调用窗口与来源。[桌面入口](../../apps/desktop/src/main.ts) · [工作台](../../apps/desktop/renderer/src/workbench/Workbench.tsx) · [Preload](../../apps/desktop/src/preload.cts) · [采集](../../apps/desktop/renderer/public/worklets/voice-capture.js) · [播放器](../../apps/desktop/renderer/src/player.ts)
-- **Electron Main** 装配会话和服务。TurnCoordinator 绑定采集会话与归档会话，管理规划生命周期、引用选择和取消。CharacterStore 保存角色版本，ConversationArchive 固定每个会话的角色快照和关系。SpeechOutput 从完整句构成播报片段，跳过纯符号片段，控制合成前视量并把带原文跨度的播放回执交给对话控制器。[会话协调](../../apps/desktop/src/turn-coordinator.ts) · [角色与会话存储](../../apps/desktop/src/character-store.ts) · [语音输出](../../apps/desktop/src/speech-output.ts)
+- **Electron Main** 装配会话和服务。TurnCoordinator 绑定采集会话与归档会话，管理规划生命周期、引用选择和取消。CharacterStore 保存角色版本，ConversationArchive 固定每个会话的角色快照和关系。SpeechOutput 直接提交首个可读句，后续按已入队的播放余量与合成耗时选择句子边界，跳过纯符号片段，并把带原文跨度的播放回执交给对话控制器。[会话协调](../../apps/desktop/src/turn-coordinator.ts) · [角色与会话存储](../../apps/desktop/src/character-store.ts) · [语音输出](../../apps/desktop/src/speech-output.ts)
 - **语音核心与适配器** 将分段、端点、投机确认、文本投影、交付状态与模型调用分开。dsh 和 OpenAI-compatible 实现同一 Chat 端口。桌面拥有 SenseVoice/规划用的 dsh 进程、Qwen 子进程、知识检索子进程和 TTS 子进程。Qwen 与知识检索使用私有标准流，TTS 使用本机鉴权 WebSocket。[对话核心](../../packages/voice-core/src/dialogue.ts) · [Chat 端口](../../packages/voice-core/src/chat-contract.ts) · [识别路由](../../apps/desktop/src/speech-runtime.ts) · [TTS 适配器](../../packages/tts-adapter/src/index.ts)
 - **独立 Node Host** 提供本机鉴权 API、状态订阅和命令行入口。Host 持有 Work 账本、dsh 执行运行时、工作区、产物和 AUIP 会话。关闭桌面时 Work 可继续运行，桌面和 CLI 重新连接读取同一状态目录。[Host 入口](../../apps/host/src/server.ts) · [本机 API](../../apps/host/src/api.ts) · [Work 账本](../../packages/work-core/src/host.ts) · [AUIP](../../packages/app-core/src/app-host.ts)
 
@@ -16,7 +16,7 @@
 1. 语音帧先按当前采集会话和输出代次进入分段。待机使用 SenseVoice 识别唤醒词，连续会话默认使用 Qwen3-ASR。短静音允许候选转写及候选回复，续说和插话让旧候选失效。
 2. 正式输入使用当前归档会话。规划器读取 Host 本轮冻结的候选和能力。普通对话走 Chat。涉及任务或应用时，Host 校验候选、消歧并返回实际回执。切换角色或会话会撤销尚未受理的规划，已受理 Work 仍按操作 ID 可查。[对话引用](../../apps/host/src/conversation-control.ts)
 3. Chat 使用角色快照、关系和已交付历史。启用知识检索时，按角色 ID 查询对应索引，将命中的片段和定位送入本轮。候选回复只在正式文本、角色和 Host 上下文匹配后放行。语音回复由 TTS v2 合成并回传 PCM，文字回复由界面确认显示。[对话投影](../../packages/voice-core/src/chat-context.ts) · [投机回复](../../packages/voice-core/src/speculative-chat.ts) · [知识检索](../../apps/desktop/src/character-knowledge.ts)
-4. 输出以会话、代次、Attempt、句子和音色修订校验身份。打断时清掉旧 PCM，等待已取消的合成退出。语音历史只收录完整播放的句子，文字历史收录界面确认过的正文。[交付账本](../../packages/voice-core/src/delivery.ts)
+4. 输出以会话、代次、Attempt、片段和音色修订校验身份。合成器回传原始 PCM，SpeechOutput 发出语音主体并标记短尾块。播放器到达尾块时以可用的下一段起音决定交叉淡化或自然收尾。后段合成失败只撤回失败片段，前段播完后回退文字。打断时清掉旧 PCM，等待已取消的合成退出。语音历史依据实际播放回执，文字历史收录界面确认过的正文。[PCM Worklet](../../apps/desktop/renderer/public/worklets/pcm-player.js) · [交付账本](../../packages/voice-core/src/delivery.ts)
 
 ## Work 的持久化与验收
 

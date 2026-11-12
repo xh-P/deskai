@@ -61,4 +61,25 @@ assert.ok(messages.some(m => m.errorCode === 'PLAYBACK_SEQUENCE' && m.segmentId 
 identified.command({ type: 'clear', generationId: 4 })
 identified.command(input32)
 assert.equal(identified.queue.length, 0, 'old identity is rejected after clearing')
+
+const tail = { ...identity, type: 'enqueue', sampleRate: 48000, samples: new Float32Array(960).fill(.02), segmentFinal: true }
+const next = { ...tail, segmentId: 'next', samples: new Float32Array(3840).fill(.001) }
+next.samples.fill(.3, 1920)
+for (const mode of ['ready', 'discarded', 'discarded-during-overlap']) {
+  const ready = mode === 'ready'
+  const boundary = new Player()
+  boundary.command({ ...tail, samples: tail.samples.slice() })
+  boundary.command({ ...next, samples: next.samples.slice(), segmentFinal: ready })
+  const rendered = new Float32Array(1921)
+  const beforeDiscard = mode === 'discarded-during-overlap' ? 480 : 0
+  if (beforeDiscard) boundary.process([], [[rendered.subarray(0, beforeDiscard)]])
+  if (!ready) {
+    boundary.command({ ...next, type: 'discard' })
+    boundary.command({ ...next, chunkSeq: 1 })
+  }
+  boundary.process([], [[rendered.subarray(beforeDiscard)]])
+  assert.ok(Math.abs(rendered[0] - .02) < 1e-6, 'the tail begins at its original level')
+  assert.ok(Math.abs(rendered[959] - (ready ? .001 : 0)) < 1e-6, 'tail blends into quiet pre-roll or decays to zero')
+  assert.ok(Math.abs(rendered[1920] - (ready ? .3 : 0)) < 1e-6, 'the next onset is intact, or its discarded audio stays silent')
+}
 console.log('renderer-player: pass')

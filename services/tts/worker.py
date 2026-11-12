@@ -108,12 +108,6 @@ class Service:
         self.overlap_length = streaming["overlapLength"]
         if type(self.streaming) is not bool or any(type(n) is not int or n < 1 for n in (self.min_chunk_length, self.overlap_length)):
             raise ValueError("Invalid streaming settings")
-        ending = config.get("phraseEnding", {})
-        self.fade_ms = ending.get("fadeMs", 16)
-        self.pause_ms = ending.get("pauseMs", 85)
-        if (type(self.fade_ms) is not int or not 1 <= self.fade_ms <= 50
-                or type(self.pause_ms) is not int or not 0 <= self.pause_ms <= 250):
-            raise ValueError("Invalid phrase ending settings")
         self.reference = None
         self.revision = 0
         self.state = "loading"
@@ -246,8 +240,7 @@ class Service:
             return dict(chunks=0, samples=0, canceled=True)
         iterator = self.pipeline.run(request)
         chunks, samples, first_pcm, has_signal = 0, 0, None, False
-        rate, received = 0, 0
-        tail = np.empty(0, dtype=np.int16)
+        rate = 0
 
         def send_pcm(audio):
             nonlocal chunks, samples, first_pcm
@@ -277,24 +270,14 @@ class Service:
                     raise RuntimeError("TTS_INVALID_PCM")
                 rate = sample_rate
                 has_signal = has_signal or bool(np.any(audio))
-                received += len(audio)
-                if received > rate * MAX_AUDIO_SECONDS:
+                if samples + len(audio) > rate * MAX_AUDIO_SECONDS:
                     raise RuntimeError("TTS_INVALID_PCM")
-                joined = np.concatenate((tail, audio)) if tail.size else audio
-                fade_samples = rate * self.fade_ms // 1000
-                if joined.size > fade_samples:
-                    send_pcm(joined[:-fade_samples])
-                tail = joined[-fade_samples:]
+                send_pcm(audio)
         finally:
             iterator.close()
         torch.cuda.synchronize()
-        if not job.canceled.is_set():
-            if not has_signal:
-                raise RuntimeError("TTS_NO_AUDIO")
-            gain = np.linspace(1, 0, tail.size + 1, dtype=np.float32)[1:]
-            released = np.rint(tail * gain).astype(np.int16)
-            pause = min(rate * self.pause_ms // 1000, rate * MAX_AUDIO_SECONDS - received)
-            send_pcm(np.pad(released, (0, pause)))
+        if not job.canceled.is_set() and not has_signal:
+            raise RuntimeError("TTS_NO_AUDIO")
         return dict(chunks=chunks, samples=samples, canceled=job.canceled.is_set(),
                     firstPCMSeconds=round(first_pcm - started, 3) if first_pcm else None,
                     elapsedSeconds=round(time.perf_counter() - started, 3),

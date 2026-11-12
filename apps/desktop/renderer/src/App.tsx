@@ -495,6 +495,7 @@ export default function App() {
         case 'ready-text': if (smoke.current && event.text.trim()) addEntry('system', `待提交：${event.text}`); break
         case 'error': setError(event.code === 'MISSING_CREDENTIAL' ? '模型凭据未配置：语音识别或对话服务尚未接通。请在 dsh 配置后重试。' : event.message); break
         case 'output-command': outputRef.current?.player.command(event); break
+        case 'audio-discard': outputRef.current?.player.discard(event); break
         case 'audio-chunk': outputRef.current?.player.enqueue(event); break
         case 'capture-command': void (event.command === 'pause' ? pauseCapture() : start()); break
         case 'tts-status':
