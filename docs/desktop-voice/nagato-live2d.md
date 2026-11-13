@@ -47,6 +47,7 @@ Windows 桌面双击「长门有希 常服编辑」可在中文版 PSD2Live 打�
 
 ## 验证
 
+- 本轮常服的 Windows Electron 冒烟覆盖 5.60 秒待机定位、重心与两腿的独立姿态、腿部整体幅度、手腕姿态测试及单腿幅度的保存。浏览器也检查了待机时间、腿脚取景和眼镜复位。隔离桌面报告保存在本机 `.cache/nagato-coordinated-idle/smoke/report.json`。
 - 在 Windows Electron 中用同一 Cubism Core 5.2 和 Pixi 渲染器检查两套模型的静止、眨眼、眼球移动、嘴型和组合转头姿势。单独扫过斗篷参数，确认变形集中在下摆。
 - Luna Max 的隔离 Electron 冒烟通过，覆盖角色页预览、应用与切换、两套透明桌宠的 WebGL2 和物理、播报预览口型以及切回静态。9 项桌宠回归通过，两套资源引用和角色绑定重开也已核对。本机冒烟报告为 `.cache/nagato-smoke/report.json`。
 - 物理设备验收还需在实际麦克风和扬声器上检查连续插话后的收口和续播，并在不同 DPI 的屏幕间验证拖动和边缘点击穿透。
