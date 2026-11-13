@@ -7,24 +7,28 @@ import type { PetGesture, PetState } from '../../../../../packages/desktop-pet/s
 import type { GestureName } from '../../../../../packages/voice-core/src/gesture.ts'
 import { GestureMotion } from './gesture-motion'
 import { IdleMotion } from './idle-motion'
+import { LayerAdjustments } from './layer-adjustments'
+import { LayerOutline, type LayerPreview } from './layer-outline'
 
 extensions.add(Live2DPlugin)
 configureCubismSDK({ memorySizeMB: 64 })
 
-export type ModelInfo = { id: string; parameters: string[]; physics: boolean; aspect: number; gestures: readonly GestureName[] }
+export type ModelInfo = { id: string; parameters: string[]; drawables: string[]; physics: boolean; aspect: number; gestures: readonly GestureName[] }
 export type StageState = {
   state: PetState
   reduced: boolean
   expression?: string
   idlePlaying?: boolean
   framing?: Live2DProfile['style']['frame']
+  layerPreview?: LayerPreview
   gesture?: PetGesture
   readMouth: () => { open: number; shape: number }
 }
 type Model = Live2DModel<CubismInternalModel>
 type Rect = { x: number; y: number; width: number; height: number }
 type Layer = { profile: Live2DProfile; model: Model; art: Rect; headCenter?: number; parameters: string[];
-  mouth: (open: number, shape: number) => void; gestures: GestureMotion; idle?: IdleMotion }
+  mouth: (open: number, shape: number) => void; gestures: GestureMotion; idle?: IdleMotion;
+  drawables: string[]; bounds?: Rect[]; adjustments?: LayerAdjustments }
 const clamp = (x: number, low: number, high: number) => Math.max(low, Math.min(high, x))
 
 function artBounds(model: Model): Rect {
@@ -95,6 +99,7 @@ export class CubismStage {
   private lastState?: PetState
   private expression?: string
   private pointer?: { x: number; y: number }
+  private outline?: LayerOutline
   private readonly pixel = new Uint8Array(4)
   private readonly observer: ResizeObserver
 
@@ -143,8 +148,8 @@ export class CubismStage {
         if (prior.mouth !== style.mouth) this.layer.mouth = mouthDriver(this.layer)
         if (prior.cues !== style.cues) this.lastState = undefined
         if (prior.frame !== style.frame || prior.zoom !== style.zoom || prior.x !== style.x || prior.y !== style.y) this.layout()
-        if (prior.frame !== style.frame) this.reportInfo()
       }
+      if (previous?.id !== profile.id || prior.frame !== style.frame) this.reportInfo()
       return
     }
     if (previous?.id === profile.id) return
@@ -189,10 +194,29 @@ export class CubismStage {
     const head = headArea && candidate.internalModel.getDrawableBounds(headArea.index)
     const headCenter = head ? head.x + head.width / 2 : undefined
     const gestures = new GestureMotion(core, parameters)
-    const layer = { profile: this.wanted, model: candidate, art, headCenter, parameters, gestures, idle }
+    const inner = candidate.internalModel
+    const drawables = inner.getDrawableIDs()
+    const adjustments = profile.layers && new LayerAdjustments(inner, profile, drawables)
+    const bounds = adjustments && drawables.map((_, index) => inner.getDrawableBounds(index))
+    const layer = { profile: this.wanted, model: candidate, art, headCenter, parameters, gestures, idle,
+      drawables, bounds, adjustments }
     if (old) this.app.stage.removeChild(old.model)
     this.layer = { ...layer, mouth: mouthDriver(layer) }
-    const inner = candidate.internalModel
+    this.outline?.hide()
+    if (adjustments) {
+      const draw = inner.draw.bind(inner)
+      inner.draw = gl => {
+        const preview = this.read().layerPreview
+        const index = preview ? drawables.indexOf(preview.id) : -1
+        adjustments.draw(preview?.isolate && index >= 0 ? index : undefined, () => {
+          draw(gl)
+          if (preview?.outline && index >= 0 && (preview.isolate || core.getDrawableOpacity(index) > 0.01)) {
+            this.outline ??= new LayerOutline(this.host)
+            this.outline.show(candidate, index)
+          } else this.outline?.hide()
+        })
+      }
+    }
     const glasses = profile.glassesParameter ? parameters.indexOf(profile.glassesParameter) : -1
     // Save Cubism's ordinary motion state before overlaying the authored loop.
     inner.on('afterMotionUpdate', () => gestures.apply())
@@ -204,6 +228,7 @@ export class CubismStage {
     inner.on('beforeModelUpdate', () => {
       if (this.layer?.model !== candidate) return
       idle?.scalePhysics()
+      adjustments?.scaleSway()
       if (glasses >= 0 && this.layer.profile.style.glasses) core.setParameterValueByIndex(glasses, 1)
       this.layer.mouth(this.open, this.shape)
     })
@@ -273,6 +298,7 @@ export class CubismStage {
     const action = layer.gestures.prepare(gesture, dt, reduced)
     const weight = layer.gestures.weight
     layer.idle?.prepare(dt, !reduced && (idlePlaying ?? true), profile.style.idle, reduced)
+    layer.adjustments?.prepare(profile.style)
     const fps = reduced ? 24 : !action && !weight && (state === 'off' || state === 'silent') ? 30 : 60
     if (this.app.ticker.maxFPS !== fps) this.app.ticker.maxFPS = fps
     this.host.dataset.gesture = action ?? ''
@@ -298,7 +324,8 @@ export class CubismStage {
 
   private reportInfo(): void {
     const layer = this.layer
-    if (layer) this.report({ id: layer.profile.id, parameters: layer.parameters, physics: !!layer.model.internalModel.physics, gestures: layer.gestures.available,
+    if (layer) this.report({ id: layer.profile.id, parameters: layer.parameters, drawables: layer.drawables,
+      physics: !!layer.model.internalModel.physics, gestures: layer.gestures.available,
       aspect: clamp(layer.art.width / this.frameHeight(layer), 0.35, 2.2) })
   }
 
@@ -311,7 +338,18 @@ export class CubismStage {
     const layer = this.layer
     if (!layer) return
     const { model, art, profile: { style } } = layer
-    const framing = this.read().framing ?? style.frame
+    const { layerPreview, framing: previewFrame } = this.read()
+    const framing = previewFrame ?? style.frame
+    const fit = Math.min(w * 0.95 / art.width, h * 0.97 / art.height)
+    const focus = layerPreview?.focus ? layer.bounds?.[layer.drawables.indexOf(layerPreview.id)] : undefined
+    if (focus && focus.width > 0 && focus.height > 0) {
+      const transform = model.internalModel.localTransform
+      const scale = Math.min(w * 0.72 / (focus.width * transform.a), h * 0.72 / (focus.height * transform.d), fit * 14)
+      model.scale.set(scale)
+      model.position.set(w / 2 - ((focus.x + focus.width / 2) * transform.a + transform.tx) * scale,
+        h / 2 - ((focus.y + focus.height / 2) * transform.d + transform.ty) * scale)
+      return
+    }
     const frame = this.frameHeight(layer, framing)
     const scale = Math.min(w * 0.95 / art.width, h * 0.97 / frame) * style.zoom
     const center = framing === 'portrait' && Number.isFinite(layer.headCenter) ? layer.headCenter! : art.x + art.width / 2
@@ -324,6 +362,7 @@ export class CubismStage {
     event.preventDefault()
     this.lost = true
     this.app.stop()
+    this.outline?.close()
     this.error('正在恢复 Live2D 图形上下文。')
   }
   private contextRestored = () => this.recover()

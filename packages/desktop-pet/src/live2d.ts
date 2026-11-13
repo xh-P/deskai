@@ -15,6 +15,16 @@ export type Live2DIdleRig = {
   physics: Partial<Record<Live2DIdlePart, string[]>>;
 };
 
+export type Live2DLayer = { id: string; name: string; group: string; sway?: string[] };
+export type Live2DLayerShape = { width: number; height: number; bend: number };
+export type Live2DLayerSway = { amplitude: number; response: number };
+export const defaultLive2DLayerShape: Live2DLayerShape = { width: 1, height: 1, bend: 0 };
+export const defaultLive2DLayerSway: Live2DLayerSway = { amplitude: 1, response: 1 };
+export const live2DLayerLimits = {
+  width: [0.9, 1.1], height: [0.9, 1.1], bend: [-0.12, 0.12],
+  amplitude: live2DIdleLimits.amplitude, response: [0.75, 1.25],
+} as const;
+
 export type Live2DStyle = {
   frame: 'portrait' | 'full';
   zoom: number;
@@ -26,6 +36,8 @@ export type Live2DStyle = {
   cues: Partial<Record<Live2DCue, { expression?: string; motion?: Live2DMotion }>>;
   idle?: Live2DIdleTuning;
   glasses?: boolean;
+  layerShapes?: Record<string, Live2DLayerShape>;
+  layerSway?: Record<string, Live2DLayerSway>;
 };
 export type Live2DProfile = {
   id: string;
@@ -37,6 +49,7 @@ export type Live2DProfile = {
   motions: Live2DMotion[];
   lipSync: string[];
   physics: boolean;
+  layers?: Live2DLayer[];
   idle?: Live2DIdleRig;
   glassesParameter?: string;
   style: Live2DStyle;

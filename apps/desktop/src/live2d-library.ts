@@ -1,14 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { defaultLive2DIdleTuning, defaultLive2DStyle, live2DIdleLimits, live2DIdleParts, type Live2DApply,
-  type Live2DCatalog, type Live2DIdleRig, type Live2DMotion, type Live2DProfile, type Live2DStyle } from '../../../packages/desktop-pet/src/live2d.ts';
+import { defaultLive2DIdleTuning, defaultLive2DLayerShape, defaultLive2DLayerSway, defaultLive2DStyle,
+  live2DIdleLimits, live2DIdleParts, live2DLayerLimits, type Live2DApply, type Live2DCatalog, type Live2DIdleRig,
+  type Live2DLayer, type Live2DMotion, type Live2DProfile, type Live2DStyle } from '../../../packages/desktop-pet/src/live2d.ts';
 
 type Definition = { id: string; name: string; file: string; style?: Partial<Live2DStyle>;
-  idle?: Live2DIdleRig; glassesParameter?: string };
+  idle?: Live2DIdleRig; glassesParameter?: string; layerFile?: string };
 type Config = { core: { sha256: string }; bundled: Definition[]; samples: { models: Definition[] } };
 type Saved = { models: Definition[]; bindings: Live2DCatalog['bindings']; styles: Record<string, Live2DStyle> };
-type Bundle = { file: string; root: string; profile: Live2DProfile; references: Map<string, string>; entry: string; manifest: string };
+type Bundle = { file: string; root: string; profile: Live2DProfile; references: Map<string, string>;
+  entry: string; manifest: string; layerFile?: string };
 const coreName = 'live2dcubismcore.min.js';
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value)
   ? value as Record<string, unknown> : {};
@@ -22,6 +24,26 @@ function reference(value: unknown, pattern: RegExp): string {
   const relative = value.replace(/\\/g, '/');
   if (relative.split('/').some(segment => !segment || segment === '.' || segment === '..')) throw new Error('模型资源必须位于模型目录内。');
   return relative;
+}
+
+function layerTuning<K extends keyof typeof live2DLayerLimits>(input: unknown, ids: string[], defaults: Record<K, number>) {
+  const overrides = object(input);
+  const entries = [...new Set(ids)].flatMap(id => {
+    if (!Object.hasOwn(overrides, id)) return [];
+    const patch = object(overrides[id]);
+    const value = { ...defaults };
+    let changed = false;
+    for (const key of Object.keys(defaults) as K[]) {
+      const n = patch[key];
+      if (n === undefined) continue;
+      const [min, max] = live2DLayerLimits[key];
+      if (typeof n !== 'number' || !Number.isFinite(n) || n < min || n > max) throw new Error(`无效的图层设置 ${id} / ${key}`);
+      value[key] = n;
+      changed ||= n !== defaults[key];
+    }
+    return changed ? [[id, value] as const] : [];
+  });
+  return entries.length ? Object.fromEntries(entries) : undefined;
 }
 
 function tuning(profile: Live2DProfile, input: unknown): Live2DStyle {
@@ -49,6 +71,10 @@ function tuning(profile: Live2DProfile, input: unknown): Live2DStyle {
     }
   }
   if (profile.glassesParameter) next.glasses = patch.glasses === true;
+  if (profile.layers) {
+    next.layerShapes = layerTuning(patch.layerShapes, profile.layers.map(layer => layer.id), defaultLive2DLayerShape);
+    next.layerSway = layerTuning(patch.layerSway, profile.layers.flatMap(layer => layer.sway ?? []), defaultLive2DLayerSway);
+  }
   const mouth = object(patch.mouth);
   next.mouth = {};
   for (const key of ['open', 'form', 'wide', 'round'] as const) {
@@ -119,11 +145,18 @@ async function inspect(definition: Definition, source: Live2DProfile['source']):
   const url = `deskai://app/live2d/${definition.id}/${encodeURIComponent(entry)}`;
   const idle = definition.idle;
   const idleMotion = idle && motions.find(motion => motion.group === idle.motion.group && motion.index === idle.motion.index);
+  let layers: Live2DLayer[] | undefined;
+  if (definition.layerFile) {
+    const name = reference(definition.layerFile, /\.layers\.json$/i);
+    const target = await realpath(path.join(root, name));
+    if (!inside(root, target)) throw new Error('图层清单必须位于模型目录内。');
+    layers = (JSON.parse(await readFile(target, 'utf8')) as { layers: Live2DLayer[] }).layers;
+  }
   const profile: Live2DProfile = { id: definition.id, name: definition.name, url, source, textures: refs.Textures as string[], lipSync, expressions, motions,
-    physics: !!refs.Physics, idle: idle && idleMotion ? { ...idle, motion: idleMotion } : undefined,
+    physics: !!refs.Physics, layers, idle: idle && idleMotion ? { ...idle, motion: idleMotion } : undefined,
     glassesParameter: definition.glassesParameter, style: defaultLive2DStyle };
   profile.style = tuning(profile, definition.style);
-  return { file, root, profile, references, entry, manifest: JSON.stringify(manifest) };
+  return { file, root, profile, references, entry, manifest: JSON.stringify(manifest), layerFile: definition.layerFile };
 }
 
 /** Owns only model references and appearance settings. Imported assets stay in their original folders. */
@@ -162,8 +195,9 @@ export class Live2DLibrary {
         try {
           if (!/^[\w-]+$/u.test(model.id) || library.bundles.has(model.id)) throw new Error('模型标识无效。');
           const shared = source === 'local' ? [...library.bundles.values()].find(bundle =>
-            bundle.profile.idle && !path.relative(bundle.file, model.file))?.profile : undefined;
-          const definition = shared ? { ...model, idle: shared.idle, glassesParameter: shared.glassesParameter, style: shared.style } : model;
+            bundle.profile.idle && !path.relative(bundle.file, model.file)) : undefined;
+          const definition = shared ? { ...model, layerFile: shared.layerFile, idle: shared.profile.idle,
+            glassesParameter: shared.profile.glassesParameter, style: shared.profile.style } : model;
           const bundle = await inspect(definition, source);
           const savedStyle = library.saved.styles?.[model.id];
           if (savedStyle) bundle.profile.style = tuning(bundle.profile, savedStyle);

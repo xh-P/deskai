@@ -5,6 +5,7 @@ import type { PetPreferencePatch, PetSnapshot, PetState } from '../../../../../p
 import { petMotionEnabled } from '../../../../../packages/desktop-pet/src/motion.ts'
 import Live2DView, { type Live2DControl } from './Live2DView'
 import type { ModelInfo } from './cubism-stage'
+import { LayerInspector, LayerList } from './LayerPanel'
 import './appearance.css'
 
 const poses: { key: PetState; label: string }[] = [
@@ -32,6 +33,10 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
   const [draft, setDraft] = useState<Live2DStyle>(defaultLive2DStyle)
   const [idlePlaying, setIdlePlaying] = useState(true)
   const [framing, setFraming] = useState<Live2DStyle['frame']>()
+  const [layerId, setLayerId] = useState<string>()
+  const [isolate, setIsolate] = useState(false)
+  const [focus, setFocus] = useState(false)
+  const [outline, setOutline] = useState(true)
   const [pose, setPose] = useState<PetState>('off')
   const [expression, setExpression] = useState('')
   const [motion, setMotion] = useState(-1)
@@ -47,6 +52,10 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
     setDraft(source.models.find(model => model.id === id)?.style ?? defaultLive2DStyle)
     setIdlePlaying(true)
     setFraming(undefined)
+    setLayerId(undefined)
+    setIsolate(false)
+    setFocus(false)
+    setOutline(true)
     setPose('off')
     setInfo(undefined)
     setExpression('')
@@ -70,6 +79,14 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
   const entry = catalog?.models.find(model => model.id === selected)
   const profile = useMemo(() => entry ? { ...entry, style: draft } : undefined, [entry, draft])
   const loaded = !!profile && info?.id === profile.id && !loadError
+  const layers = useMemo(() => {
+    if (!entry?.layers || info?.id !== entry.id) return undefined
+    const present = new Set(info.drawables)
+    return entry.layers.filter(layer => present.has(layer.id))
+  }, [entry, info])
+  const selectedLayer = layers?.find(layer => layer.id === layerId)
+  const layerPreview = useMemo(() => loaded && selectedLayer ? { id: selectedLayer.id, isolate, focus, outline } : undefined,
+    [loaded, selectedLayer, isolate, focus, outline])
   const reduced = !!snapshot && !petMotionEnabled(snapshot.motionMode, matchMedia('(prefers-reduced-motion: reduce)').matches)
   const idle = profile?.idle ? draft.idle ?? defaultLive2DIdleTuning : undefined
   const motions = profile?.motions.filter(item =>
@@ -99,12 +116,15 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
   const applied = catalog?.bindings[personaId] === (selected || null)
   const dirty = !!entry && entry.style !== draft
 
-  return <section className="appearance" aria-label="模型与动作" hidden={!active}>
+  return <section className={`appearance${layers ? ' appearance-with-layers' : ''}`} aria-label="模型与动作" hidden={!active}>
+    {layers && <LayerList key={selected} layers={layers} selected={selectedLayer?.id} select={setLayerId}
+      focus={id => { setLayerId(id); setFocus(true) }} />}
     <div className="appearance-preview">
       <div className="appearance-toolbar">
         <div className="appearance-switch" role="group" aria-label="预览取景">
-          <button type="button" disabled={!loaded} aria-pressed={currentFrame === 'full'} onClick={() => setFraming('full')}>全身</button>
-          <button type="button" disabled={!loaded} aria-pressed={currentFrame === 'portrait'} onClick={() => setFraming('portrait')}>半身</button>
+          <button type="button" disabled={!loaded} aria-pressed={!focus && currentFrame === 'full'} onClick={() => { setFocus(false); setFraming('full') }}>全身</button>
+          <button type="button" disabled={!loaded} aria-pressed={!focus && currentFrame === 'portrait'} onClick={() => { setFocus(false); setFraming('portrait') }}>半身</button>
+          {layers && <button type="button" disabled={!selectedLayer} aria-pressed={focus} onClick={() => setFocus(value => !value)}>聚焦图层</button>}
         </div>
         {idle && <button type="button" className="secondary appearance-play" data-playing={idlePlaying} disabled={!loaded} onClick={() => {
           setIdlePlaying(value => !value)
@@ -117,10 +137,15 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
         stage.current?.gaze(2 * (event.clientX - rect.left) / rect.width - 1, 1 - 2 * (event.clientY - rect.top) / rect.height)
       }} onPointerLeave={() => stage.current?.restGaze()}>
         {profile && hasCore && <Live2DView ref={stage} profile={profile} state={pose} expression={expression || undefined}
-          enabled={active} reduced={idle ? false : reduced} idlePlaying={idlePlaying} framing={framing}
+          enabled={active} reduced={idle ? false : reduced} idlePlaying={idlePlaying} framing={framing} layerPreview={layerPreview}
           readMouth={previewMouth} onReady={value => { setInfo(value); setLoadError('') }} onError={setLoadError} />}
         {(!profile || !hasCore || loadError) && <img src={`./pet/${snapshot?.variant ?? 'uniform-chibi'}/idle.png`} alt="静态外观预览" />}
         {frameStatus && <span className="appearance-status" role="status">{frameStatus}</span>}
+        {selectedLayer && <span className="appearance-layer-caption">{selectedLayer.name}{isolate ? ' · 单层预览' : ''}</span>}
+        {selectedLayer && <div className="appearance-layer-tools" role="group" aria-label="图层预览">
+          <button type="button" className="secondary" aria-pressed={outline} onClick={() => setOutline(value => !value)}>描边</button>
+          <button type="button" className="secondary" aria-pressed={isolate} onClick={() => setIsolate(value => !value)}>只看此层</button>
+        </div>}
       </div>
       <div className="appearance-preview-footer">
         <div className="appearance-switch" role="group" aria-label="状态预览">
@@ -149,8 +174,13 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
       </div>
       {catalog?.issues.map(issue => <p className="hint" key={issue}>{issue}</p>)}
       {error && <p className="error" role="alert">{error}</p>}
-      {idle && <section className="appearance-idle" aria-labelledby="idle-heading">
-        <header><h2 id="idle-heading">待机微调</h2><button type="button" className="appearance-reset" disabled={!loaded || busy}
+      {layers && profile && <LayerInspector layer={selectedLayer} profile={profile} disabled={!loaded || busy} update={patch => {
+        update(patch)
+        if (patch.layerSway) setIdlePlaying(true)
+      }} />}
+      {idle && <details className="appearance-idle">
+        <summary>整体待机</summary>
+        <header><button type="button" className="appearance-reset" disabled={!loaded || busy}
           onClick={() => { update({ idle: { ...defaultLive2DIdleTuning } }); setIdlePlaying(true) }}>恢复默认</button></header>
         <div className="appearance-tuning">
           {idleSliders.map(([key, label]) => {
@@ -167,7 +197,7 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
             </label>
           })}
         </div>
-      </section>}
+      </details>}
       <div className="appearance-save">
         <button className="appearance-apply" type="button" disabled={busy || selected === undefined || (!!profile && !loaded)}
           onClick={() => void run(async () => {

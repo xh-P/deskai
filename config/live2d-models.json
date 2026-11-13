@@ -9,6 +9,7 @@
       "id": "nagato-uniform",
       "name": "长门有希 · 常服",
       "file": "apps/desktop/models/live2d/nagato-uniform-review/nagato-uniform-review.model3.json",
+      "layerFile": "nagato-uniform-review.layers.json",
       "glassesParameter": "ParamGlasses",
       "idle": {
         "motion": { "group": "轻风待机", "index": 0 },
