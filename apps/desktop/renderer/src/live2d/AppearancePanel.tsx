@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from 'react'
-import { defaultLive2DIdleTuning, defaultLive2DStyle, live2DIdleLimits, type Live2DCatalog, type Live2DCue,
-  type Live2DIdleTuning, type Live2DLayerShape, type Live2DMotion, type Live2DStyle } from '../../../../../packages/desktop-pet/src/live2d.ts'
+import { defaultLive2DIdleTuning, defaultLive2DStyle, live2DIdleGroups, live2DIdleLimits, live2DSetting, live2DTunableTracks, type Live2DCatalog,
+  type Live2DCue, type Live2DLayerShape, type Live2DMotion, type Live2DStyle } from '../../../../../packages/desktop-pet/src/live2d.ts'
 import type { PetPreferencePatch, PetSnapshot, PetState } from '../../../../../packages/desktop-pet/src/types.ts'
 import { petMotionEnabled } from '../../../../../packages/desktop-pet/src/motion.ts'
 import Live2DView, { type Live2DControl } from './Live2DView'
@@ -19,11 +19,7 @@ const cueLabels: { key: Live2DCue; label: string }[] = [
 ]
 const mouthLabels = { open: '开合', form: '嘴角', wide: '展唇', round: '圆唇' } as const
 const motionLabel = ({ group, index }: Live2DMotion) => `${group} · ${index + 1}`
-const idleSliders = [
-  ['speed', '待机速度'], ['head', '头部转动'], ['body', '重心、身体与呼吸'], ['arms', '手臂转动'], ['legs', '腿部收放'],
-  ['hair', '头发摆动'], ['clothes', '衣摆与飘带'], ['eyes', '视线变化'],
-] as const satisfies readonly (readonly [keyof Live2DIdleTuning, string])[]
-const previewTabs = [['motion', '运动'], ['shape', '形变'], ['pose', '姿态测试']] as const
+const previewTabs = [['layer', '图层调节'], ['pose', '姿态测试']] as const
 const meshModes = [['outline', '描边'], ['mesh', '网格'], ['compare', '形变对照'], ['off', '隐藏']] as const
 const noPose: Readonly<Record<string, number>> = {}
 
@@ -37,7 +33,7 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
   const [selected, setSelected] = useState<string>()
   const [draft, setDraft] = useState<Live2DStyle>(defaultLive2DStyle)
   const [scrub, setScrub] = useState<number>()
-  const [mode, setMode] = useState<(typeof previewTabs)[number][0]>('motion')
+  const [mode, setMode] = useState<(typeof previewTabs)[number][0]>('layer')
   const [poseValues, setPoseValues] = useState(noPose)
   const [physicsPreview, setPhysicsPreview] = useState(true)
   const [framing, setFraming] = useState<Live2DStyle['frame']>()
@@ -45,6 +41,8 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
   const [isolate, setIsolate] = useState(false)
   const [focus, setFocus] = useState(false)
   const [display, setDisplay] = useState<LayerPreview['display']>('outline')
+  const [shapeEnabled, setShapeEnabled] = useState(false)
+  const [shapeHeld, setShapeHeld] = useState(false)
   const shapeDrag = useRef<{ pointer: number; id: string; at: (x: number, y: number) => Live2DLayerShape }>(null)
   const suppressPick = useRef(false)
   const timeline = useRef<HTMLInputElement>(null)
@@ -63,7 +61,7 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
     setSelected(id)
     setDraft(source.models.find(model => model.id === id)?.style ?? defaultLive2DStyle)
     setScrub(undefined)
-    setMode('motion')
+    setMode('layer')
     setPoseValues(noPose)
     setPhysicsPreview(true)
     setFraming(undefined)
@@ -71,6 +69,8 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
     setIsolate(false)
     setFocus(false)
     setDisplay('outline')
+    setShapeEnabled(false)
+    setShapeHeld(false)
     shapeDrag.current = null
     suppressPick.current = false
     setPose('off')
@@ -86,7 +86,7 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
       if (!active) return
       setCatalog(value)
       const binding = value.bindings[personaId]
-      const firstModel = value.models.find(model => model.idle)?.id ?? ''
+      const firstModel = value.models.find(model => model.source === 'bundled')?.id ?? value.models[0]?.id ?? ''
       const id = binding === undefined ? firstModel : binding ?? ''
       choose(value.models.some(model => model.id === id) ? id : '', value)
     }).catch(cause => { if (active) setError(String(cause)) })
@@ -96,35 +96,26 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
   const entry = catalog?.models.find(model => model.id === selected)
   const profile = useMemo(() => entry ? { ...entry, style: draft } : undefined, [entry, draft])
   const loaded = !!profile && info?.id === profile.id && !loadError
-  const layers = useMemo(() => {
-    if (!entry?.layers || info?.id !== entry.id) return undefined
-    const present = new Set(info.drawables)
-    return entry.layers.filter(layer => present.has(layer.id))
-  }, [entry, info])
+  const editor = loaded ? info.editor : undefined
+  const layers = editor?.layers.length ? editor.layers : undefined
   const selectedLayer = layers?.find(layer => layer.id === layerId)
   const layerPreview = useMemo(() => loaded && selectedLayer ? { id: selectedLayer.id, isolate, focus, display } : undefined,
     [loaded, selectedLayer, isolate, focus, display])
-  const groups = useMemo(() => {
-    const live = new Set(info?.parameters ?? [])
-    return (entry?.motionGroups ?? []).map(group => ({ ...group, tracks: group.tracks.filter(track => live.has(track.id)) }))
-      .filter(group => group.tracks.length)
-  }, [entry, info])
-  const layerGroups = useMemo(() => {
-    if (!selectedLayer) return groups
-    const ids = selectedLayer.motion ?? []
-    return groups.map(group => ({ ...group, tracks: group.tracks.filter(track => ids.includes(track.id)) }))
-      .filter(group => group.tracks.length)
-      .sort((a, b) => ids.indexOf(a.tracks[0].id) - ids.indexOf(b.tracks[0].id))
-  }, [groups, selectedLayer])
   const motionGroups = useMemo(() => {
-    const ids = new Set(Object.values(entry?.idle?.tracks ?? {}).flat())
-    return layerGroups.map(group => ({ ...group, tracks: group.tracks.filter(track => ids.has(track.id)) }))
-      .filter(group => group.tracks.length)
-  }, [entry, layerGroups])
+    if (!editor || !entry?.idle || (selectedLayer && !selectedLayer.motion?.length)) return []
+    const ids = new Set(live2DTunableTracks(entry))
+    const preferred = selectedLayer?.motion
+    const groups = editor.parameterGroups.flatMap(group => {
+      const tracks = group.tracks.filter(track => ids.has(track.id) && (!preferred || preferred.includes(track.id)))
+      return tracks.length ? [{ ...group, tracks }] : []
+    })
+    return preferred ? groups.sort((a, b) => preferred.indexOf(a.tracks[0].id) - preferred.indexOf(b.tracks[0].id)) : groups
+  }, [entry, editor, selectedLayer])
   const reduced = !!snapshot && !petMotionEnabled(snapshot.motionMode, matchMedia('(prefers-reduced-motion: reduce)').matches)
-  const idle = profile?.idle ? draft.idle ?? defaultLive2DIdleTuning : undefined
-  const poseTest = mode === 'pose' && groups.length > 0
-  const idlePlaying = !poseTest && scrub === undefined
+  const idleRig = profile?.idle
+  const idle = idleRig ? draft.idle ?? defaultLive2DIdleTuning : undefined
+  const poseTest = mode === 'pose' && !!editor?.parameterGroups.length
+  const idlePlaying = !poseTest && scrub === undefined && !shapeHeld
   const scrubTo = (time: number) => {
     if (timeline.current) timeline.current.value = String(time)
     setScrub(time)
@@ -144,7 +135,7 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
   }, [active, idlePlaying, info?.duration, loaded])
   const motions = profile?.motions.filter(item =>
     item.group !== profile.idle?.motion.group || item.index !== profile.idle?.motion.index) ?? []
-  const blink = motions.find(item => item.group.toLowerCase() === 'blink')
+  const blink = profile?.blink
   const update = (patch: Partial<Live2DStyle>) => {
     if (busy) return
     setSaved(false)
@@ -168,10 +159,11 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
   const currentFrame = framing ?? draft.frame
   const applied = catalog?.bindings[personaId] === (selected || null)
   const dirty = !!entry && entry.style !== draft
-  const motionPreview = idle ? { time: poseTest ? undefined : scrub, values: poseTest ? poseValues : noPose,
-    neutral: poseTest, physics: physicsPreview && !poseTest && mode !== 'shape' } : undefined
-  const editShape = mode === 'shape' && selectedLayer?.shape ? selectedLayer.id : undefined
+  const editShape = !poseTest && shapeEnabled && selectedLayer?.shape ? selectedLayer.id : undefined
+  const editorPreview = { layer: layerPreview, shape: editShape, dragging: shapeHeld, time: poseTest ? undefined : scrub,
+    pose: poseTest ? poseValues : undefined, physics: physicsPreview && !poseTest }
   const selectLayer = (id?: string) => {
+    if (id !== layerId) setShapeEnabled(false)
     setLayerId(id)
     if (!id) {
       setIsolate(false)
@@ -191,31 +183,32 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
   const toggleIdle = () => {
     if (idlePlaying) scrubTo(stage.current?.playhead() ?? 0)
     else {
-      setMode('motion')
+      setMode('layer')
       setScrub(undefined)
     }
     stage.current?.restGaze()
   }
   const changeMode = (next: typeof mode) => {
     setMode(next)
-    if (next === 'shape') {
-      scrubTo(stage.current?.playhead() ?? 0)
-      setDisplay('mesh')
-    } else if (next === 'motion') setScrub(undefined)
-    else if (next === 'pose') {
+    if (next === 'pose') {
+      setShapeEnabled(false)
       setPose('off')
       setExpression('')
+      setPoseValues(noPose)
+      stage.current?.restGaze()
     }
   }
   const startShapeDrag = (event: PointerEvent<HTMLDivElement>) => {
+    if (shapeDrag.current) return
     suppressPick.current = false
-    if (!editShape || busy || event.button !== 0 || !(event.target instanceof HTMLCanvasElement)) return
+    if (!editShape || busy || event.button !== 0 || event.altKey || !(event.target instanceof HTMLCanvasElement)) return
     const at = stage.current?.dragShape(event.clientX, event.clientY)
     if (!at) return
     event.preventDefault()
     suppressPick.current = true
     shapeDrag.current = { pointer: event.pointerId, id: editShape, at }
     event.currentTarget.setPointerCapture(event.pointerId)
+    setShapeHeld(true)
   }
   const moveStage = (event: PointerEvent<HTMLDivElement>) => {
     const drag = shapeDrag.current
@@ -223,12 +216,14 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
       update({ layerShapes: { ...draft.layerShapes, [drag.id]: drag.at(event.clientX, event.clientY) } })
       return
     }
-    if (idle) return
+    if (idle || poseTest) return
     const rect = event.currentTarget.getBoundingClientRect()
     stage.current?.gaze(2 * (event.clientX - rect.left) / rect.width - 1, 1 - 2 * (event.clientY - rect.top) / rect.height)
   }
   const endShapeDrag = (event: PointerEvent<HTMLDivElement>) => {
-    if (shapeDrag.current?.pointer === event.pointerId) shapeDrag.current = null
+    if (shapeDrag.current?.pointer !== event.pointerId) return
+    shapeDrag.current = null
+    setShapeHeld(false)
   }
 
   return <section className={`appearance${layers ? ' appearance-with-layers' : ''}`} aria-label="模型与动作" hidden={!active}>
@@ -241,16 +236,16 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
           <button type="button" disabled={!loaded} aria-pressed={!focus && currentFrame === 'portrait'} onClick={() => { setFocus(false); setFraming('portrait') }}>半身</button>
           {layers && <button type="button" disabled={!selectedLayer} aria-pressed={focus} onClick={() => setFocus(value => !value)}>聚焦图层</button>}
         </div>
-        {idle && <button type="button" className="secondary appearance-play" data-playing={idlePlaying} disabled={!loaded}
+        {idle && <button type="button" className="secondary appearance-play" data-playing={idlePlaying} disabled={!loaded || shapeHeld}
           onClick={toggleIdle}>{idlePlaying ? '暂停待机' : '播放待机'}</button>}
       </div>
-      <div className={`appearance-stage${layers ? ' appearance-stage-pick' : ''}`} onClick={pickLayer} onDoubleClick={event => {
+      <div className={`appearance-stage${layers ? ' appearance-stage-pick' : ''}${shapeHeld ? ' appearance-stage-drag' : ''}`} onClick={pickLayer} onDoubleClick={event => {
         if (!suppressPick.current && layers && selectedLayer && event.target instanceof HTMLCanvasElement) setFocus(true)
       }} onPointerDown={startShapeDrag} onPointerMove={moveStage} onPointerUp={endShapeDrag}
         onPointerCancel={endShapeDrag} onLostPointerCapture={endShapeDrag} onPointerLeave={() => stage.current?.restGaze()}>
         {profile && hasCore && <Live2DView ref={stage} profile={profile} state={pose} expression={expression || undefined}
-          enabled={active} reduced={idle ? false : reduced} idlePlaying={idlePlaying} framing={framing} layerPreview={layerPreview}
-          motionPreview={motionPreview} editShape={editShape}
+          enabled={active} reduced={idle ? false : reduced} idlePlaying={idlePlaying} framing={framing}
+          editor={editorPreview}
           readMouth={previewMouth} onReady={value => { setInfo(value); setLoadError('') }} onError={setLoadError} />}
         {(!profile || !hasCore || loadError) && <img src={`./pet/${snapshot?.variant ?? 'uniform-chibi'}/idle.png`} alt="静态外观预览" />}
         {frameStatus && <span className="appearance-status" role="status">{frameStatus}</span>}
@@ -265,10 +260,10 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
       </div>
       {idle && !!info?.duration && <div className="appearance-timeline">
         <label><span>待机时间</span><input key={info.id} ref={timeline} type="range" aria-label="待机时间" min={0} max={info.duration} step={0.01}
-          disabled={poseTest || !loaded} defaultValue={0} onChange={event => setScrub(Number(event.target.value))} />
+          disabled={poseTest || !loaded || shapeHeld} defaultValue={0} onChange={event => setScrub(Number(event.target.value))} />
           <output ref={timelineValue}>{`${(scrub ?? 0).toFixed(2)} / ${info.duration.toFixed(2)} s`}</output></label>
-        {info.physics && <button type="button" className="secondary" aria-pressed={motionPreview?.physics ?? false}
-          disabled={!loaded || mode !== 'motion'}
+        {info.physics && <button type="button" className="secondary" aria-pressed={editorPreview.physics}
+          disabled={!loaded || poseTest || shapeHeld}
           onClick={() => setPhysicsPreview(value => !value)}>物理</button>}
       </div>}
       <div className="appearance-preview-footer">
@@ -278,9 +273,10 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
             onClick={() => { setPose(item.key); setExpression('') }}>{item.label}</button>)}
         </div>
         <div className="appearance-quick">
-          {blink && <button type="button" className="secondary" disabled={!loaded || poseTest} onClick={() => stage.current?.play(blink)}>眨眼</button>}
-          {profile?.glassesParameter && <button type="button" className="secondary" aria-pressed={!!draft.glasses}
-            disabled={!loaded || busy} onClick={() => update({ glasses: !draft.glasses })}>眼镜</button>}
+          {blink && <button type="button" className="secondary" disabled={!loaded || poseTest || shapeHeld}
+            onClick={() => stage.current?.play(blink)}>眨眼</button>}
+          {editor?.glasses && <button type="button" className="secondary" aria-pressed={!!draft.glasses}
+            disabled={busy || poseTest || shapeHeld} onClick={() => update({ glasses: !draft.glasses })}>眼镜</button>}
         </div>
       </div>
     </div>
@@ -298,34 +294,36 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
         })}>导入模型</button>
       </div>
       {catalog?.issues.map(issue => <p className="hint" key={issue}>{issue}</p>)}
+      {profile?.warnings?.map(warning => <p className="hint" key={warning}>{warning}</p>)}
       {error && <p className="error" role="alert">{error}</p>}
-      {layers && profile && <>
-        <div className="appearance-switch appearance-edit-tabs" role="group" aria-label="调节模式">
+      {editor && profile && <>
+        {!!editor.parameterGroups.length && <div className="appearance-switch appearance-edit-tabs" role="group" aria-label="调节模式">
           {previewTabs.map(([id, name]) => <button key={id} type="button" aria-pressed={mode === id}
-            onClick={() => changeMode(id)}>{name}</button>)}
-        </div>
-        {poseTest ? <PoseControls groups={layerGroups.length ? layerGroups : groups} values={poseValues} disabled={!loaded || busy}
-          change={(id, value) => setPoseValues(prev => ({ ...prev, [id]: value }))} reset={() => setPoseValues(noPose)} />
-          : mode !== 'pose' && <LayerInspector layer={selectedLayer} profile={profile} groups={motionGroups} mode={mode}
-            disabled={!loaded || busy} update={update} />}
+            disabled={shapeHeld} onClick={() => changeMode(id)}>{name}</button>)}
+        </div>}
+        {poseTest ? <PoseControls groups={editor.parameterGroups} preferred={selectedLayer?.motion} values={poseValues} disabled={busy}
+          change={(id, value) => setPoseValues(prev => {
+            const next = { ...prev }
+            delete next[id]
+            return value ? { ...next, [id]: value } : next
+          })} reset={() => setPoseValues(noPose)} />
+          : <LayerInspector layer={selectedLayer} profile={profile} groups={motionGroups} layers={editor.layers}
+            disabled={busy} shapeEnabled={!!editShape} setShapeEnabled={setShapeEnabled} update={update} />}
       </>}
-      {idle && <details className="appearance-idle">
+      {idleRig && idle && <details className="appearance-idle">
         <summary>整体待机</summary>
         <header><button type="button" className="appearance-reset" disabled={!loaded || busy}
-          onClick={() => { update({ idle: { ...defaultLive2DIdleTuning } }); setScrub(undefined) }}>恢复默认</button></header>
+          onClick={() => update({ idle: defaultLive2DIdleTuning })}>恢复默认</button></header>
         <div className="appearance-tuning">
-          {idleSliders.map(([key, label]) => {
+          {['speed', ...live2DIdleGroups(idleRig)].map(key => {
             const speed = key === 'speed'
-            if (!speed && !profile?.idle?.tracks[key]?.length && !profile?.idle?.physics[key]?.length) return null
+            const label = speed ? '待机速度' : live2DSetting(idleRig.groupNames, key) ?? key
             const [min, max] = live2DIdleLimits[speed ? 'speed' : 'amplitude']
-            const value = idle[key]
+            const value = live2DSetting(idle, key) ?? 1
             return <label key={key} className={speed ? 'appearance-speed' : undefined}>
               <span>{label}</span><output>{speed ? `${value.toFixed(2)}×` : `${Math.round(value * 100)}%`}</output>
               <input type="range" aria-label={label} min={min} max={max} step={0.05} value={value} disabled={!loaded || busy}
-                onChange={event => {
-                  update({ idle: { ...idle, [key]: Number(event.target.value) } })
-                  setScrub(undefined)
-                }} />
+                onChange={event => update({ idle: { ...idle, [key]: Number(event.target.value) } })} />
             </label>
           })}
         </div>
@@ -340,7 +338,6 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
           })}>{saved ? '已应用到角色' : busy ? '正在应用…' : '应用到角色'}</button>
         <span className="hint" role="status">{saved ? '桌宠设置已保存' : dirty ? '修改未应用' : applied ? '当前使用' : '仅预览'}</span>
       </div>
-      {layers && <p className="appearance-pick-help hint">点击画面选层，按住 Alt 点击切换重叠层。</p>}
       {profile && <details className="appearance-advanced"><summary>高级预览与设置</summary>
         <div className="appearance-grid">
           <label>桌宠取景<select value={draft.frame} onChange={event => {

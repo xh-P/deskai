@@ -1,5 +1,6 @@
 import type { CubismInternalModel } from 'untitled-pixi-live2d-engine/cubism'
-import type { Live2DLayerShape, Live2DProfile, Live2DSoftShape, Live2DStyle } from '../../../../../packages/desktop-pet/src/live2d.ts'
+import { live2DSetting, type Live2DLayerShape, type Live2DProfile, type Live2DSoftShape, type Live2DStyle }
+  from '../../../../../packages/desktop-pet/src/live2d.ts'
 import { deformShape } from './soft-shape'
 
 type Core = CubismInternalModel['coreModel']
@@ -8,7 +9,7 @@ type ShapeEdit = { shape: Live2DLayerShape; kind: Live2DSoftShape; vertices: Flo
 
 export class LayerAdjustments {
   private readonly core: Core
-  private readonly sway: Sway[]
+  private readonly sway = new Map<string, Sway>()
   private readonly shapes: Map<string, Live2DSoftShape>
   private edits = new Map<number, ShapeEdit>()
   private readonly resetMasks = new Set<number>()
@@ -20,8 +21,7 @@ export class LayerAdjustments {
     const rig = inner.physics?._physicsRig
     const parameters = this.core.getModel().parameters.ids
     const channels = new Set(profile.layers?.flatMap(layer => layer.sway ?? []))
-    this.sway = []
-    if (!rig) return
+    if (!rig || !channels.size) return
     for (let i = 0; i < rig.subRigCount; i++) {
       const setting = rig.settings.at(i)
       const particles = Array.from({ length: setting.particleCount - 1 }, (_, j) => {
@@ -31,7 +31,10 @@ export class LayerAdjustments {
       for (let j = 0; j < setting.outputCount; j++) {
         const id = rig.outputs.at(setting.baseOutputIndex + j).destination.id.getString().s
         const index = parameters.indexOf(id)
-        if (channels.has(id) && index >= 0) this.sway.push({ id, index, rest: this.core.getParameterDefaultValue(index), particles })
+        if (!channels.has(id) || index < 0) continue
+        const sway = this.sway.get(id) ?? { id, index, rest: this.core.getParameterDefaultValue(index), particles: [] }
+        if (profile.swayResponse?.includes(id)) sway.particles.push(...particles)
+        this.sway.set(id, sway)
       }
     }
   }
@@ -41,7 +44,7 @@ export class LayerAdjustments {
     this.style = style
     const edits = new Map<number, ShapeEdit>()
     this.ids.forEach((id, index) => {
-      const shape = style.layerShapes?.[id]
+      const shape = live2DSetting(style.layerShapes, id)
       const kind = this.shapes.get(id)
       if (!kind || !shape || (shape.width === 1 && shape.height === 1 && shape.bend === 0)) return
       const vertices = this.edits.get(index)?.vertices ?? new Float32Array(this.core.getDrawableVertexCount(index) * 2)
@@ -49,15 +52,15 @@ export class LayerAdjustments {
     })
     for (const index of this.edits.keys()) if (!edits.has(index)) this.resetMasks.add(index)
     this.edits = edits
-    for (const { id, particles } of this.sway) {
-      const response = style.layerSway?.[id]?.response ?? 1
+    for (const { id, particles } of this.sway.values()) {
+      const response = live2DSetting(style.layerSway, id)?.response ?? 1
       for (const particle of particles) particle.set(particle.base * response)
     }
   }
 
-  scaleSway(enabled: boolean): void {
-    for (const { id, index, rest } of this.sway) {
-      const amplitude = enabled ? this.style?.layerSway?.[id]?.amplitude ?? 1 : 0
+  scaleSway(): void {
+    for (const { id, index, rest } of this.sway.values()) {
+      const amplitude = live2DSetting(this.style?.layerSway, id)?.amplitude ?? 1
       if (amplitude === 1) continue
       const value = this.core.getParameterValueByIndex(index)
       this.core.setParameterValueByIndex(index, rest + (value - rest) * amplitude)

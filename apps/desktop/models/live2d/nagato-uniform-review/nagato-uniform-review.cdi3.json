@@ -530,30 +530,6 @@
 			"Name": "Right skirt pleats"
 		},
 		{
-			"Id": "ArtMeshLayerL7",
-			"Name": "Left loafer"
-		},
-		{
-			"Id": "ArtMeshLayerR7",
-			"Name": "Right loafer"
-		},
-		{
-			"Id": "ArtMeshLayerL8",
-			"Name": "Left sock"
-		},
-		{
-			"Id": "ArtMeshLayerR8",
-			"Name": "Right sock"
-		},
-		{
-			"Id": "ArtMeshLegwearL",
-			"Name": "Left leg"
-		},
-		{
-			"Id": "ArtMeshLegwearR",
-			"Name": "Right leg"
-		},
-		{
 			"Id": "ArtMeshBottomwear",
 			"Name": "Skirt back folds"
 		},
@@ -580,6 +556,22 @@
 		{
 			"Id": "ArtMeshLayerR9",
 			"Name": "Nape R"
+		},
+		{
+			"Id": "ArtMeshImage_4",
+			"Name": "左乐福鞋"
+		},
+		{
+			"Id": "ArtMeshImage_3",
+			"Name": "左腿与袜"
+		},
+		{
+			"Id": "ArtMeshImage_2",
+			"Name": "右乐福鞋"
+		},
+		{
+			"Id": "ArtMeshImage",
+			"Name": "右腿与袜"
 		}
 	]
 }

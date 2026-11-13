@@ -67,6 +67,7 @@
   background: transparent;
   color: var(--desktop-text);
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 .appearance-layer-group li button { padding-inline-start: 24px; }
 .appearance-layer-group button:hover { background: var(--desktop-raised); }
@@ -110,6 +111,7 @@
 .appearance-layer-tools button[aria-pressed="true"]:enabled { color: var(--desktop-accent); }
 .appearance-layer-tools select { padding: 4px 5px; font-size: 12px; }
 .appearance-stage-pick .live2d-view { cursor: crosshair; }
+.appearance-stage-drag .live2d-view { cursor: grabbing; }
 .appearance-stage-pick canvas { touch-action: none; }
 .appearance-mesh-legend {
   display: flex;
@@ -142,7 +144,6 @@
 .appearance-timeline button { padding: 4px 8px; font-size: 12px; }
 .appearance-timeline button[aria-pressed="true"] { color: var(--desktop-accent); }
 .appearance-edit-tabs button { flex: 1; }
-.appearance-pick-help { margin: -7px 0 0; font-size: 12px; }
 .appearance-preview { position: sticky; top: calc(var(--desktop-bar) + 12px); overflow: hidden; }
 .appearance-toolbar, .appearance-preview-footer {
   min-height: 56px;
@@ -219,10 +220,13 @@
 .appearance-model button { min-height: 34px; padding: 7px 9px; }
 .appearance-inspector { display: grid; gap: 12px; padding-top: 13px; border-top: 1px solid var(--desktop-line); }
 .appearance-inspector-title { display: grid; gap: 2px; }
+.appearance-inspector-title h2, .appearance-inspector-title span { overflow-wrap: anywhere; }
 .appearance-inspector-title span { color: var(--desktop-muted); font-size: 12px; }
 .appearance-layer-controls { display: grid; gap: 9px; }
 .appearance-layer-controls + .appearance-layer-controls { padding-top: 12px; border-top: 1px solid var(--desktop-line); }
 .appearance-layer-controls h3 { margin: 0; font-size: 13px; }
+.appearance-layer-controls .appearance-shape-tool { justify-self: start; padding: 5px 8px; }
+.appearance-shape-tool[aria-pressed="true"] { color: var(--desktop-accent); box-shadow: inset 0 0 0 1px var(--desktop-accent); }
 .appearance-inspector .hint { margin: 0; font-size: 12px; line-height: 1.45; }
 .appearance-layer-controls header + .hint { margin: 3px 0 9px; }
 .appearance-layer-controls > div .appearance-layer-slider + .appearance-layer-slider { margin-top: 9px; }

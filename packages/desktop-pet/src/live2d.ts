@@ -2,31 +2,40 @@ import type { PetState } from './types.ts';
 
 export type Live2DCue = PetState | 'tap';
 export type Live2DMotion = { group: string; index: number };
-export const live2DIdleParts = ['head', 'body', 'arms', 'legs', 'hair', 'clothes', 'eyes'] as const;
-export type Live2DIdlePart = typeof live2DIdleParts[number];
-export type Live2DIdleTuning = Record<Live2DIdlePart | 'speed', number>;
+export type Live2DIdleTuning = { speed: number; [group: string]: number | undefined };
 export const live2DIdleLimits = { speed: [0.5, 2], amplitude: [0, 1.6] } as const;
-export const defaultLive2DIdleTuning: Live2DIdleTuning = {
-  speed: 1, head: 1, body: 1, arms: 1, legs: 1, hair: 1, clothes: 1, eyes: 1,
-};
+export const defaultLive2DIdleTuning: Live2DIdleTuning = { speed: 1 };
 export type Live2DIdleRig = {
   motion: Live2DMotion;
-  tracks: Partial<Record<Live2DIdlePart | 'base', string[]>>;
-  physics: Partial<Record<Live2DIdlePart, string[]>>;
+  tracks: Record<string, string[]>;
+  physics: Record<string, string[]>;
+  groupNames?: Record<string, string>;
 };
 
+export function live2DIdleGroups(rig: Live2DIdleRig): string[] {
+  return [...new Set([...Object.keys(rig.tracks), ...Object.keys(rig.physics)])].filter(id => id !== 'base' && id !== 'speed');
+}
+
+export type Live2DDisplayEntry = { id: string; name?: string; groupId?: string };
+export type Live2DDisplayInfo = { parts: Live2DDisplayEntry[]; parameters: Live2DDisplayEntry[]; groups: Live2DDisplayEntry[] };
 export type Live2DSoftShape = 'anchored' | 'seamed';
 export type Live2DMotionTrack = { id: string; name: string; degrees?: number };
 export type Live2DMotionGroup = { id: string; name: string; tracks: Live2DMotionTrack[] };
 export type Live2DLayer = {
   id: string;
   name: string;
-  group: string;
+  group?: string;
   shape?: Live2DSoftShape;
   motion?: string[];
   sway?: string[];
 };
-export type Live2DLayerRig = { layers: Live2DLayer[]; motionGroups: Live2DMotionGroup[] };
+export type Live2DLayerRig = {
+  layers?: Live2DLayer[];
+  motionGroups?: Live2DMotionGroup[];
+  idle?: Live2DIdleRig;
+  glassesParameter?: string;
+  blink?: Live2DMotion;
+};
 export type Live2DLayerShape = { width: number; height: number; bend: number };
 export type Live2DLayerSway = { amplitude: number; response: number };
 export type Live2DTrackTuning = { amplitude: number; delay: number };
@@ -63,12 +72,30 @@ export type Live2DProfile = {
   motions: Live2DMotion[];
   lipSync: string[];
   physics: boolean;
+  display?: Live2DDisplayInfo;
   layers?: Live2DLayer[];
+  swayResponse?: string[];
   motionGroups?: Live2DMotionGroup[];
   idle?: Live2DIdleRig;
   glassesParameter?: string;
+  blink?: Live2DMotion;
+  warnings?: string[];
   style: Live2DStyle;
 };
+
+export function live2DTunableTracks(profile: Live2DProfile): string[] {
+  if (!profile.idle) return [];
+  const { base = [], ...groups } = profile.idle.tracks;
+  const authored = new Set([
+    ...(profile.motionGroups ?? []).flatMap(group => group.tracks.map(track => track.id)),
+    ...(profile.layers ?? []).flatMap(layer => layer.motion ?? []),
+  ]);
+  return [...Object.values(groups).flat(), ...base.filter(id => authored.has(id))];
+}
+
+export function live2DSetting<T>(values: Readonly<Record<string, T>> | undefined, id: string): T | undefined {
+  return values && Object.hasOwn(values, id) ? values[id] : undefined;
+}
 export type Live2DCatalog = {
   coreReady: boolean;
   models: Live2DProfile[];

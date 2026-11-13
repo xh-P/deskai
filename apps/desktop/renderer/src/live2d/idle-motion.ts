@@ -1,8 +1,8 @@
 import { CubismParallelMotionManager, type CubismInternalModel } from 'untitled-pixi-live2d-engine/cubism'
-import { defaultLive2DIdleTuning, type Live2DIdlePart, type Live2DIdleRig,
+import { defaultLive2DIdleTuning, live2DSetting, type Live2DIdleRig,
   type Live2DStyle } from '../../../../../packages/desktop-pet/src/live2d.ts'
 
-type Channel = { id: string; index: number; rest: number; part: Live2DIdlePart | 'base' }
+type Channel = { id: string; index: number; rest: number; group: string }
 const RETURN_MS = 240
 
 /** The authored motion uses its own clock. One-shot motions, gestures and physics keep real time. */
@@ -24,9 +24,9 @@ export class IdleMotion {
   private constructor(private readonly inner: CubismInternalModel, parameters: readonly string[], rig: Live2DIdleRig,
     motion: NonNullable<Awaited<ReturnType<CubismInternalModel['motionManager']['loadMotion']>>>) {
     const channels = (groups: Live2DIdleRig['tracks']): Channel[] =>
-      (Object.entries(groups) as [Channel['part'], string[]][]).flatMap(([part, ids]) => ids.flatMap(id => {
+      Object.entries(groups).flatMap(([group, ids]) => ids.flatMap(id => {
         const index = parameters.indexOf(id)
-        return index === -1 ? [] : [{ id, index, rest: inner.coreModel.getParameterDefaultValue(index), part }]
+        return index === -1 ? [] : [{ id, index, rest: inner.coreModel.getParameterDefaultValue(index), group }]
       }))
     this.tracks = channels(rig.tracks)
     this.physics = channels(rig.physics)
@@ -61,7 +61,7 @@ export class IdleMotion {
       this.overrides = style.motionTracks
       this.delayed.clear()
       this.tracks.forEach(({ id }, i) => {
-        const delay = this.overrides?.[id]?.delay
+        const delay = live2DSetting(this.overrides, id)?.delay
         if (delay) {
           const tracks = this.delayed.get(delay) ?? []
           tracks.push(i)
@@ -100,8 +100,9 @@ export class IdleMotion {
       for (const i of tracks) this.samples[i] = core.getParameterValueByIndex(this.tracks[i].index)
     }
     const weight = this.weight * this.weight * (3 - 2 * this.weight)
-    this.tracks.forEach(({ id, index, rest, part }, i) => {
-      const gain = (part === 'base' ? 1 : this.tuning[part]) * (this.overrides?.[id]?.amplitude ?? 1)
+    this.tracks.forEach(({ id, index, rest, group }, i) => {
+      const gain = (group === 'base' ? 1 : live2DSetting(this.tuning, group) ?? 1) *
+        (live2DSetting(this.overrides, id)?.amplitude ?? 1)
       const value = this.underlying[i] + (this.samples[i] - rest) * gain * weight
       core.setParameterValueByIndex(index, value)
     })
@@ -109,9 +110,8 @@ export class IdleMotion {
 
   scalePhysics(): void {
     const core = this.inner.coreModel
-    for (const { index, rest, part } of this.physics) {
-      if (part === 'base') continue
-      const gain = this.tuning[part] * this.physicsWeight
+    for (const { index, rest, group } of this.physics) {
+      const gain = (live2DSetting(this.tuning, group) ?? 1) * this.physicsWeight
       if (gain !== 1) core.setParameterValueByIndex(index, rest + (core.getParameterValueByIndex(index) - rest) * gain)
     }
   }

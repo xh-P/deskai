@@ -1,7 +1,7 @@
 import 'pixi.js/unsafe-eval'
 import { Application, extensions } from 'pixi.js'
 import { configureCubismSDK, Live2DModel, Live2DPlugin, MotionPreloadStrategy } from 'untitled-pixi-live2d-engine/cubism'
-import config from '../../../config/live2d-models.json'
+import modelLayers from '../../../apps/desktop/models/live2d/nagato-uniform-review/nagato-uniform-review.layers.json'
 import { defaultLive2DStyle } from '../../../packages/desktop-pet/src/live2d.ts'
 import { IdleMotion } from '../../../apps/desktop/renderer/src/live2d/idle-motion.ts'
 
@@ -15,7 +15,7 @@ const frames = [...document.querySelectorAll('[data-frame]')]
 const axes = { yaw: 'ParamAngleX', pitch: 'ParamAngleY' }
 const eyelids = ['ParamEyeLOpen', 'ParamEyeROpen']
 const headControls = ['yaw', 'pitch']
-const rig = config.bundled.find(model => model.id === 'nagato-uniform').idle
+const rig = modelLayers.idle
 const smoothstep = x => x * x * (3 - 2 * x)
 
 function restBounds(inner) {

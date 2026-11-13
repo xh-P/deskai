@@ -9,24 +9,6 @@
       "id": "nagato-uniform",
       "name": "长门有希 · 常服",
       "file": "apps/desktop/models/live2d/nagato-uniform-review/nagato-uniform-review.model3.json",
-      "layerFile": "nagato-uniform-review.layers.json",
-      "glassesParameter": "ParamGlasses",
-      "idle": {
-        "motion": { "group": "轻风待机", "index": 0 },
-        "tracks": {
-          "base": ["ParamIdleAir", "ParamEyeLOpen", "ParamEyeROpen"],
-          "head": ["ParamAngleX", "ParamAngleY", "ParamAngleZ"],
-          "body": ["ParamWeightShift", "ParamBodyAngleX", "ParamBodyAngleY", "ParamBodyAngleZ", "ParamBreath"],
-          "arms": ["ParamArmShoulderR", "ParamArmShoulderL", "ParamArmFollowR", "ParamArmFollowL"],
-          "legs": ["ParamLegGatherR", "ParamLegGatherL"],
-          "eyes": ["ParamEyeBallX", "ParamEyeBallY", "ParamBrowLY", "ParamBrowRY"]
-        },
-        "physics": {
-          "arms": ["ParamSwingSleeveR", "ParamSwingSleeveL"],
-          "hair": ["ParamSwingFringeR", "ParamSwingFringeCenter", "ParamSwingFringeL", "ParamSwingSideR", "ParamSwingSideL", "ParamSwingNape"],
-          "clothes": ["ParamSwingRibbonR", "ParamSwingRibbonL", "ParamSwingCardigan", "ParamSwingSkirt"]
-        }
-      },
       "style": {
         "frame": "full",
         "gaze": 0.66,

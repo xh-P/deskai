@@ -27,7 +27,7 @@ export function meshProjection(model: MeshModel) {
 export class LayerPicking {
   private readonly atlases = new Map<number, Atlas | undefined>()
 
-  constructor(private readonly model: MeshModel, private readonly ids: string[], private readonly layers: ReadonlySet<string>) {}
+  constructor(private readonly model: MeshModel, private readonly ids: string[]) {}
 
   at(screenX: number, screenY: number, positions: (index: number) => Float32Array, isolated?: number): string[] {
     const inner = this.model.internalModel
@@ -39,7 +39,6 @@ export class LayerPicking {
     const maskHits = new Map<number, boolean>()
     const hits: number[] = []
     for (let index = 0; index < this.ids.length; index++) {
-      if (!this.layers.has(this.ids[index])) continue
       if (isolated === undefined ? !core.getDrawableDynamicFlagIsVisible(index) || core.getDrawableOpacity(index) < 0.08 : index !== isolated) continue
       if (!inside(index)) continue
       const masks = masked[index]

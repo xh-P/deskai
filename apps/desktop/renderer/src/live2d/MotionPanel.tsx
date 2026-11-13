@@ -1,19 +1,21 @@
 import { useState } from 'react'
-import { defaultLive2DTrackTuning, live2DLayerLimits, type Live2DMotionGroup, type Live2DStyle }
+import { defaultLive2DTrackTuning, live2DLayerLimits, live2DSetting, type Live2DMotionGroup, type Live2DStyle }
   from '../../../../../packages/desktop-pet/src/live2d.ts'
+import { poseParameterValue, type EditorParameterGroup } from './editor-metadata'
 
 export const percent = (value: number) => `${Math.round(value * 100)}%`
 
-export function TuningSlider({ label, value, display, bounds: [min, max], step = 0.01, disabled, onChange }: {
+export function TuningSlider({ label, value, display, bounds: [min, max], step = 0.01, title, disabled, onChange }: {
   label: string
   value: number
   display: string
   bounds: readonly [number, number]
   step?: number
+  title?: string
   disabled: boolean
   onChange: (value: number) => void
 }) {
-  return <label className="appearance-layer-slider"><span>{label}</span><output>{display}</output>
+  return <label className="appearance-layer-slider" title={title}><span>{label}</span><output>{display}</output>
     <input type="range" aria-label={label} aria-valuetext={display} min={min} max={max} step={step} value={value} disabled={disabled}
       onChange={event => onChange(Number(event.target.value))} />
   </label>
@@ -30,17 +32,17 @@ export function MotionTracks({ groups, style, disabled, linkedCount, update }: {
   const [id, select] = useState(tracks[0]?.id)
   const track = tracks.find(item => item.id === id) ?? tracks[0]
   if (!track) return null
-  const tuning = style.motionTracks?.[track.id] ?? defaultLive2DTrackTuning
+  const override = live2DSetting(style.motionTracks, track.id)
+  const tuning = override ?? defaultLive2DTrackTuning
   const affected = linkedCount(track.id)
   const save = (next?: typeof tuning) => {
     const motionTracks = { ...style.motionTracks }
-    if (next) motionTracks[track.id] = next
-    else delete motionTracks[track.id]
-    update({ motionTracks })
+    delete motionTracks[track.id]
+    update({ motionTracks: next ? { ...motionTracks, [track.id]: next } : motionTracks })
   }
 
   return <div className="appearance-layer-controls">
-    <header><h3>待机动作</h3><button type="button" className="appearance-reset" disabled={disabled || !style.motionTracks?.[track.id]}
+    <header><h3>待机动作</h3><button type="button" className="appearance-reset" disabled={disabled || !override}
       onClick={() => save()}>重置轨道</button></header>
     <label>动作轨道<select aria-label="动作轨道" value={track.id} disabled={disabled} onChange={event => select(event.target.value)}>
       {groups.map(group => <optgroup key={group.id} label={group.name}>
@@ -55,30 +57,36 @@ export function MotionTracks({ groups, style, disabled, linkedCount, update }: {
   </div>
 }
 
-export function PoseControls({ groups, values, disabled, change, reset }: {
-  groups: Live2DMotionGroup[]
+const poseNumber = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 4 })
+
+export function PoseControls({ groups, preferred, values, disabled, change, reset }: {
+  groups: EditorParameterGroup[]
+  preferred?: readonly string[]
   values: Readonly<Record<string, number>>
   disabled: boolean
   change: (id: string, value: number) => void
   reset: () => void
 }) {
-  const [selected, select] = useState(groups[0]?.id)
-  const group = groups.find(item => item.id === selected) ?? groups[0]
+  const [selected, select] = useState<string>()
+  const group = groups.find(item => item.id === selected) ??
+    (preferred?.length ? groups.find(item => item.tracks.some(track => track.id === preferred[0])) : undefined) ?? groups[0]
   if (!group) return null
   return <section className="appearance-inspector" aria-label="姿态测试">
     <div className="appearance-layer-controls">
       <header><h2>姿态测试</h2><button type="button" className="appearance-reset" disabled={disabled || !Object.keys(values).length}
         onClick={reset}>恢复中立姿态</button></header>
-      <label>测试部位<select value={group.id} disabled={disabled} onChange={event => select(event.target.value)}>
+      <label>参数分组<select value={group.id} disabled={disabled} onChange={event => select(event.target.value)}>
         {groups.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
       </select></label>
       {group.tracks.map(track => {
-        const value = values[track.id] ?? 0
+        const value = live2DSetting(values, track.id) ?? 0
         return <TuningSlider key={track.id} label={track.name} value={value}
-          display={track.degrees ? `${(value * track.degrees).toFixed(1)}°` : percent(value)}
-          bounds={[-1, 1]} disabled={disabled} onChange={next => change(track.id, next)} />
+          title={`${track.id} · ${poseNumber.format(track.min)} 到 ${poseNumber.format(track.max)}`}
+          display={track.degrees ? `${(value * track.degrees).toFixed(1)}°` : poseNumber.format(poseParameterValue(track, value))}
+          bounds={[track.min === track.rest ? 0 : -1, track.max === track.rest ? 0 : 1]} disabled={disabled}
+          onChange={next => change(track.id, next)} />
       })}
-      <p className="hint">姿态测试固定在当前角度。切回「运动」播放待机。</p>
+      <p className="hint">参数值仅用于预览。切回「图层调节」退出姿态测试。</p>
     </div>
   </section>
 }
