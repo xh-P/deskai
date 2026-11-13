@@ -63,11 +63,11 @@
             },
             {
                 "Id": "PhysicsSwing_SleeveR",
-                "Name": "右袖与手腕"
+                "Name": "右前臂袖料摆动"
             },
             {
                 "Id": "PhysicsSwing_SleeveL",
-                "Name": "左袖与手腕"
+                "Name": "左前臂袖料摆动"
             }
         ]
     },

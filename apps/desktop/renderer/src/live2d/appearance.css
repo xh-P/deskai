@@ -108,6 +108,41 @@
 }
 .appearance-layer-tools button { font-size: 12px; padding: 5px 8px; }
 .appearance-layer-tools button[aria-pressed="true"]:enabled { color: var(--desktop-accent); }
+.appearance-layer-tools select { padding: 4px 5px; font-size: 12px; }
+.appearance-stage-pick .live2d-view { cursor: crosshair; }
+.appearance-stage-pick canvas { touch-action: none; }
+.appearance-mesh-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  position: absolute;
+  bottom: 12px;
+  right: 14px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  color: var(--desktop-text);
+  background: var(--desktop-surface);
+  font-size: 11px;
+  pointer-events: none;
+}
+.appearance-mesh-legend i { width: 12px; border-bottom: 2px dashed #ffc689; }
+.appearance-mesh-legend i + i { border-bottom: 2px solid #9cf5d9; margin-left: 4px; }
+.appearance-timeline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 12px;
+  border-top: 1px solid var(--desktop-line);
+  color: var(--desktop-muted);
+  font-size: 12px;
+}
+.appearance-timeline label { display: grid; flex: 1; align-items: center; grid-template-columns: auto 1fr auto; gap: 8px; min-width: 0; }
+.appearance-timeline input { width: 100%; min-width: 0; margin: 0; padding: 0; accent-color: var(--desktop-accent); }
+.appearance-timeline output { font-variant-numeric: tabular-nums; }
+.appearance-timeline button { padding: 4px 8px; font-size: 12px; }
+.appearance-timeline button[aria-pressed="true"] { color: var(--desktop-accent); }
+.appearance-edit-tabs button { flex: 1; }
+.appearance-pick-help { margin: -7px 0 0; font-size: 12px; }
 .appearance-preview { position: sticky; top: calc(var(--desktop-bar) + 12px); overflow: hidden; }
 .appearance-toolbar, .appearance-preview-footer {
   min-height: 56px;
@@ -142,7 +177,7 @@
 .appearance-stage {
   position: relative;
   isolation: isolate;
-  height: clamp(392px, calc(100dvh - 258px), 690px);
+  height: clamp(370px, calc(100dvh - 282px), 690px);
   overflow: hidden;
   background: radial-gradient(ellipse at 50% 34%, #465064 0%, #303746 50%, #252c38 100%);
 }

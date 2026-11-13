@@ -1,18 +1,22 @@
 import type { CubismInternalModel } from 'untitled-pixi-live2d-engine/cubism'
-import type { Live2DLayerShape, Live2DProfile, Live2DStyle } from '../../../../../packages/desktop-pet/src/live2d.ts'
+import type { Live2DLayerShape, Live2DProfile, Live2DSoftShape, Live2DStyle } from '../../../../../packages/desktop-pet/src/live2d.ts'
+import { deformShape } from './soft-shape'
 
 type Core = CubismInternalModel['coreModel']
 type Sway = { id: string; index: number; rest: number; particles: { base: number; set: (delay: number) => void }[] }
+type ShapeEdit = { shape: Live2DLayerShape; kind: Live2DSoftShape; vertices: Float32Array }
 
 export class LayerAdjustments {
   private readonly core: Core
   private readonly sway: Sway[]
-  private edits = new Map<number, { shape: Live2DLayerShape; vertices: Float32Array }>()
+  private readonly shapes: Map<string, Live2DSoftShape>
+  private edits = new Map<number, ShapeEdit>()
   private readonly resetMasks = new Set<number>()
   private style?: Live2DStyle
 
   constructor(inner: CubismInternalModel, profile: Live2DProfile, private readonly ids: readonly string[]) {
     this.core = inner.coreModel
+    this.shapes = new Map(profile.layers?.flatMap(layer => layer.shape ? [[layer.id, layer.shape] as const] : []))
     const rig = inner.physics?._physicsRig
     const parameters = this.core.getModel().parameters.ids
     const channels = new Set(profile.layers?.flatMap(layer => layer.sway ?? []))
@@ -35,12 +39,13 @@ export class LayerAdjustments {
   prepare(style: Live2DStyle): void {
     if (style === this.style) return
     this.style = style
-    const edits = new Map<number, { shape: Live2DLayerShape; vertices: Float32Array }>()
+    const edits = new Map<number, ShapeEdit>()
     this.ids.forEach((id, index) => {
       const shape = style.layerShapes?.[id]
-      if (!shape || (shape.width === 1 && shape.height === 1 && shape.bend === 0)) return
+      const kind = this.shapes.get(id)
+      if (!kind || !shape || (shape.width === 1 && shape.height === 1 && shape.bend === 0)) return
       const vertices = this.edits.get(index)?.vertices ?? new Float32Array(this.core.getDrawableVertexCount(index) * 2)
-      edits.set(index, { shape, vertices })
+      edits.set(index, { shape, kind, vertices })
     })
     for (const index of this.edits.keys()) if (!edits.has(index)) this.resetMasks.add(index)
     this.edits = edits
@@ -50,42 +55,31 @@ export class LayerAdjustments {
     }
   }
 
-  scaleSway(): void {
-    if (!this.style?.layerSway) return
+  scaleSway(enabled: boolean): void {
     for (const { id, index, rest } of this.sway) {
-      const amplitude = this.style.layerSway[id]?.amplitude ?? 1
+      const amplitude = enabled ? this.style?.layerSway?.[id]?.amplitude ?? 1 : 0
       if (amplitude === 1) continue
       const value = this.core.getParameterValueByIndex(index)
       this.core.setParameterValueByIndex(index, rest + (value - rest) * amplitude)
     }
   }
 
-  draw(isolated: number | undefined, render: () => void): void {
+  vertices(index: number): Float32Array {
+    return this.edits.get(index)?.vertices ?? this.core.getDrawableVertexPositions(index)
+  }
+
+  draw(isolated: number | undefined, render: (originalVertices: (index: number) => Float32Array) => void): void {
     const core = this.core
     const opacity = core.getDrawableOpacity
     const visible = core.getDrawableDynamicFlagIsVisible
     const changed = core.getDrawableDynamicFlagVertexPositionsDidChange
     const positions = core.getDrawableVertexPositions
+    const originalVertices = (index: number) => positions.call(core, index)
     const isolate = isolated !== undefined
-    if (!isolate && !this.edits.size && !this.resetMasks.size) { render(); return }
+    if (!isolate && !this.edits.size && !this.resetMasks.size) { render(originalVertices); return }
     try {
-      for (const [index, { vertices, shape: { width, height, bend } }] of this.edits) {
-        const live = positions.call(core, index)
-        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
-        for (let i = 0; i < live.length; i += 2) {
-          minX = Math.min(minX, live[i])
-          maxX = Math.max(maxX, live[i])
-          minY = Math.min(minY, live[i + 1])
-          maxY = Math.max(maxY, live[i + 1])
-        }
-        const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
-        const span = maxY - minY || 1
-        const halfWidth = (maxX - minX) / 2
-        for (let i = 0; i < live.length; i += 2) {
-          const t = (maxY - live[i + 1]) / span
-          vertices[i] = cx + (live[i] - cx) * width + halfWidth * bend * t * t
-          vertices[i + 1] = cy + (live[i + 1] - cy) * height
-        }
+      for (const [index, { vertices, kind, shape }] of this.edits) {
+        deformShape(originalVertices(index), vertices, shape, kind)
       }
       // Masks use the original texture and the same deformed vertices as the color pass.
       core.getDrawableVertexPositions = i => this.edits.get(i)?.vertices ?? positions.call(core, i)
@@ -94,7 +88,7 @@ export class LayerAdjustments {
         core.getDrawableDynamicFlagIsVisible = i => i === isolated
         core.getDrawableOpacity = i => i === isolated ? 1 : opacity.call(core, i)
       }
-      render()
+      render(originalVertices)
     } finally {
       core.getDrawableOpacity = opacity
       core.getDrawableDynamicFlagIsVisible = visible

@@ -2,6 +2,16 @@
 	"Version": 3,
 	"Parameters": [
 		{
+			"Id": "ParamSwingSleeveL",
+			"GroupId": "",
+			"Name": "左前臂袖料摆动"
+		},
+		{
+			"Id": "ParamSwingSleeveR",
+			"GroupId": "",
+			"Name": "右前臂袖料摆动"
+		},
+		{
 			"Id": "ParamGlasses",
 			"GroupId": "",
 			"Name": "Glasses"
@@ -112,16 +122,6 @@
 			"Name": "轻风 · 驱动"
 		},
 		{
-			"Id": "ParamArmFollowR",
-			"GroupId": "ParamGroupNagatoSway",
-			"Name": "右前臂跟随"
-		},
-		{
-			"Id": "ParamArmFollowL",
-			"GroupId": "ParamGroupNagatoSway",
-			"Name": "左前臂跟随"
-		},
-		{
 			"Id": "ParamSwingFringeR",
 			"GroupId": "ParamGroupNagatoSway",
 			"Name": "右刘海摆动"
@@ -172,14 +172,34 @@
 			"Name": "裙摆摆动"
 		},
 		{
-			"Id": "ParamSwingSleeveR",
-			"GroupId": "ParamGroupNagatoSway",
-			"Name": "右袖与手腕摆动"
+			"Id": "ParamArmShoulderR",
+			"GroupId": "ParamGroupNagatoArms",
+			"Name": "右肩转动"
 		},
 		{
-			"Id": "ParamSwingSleeveL",
-			"GroupId": "ParamGroupNagatoSway",
-			"Name": "左袖与手腕摆动"
+			"Id": "ParamArmFollowR",
+			"GroupId": "ParamGroupNagatoArms",
+			"Name": "右肘转动"
+		},
+		{
+			"Id": "ParamArmWristR",
+			"GroupId": "ParamGroupNagatoArms",
+			"Name": "右手腕转动"
+		},
+		{
+			"Id": "ParamArmShoulderL",
+			"GroupId": "ParamGroupNagatoArms",
+			"Name": "左肩转动"
+		},
+		{
+			"Id": "ParamArmFollowL",
+			"GroupId": "ParamGroupNagatoArms",
+			"Name": "左肘转动"
+		},
+		{
+			"Id": "ParamArmWristL",
+			"GroupId": "ParamGroupNagatoArms",
+			"Name": "左手腕转动"
 		}
 	],
 	"ParameterGroups": [
@@ -217,6 +237,11 @@
 			"Id": "ParamGroupNagatoSway",
 			"GroupId": "",
 			"Name": "轻风与衣发摆动"
+		},
+		{
+			"Id": "ParamGroupNagatoArms",
+			"GroupId": "",
+			"Name": "手臂关节"
 		}
 	],
 	"Parts": [

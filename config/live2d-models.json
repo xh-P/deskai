@@ -17,7 +17,7 @@
           "base": ["ParamIdleAir", "ParamEyeLOpen", "ParamEyeROpen"],
           "head": ["ParamAngleX", "ParamAngleY", "ParamAngleZ"],
           "body": ["ParamBodyAngleX", "ParamBodyAngleY", "ParamBodyAngleZ", "ParamBreath"],
-          "arms": ["ParamArmFollowR", "ParamArmFollowL"],
+          "arms": ["ParamArmShoulderR", "ParamArmShoulderL", "ParamArmFollowR", "ParamArmFollowL", "ParamArmWristR", "ParamArmWristL"],
           "eyes": ["ParamEyeBallX", "ParamEyeBallY", "ParamBrowLY", "ParamBrowRY"]
         },
         "physics": {

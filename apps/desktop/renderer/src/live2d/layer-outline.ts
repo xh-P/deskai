@@ -1,12 +1,14 @@
-import type { CubismInternalModel, Live2DModel } from 'untitled-pixi-live2d-engine/cubism'
+import { meshProjection, type MeshModel } from './layer-picking'
 
-export type LayerPreview = { id: string; isolate: boolean; focus: boolean; outline: boolean }
+export type LayerPreview = { id: string; isolate: boolean; focus: boolean; display: 'outline' | 'mesh' | 'compare' | 'off' }
+type Edge = [number, number]
+type Topology = { outline: Edge[]; mesh: Edge[] }
 
-/** Mesh boundary in screen coordinates, including the current pose and local edit. */
+/** Cubism triangles in the current pose, with an optional unedited reference. */
 export class LayerOutline {
   private readonly canvas = document.createElement('canvas')
   private readonly context = this.canvas.getContext('2d')!
-  private readonly topology = new WeakMap<Uint16Array, number[][]>()
+  private readonly topology = new Map<number, Topology>()
 
   constructor(private readonly host: HTMLElement) {
     this.canvas.className = 'live2d-layer-outline'
@@ -15,7 +17,7 @@ export class LayerOutline {
     host.appendChild(this.canvas)
   }
 
-  show(model: Live2DModel<CubismInternalModel>, index: number): void {
+  show(model: MeshModel, index: number, mode: LayerPreview['display'], original: Float32Array, handle?: { x: number; y: number }): void {
     const { clientWidth, clientHeight } = this.host
     const ratio = Math.min(devicePixelRatio, 2)
     const w = Math.round(clientWidth * ratio), h = Math.round(clientHeight * ratio)
@@ -23,46 +25,92 @@ export class LayerOutline {
       this.canvas.width = w
       this.canvas.height = h
     }
-    const inner = model.internalModel
-    const indices = inner.coreModel.getDrawableVertexIndices(index)
-    let edges = this.topology.get(indices)
-    if (!edges) {
-      const boundary = new Map<string, number[]>()
+    const core = model.internalModel.coreModel
+    let topology = this.topology.get(index)
+    if (!topology) {
+      const indices = core.getDrawableVertexIndices(index)
+      const edges = new Map<string, { edge: Edge; count: number }>()
       const edge = (a: number, b: number) => {
         const key = a < b ? `${a}/${b}` : `${b}/${a}`
-        if (!boundary.delete(key)) boundary.set(key, [a * 2, b * 2])
+        const existing = edges.get(key)
+        if (existing) existing.count++
+        else edges.set(key, { edge: [a * 2, b * 2], count: 1 })
       }
       for (let i = 0; i < indices.length; i += 3) {
         edge(indices[i], indices[i + 1])
         edge(indices[i + 1], indices[i + 2])
         edge(indices[i + 2], indices[i])
       }
-      edges = [...boundary.values()]
-      this.topology.set(indices, edges)
+      const unique = [...edges.values()]
+      topology = { outline: unique.filter(edge => edge.count === 1).map(item => item.edge), mesh: unique.map(item => item.edge) }
+      this.topology.set(index, topology)
     }
-    const vertices = inner.getDrawableVertices(index)
-    const { a, b, c, d, tx, ty } = inner.localTransform
-    const { x, y, scale } = model
-    const sx = (i: number) => x + scale.x * (a * vertices[i] + c * vertices[i + 1] + tx)
-    const sy = (i: number) => y + scale.y * (b * vertices[i] + d * vertices[i + 1] + ty)
+    const vertices = core.getDrawableVertexPositions(index)
+    const project = meshProjection(model).screen
+    const toScreen = (values: Float32Array) => {
+      const points: [number, number][] = []
+      for (let i = 0; i < values.length; i += 2) points.push(project(values[i], values[i + 1]))
+      return points
+    }
+    const points = toScreen(vertices)
     const ctx = this.context
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
     ctx.clearRect(0, 0, clientWidth, clientHeight)
-    ctx.beginPath()
-    for (const [start, end] of edges) {
-      ctx.moveTo(sx(start), sy(start))
-      ctx.lineTo(sx(end), sy(end))
+    const trace = (edges: Edge[], positions: [number, number][]) => {
+      ctx.beginPath()
+      for (const [start, end] of edges) {
+        ctx.moveTo(...positions[start / 2])
+        ctx.lineTo(...positions[end / 2])
+      }
     }
-    ctx.lineJoin = 'round'
-    ctx.lineWidth = 3.5
-    ctx.strokeStyle = '#102d30b0'
-    ctx.stroke()
-    ctx.lineWidth = 1.4
-    ctx.strokeStyle = '#9cf5d9'
-    ctx.stroke()
+    if (mode === 'compare' && original !== vertices) {
+      trace(topology.mesh, toScreen(original))
+      ctx.setLineDash([3, 3])
+      ctx.strokeStyle = '#ffc689b0'
+      ctx.lineWidth = 1
+      ctx.stroke()
+      ctx.setLineDash([])
+    }
+    if (mode === 'mesh' || mode === 'compare') {
+      trace(topology.mesh, points)
+      ctx.strokeStyle = '#9cf5d995'
+      ctx.lineWidth = 1
+      ctx.stroke()
+      ctx.fillStyle = '#ceffec'
+      const step = Math.max(1, Math.ceil(points.length / 400))
+      for (let i = 0; i < points.length; i += step) ctx.fillRect(points[i][0] - 1, points[i][1] - 1, 2, 2)
+    }
+    if (mode !== 'off') {
+      trace(topology.outline, points)
+      ctx.lineJoin = 'round'
+      ctx.lineWidth = 3.5
+      ctx.strokeStyle = '#102d30b0'
+      ctx.stroke()
+      ctx.lineWidth = 1.4
+      ctx.strokeStyle = '#9cf5d9'
+      ctx.stroke()
+    }
+    if (handle) {
+      const [x, y] = project(handle.x, handle.y)
+      ctx.beginPath()
+      ctx.arc(x, y, 7, 0, Math.PI * 2)
+      ctx.fillStyle = '#b3ffe8'
+      ctx.fill()
+      ctx.lineWidth = 2
+      ctx.strokeStyle = '#193a39'
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(x - 3, y)
+      ctx.lineTo(x + 3, y)
+      ctx.moveTo(x, y - 3)
+      ctx.lineTo(x, y + 3)
+      ctx.stroke()
+    }
+    this.canvas.dataset.mode = mode
     this.canvas.hidden = false
   }
 
+  reset(): void { this.topology.clear(); this.hide() }
   hide(): void { this.canvas.hidden = true }
   close(): void { this.canvas.remove() }
 }

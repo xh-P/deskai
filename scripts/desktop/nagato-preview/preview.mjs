@@ -13,7 +13,8 @@ const axes = { yaw: 'ParamAngleX', pitch: 'ParamAngleY' }
 const eyelids = ['ParamEyeLOpen', 'ParamEyeROpen']
 const idleParams = [
   axes.yaw, axes.pitch, 'ParamAngleZ', 'ParamBodyAngleX', 'ParamBodyAngleY', 'ParamBodyAngleZ',
-  'ParamBreath', 'ParamIdleAir', 'ParamArmFollowR', 'ParamArmFollowL',
+  'ParamBreath', 'ParamIdleAir',
+  'ParamArmShoulderR', 'ParamArmShoulderL', 'ParamArmFollowR', 'ParamArmFollowL', 'ParamArmWristR', 'ParamArmWristL',
   ...eyelids, 'ParamEyeBallX', 'ParamEyeBallY', 'ParamBrowLY', 'ParamBrowRY',
 ]
 const headControls = ['yaw', 'pitch']

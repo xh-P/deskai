@@ -2,18 +2,22 @@ import 'pixi.js/unsafe-eval'
 import { Application, Assets, Container, extensions, type WebGLRenderer } from 'pixi.js'
 import { configureCubismSDK, Live2DModel, Live2DPlugin, MotionPreloadStrategy, MotionPriority,
   type CubismInternalModel } from 'untitled-pixi-live2d-engine/cubism'
-import type { Live2DMotion, Live2DProfile } from '../../../../../packages/desktop-pet/src/live2d.ts'
+import { defaultLive2DLayerShape, type Live2DLayerShape, type Live2DMotion, type Live2DProfile }
+  from '../../../../../packages/desktop-pet/src/live2d.ts'
 import type { PetGesture, PetState } from '../../../../../packages/desktop-pet/src/types.ts'
 import type { GestureName } from '../../../../../packages/voice-core/src/gesture.ts'
 import { GestureMotion } from './gesture-motion'
 import { IdleMotion } from './idle-motion'
 import { LayerAdjustments } from './layer-adjustments'
 import { LayerOutline, type LayerPreview } from './layer-outline'
+import { LayerPicking, meshProjection } from './layer-picking'
+import { shapeHandle } from './soft-shape'
 
 extensions.add(Live2DPlugin)
 configureCubismSDK({ memorySizeMB: 64 })
 
-export type ModelInfo = { id: string; parameters: string[]; drawables: string[]; physics: boolean; aspect: number; gestures: readonly GestureName[] }
+export type ModelInfo = { id: string; parameters: string[]; drawables: string[]; physics: boolean; aspect: number; gestures: readonly GestureName[];
+  duration?: number }
 export type StageState = {
   state: PetState
   reduced: boolean
@@ -21,6 +25,8 @@ export type StageState = {
   idlePlaying?: boolean
   framing?: Live2DProfile['style']['frame']
   layerPreview?: LayerPreview
+  editShape?: string
+  motionPreview?: { time?: number; values: Readonly<Record<string, number>>; physics: boolean; neutral: boolean }
   gesture?: PetGesture
   readMouth: () => { open: number; shape: number }
 }
@@ -28,7 +34,7 @@ type Model = Live2DModel<CubismInternalModel>
 type Rect = { x: number; y: number; width: number; height: number }
 type Layer = { profile: Live2DProfile; model: Model; art: Rect; headCenter?: number; parameters: string[];
   mouth: (open: number, shape: number) => void; gestures: GestureMotion; idle?: IdleMotion;
-  drawables: string[]; bounds?: Rect[]; adjustments?: LayerAdjustments }
+  drawables: string[]; bounds?: Rect[]; adjustments?: LayerAdjustments; picking?: LayerPicking }
 const clamp = (x: number, low: number, high: number) => Math.max(low, Math.min(high, x))
 
 function artBounds(model: Model): Rect {
@@ -198,21 +204,25 @@ export class CubismStage {
     const drawables = inner.getDrawableIDs()
     const adjustments = profile.layers && new LayerAdjustments(inner, profile, drawables)
     const bounds = adjustments && drawables.map((_, index) => inner.getDrawableBounds(index))
+    const picking = profile.layers && new LayerPicking(candidate, drawables, new Set(profile.layers.map(layer => layer.id)))
     const layer = { profile: this.wanted, model: candidate, art, headCenter, parameters, gestures, idle,
-      drawables, bounds, adjustments }
+      drawables, bounds, adjustments, picking }
     if (old) this.app.stage.removeChild(old.model)
     this.layer = { ...layer, mouth: mouthDriver(layer) }
-    this.outline?.hide()
+    this.outline?.reset()
     if (adjustments) {
       const draw = inner.draw.bind(inner)
       inner.draw = gl => {
         const preview = this.read().layerPreview
         const index = preview ? drawables.indexOf(preview.id) : -1
-        adjustments.draw(preview?.isolate && index >= 0 ? index : undefined, () => {
+        adjustments.draw(preview?.isolate && index >= 0 ? index : undefined, original => {
           draw(gl)
-          if (preview?.outline && index >= 0 && (preview.isolate || core.getDrawableOpacity(index) > 0.01)) {
+          if (preview && index >= 0 && (preview.display !== 'off' || this.read().editShape) &&
+              (preview.isolate || core.getDrawableOpacity(index) > 0.01)) {
+            const base = original(index)
+            const handle = this.read().editShape ? this.shapePoint(index, base) : undefined
             this.outline ??= new LayerOutline(this.host)
-            this.outline.show(candidate, index)
+            this.outline.show(candidate, index, preview.display, base, handle)
           } else this.outline?.hide()
         })
       }
@@ -223,13 +233,23 @@ export class CubismStage {
     const updateNaturalMovements = inner.updateNaturalMovements.bind(inner)
     if (idle) inner.updateNaturalMovements = (dt, now) => {
       updateNaturalMovements(dt, now)
-      idle.apply()
+      const preview = this.read().motionPreview
+      if (preview?.neutral) {
+        for (let index = 0; index < parameters.length; index++) {
+          const value = preview.values[parameters[index]] ?? 0
+          const rest = core.getParameterDefaultValue(index)
+          const limit = value < 0 ? core.getParameterMinimumValue(index) : core.getParameterMaximumValue(index)
+          core.setParameterValueByIndex(index, rest + (limit - rest) * Math.abs(value))
+        }
+      } else {
+        idle.apply()
+      }
     }
     inner.on('beforeModelUpdate', () => {
       if (this.layer?.model !== candidate) return
       idle?.scalePhysics()
-      adjustments?.scaleSway()
-      if (glasses >= 0 && this.layer.profile.style.glasses) core.setParameterValueByIndex(glasses, 1)
+      adjustments?.scaleSway(this.read().motionPreview?.physics !== false)
+      if (glasses >= 0) core.setParameterValueByIndex(glasses, Number(!!this.layer.profile.style.glasses))
       this.layer.mouth(this.open, this.shape)
     })
     this.app.stage.addChild(candidate)
@@ -264,6 +284,46 @@ export class CubismStage {
 
   gaze(x: number, y: number): void { this.pointer = { x: clamp(x, -1, 1), y: clamp(y, -1, 1) } }
   restGaze(): void { this.pointer = undefined }
+  playhead(): number { return this.layer?.idle?.playhead ?? 0 }
+
+  pick(clientX: number, clientY: number): string[] {
+    const layer = this.layer
+    if (!this.enabled || this.lost || !layer?.picking || !layer.adjustments || layer.profile.id !== this.wanted?.id) return []
+    const rect = this.host.getBoundingClientRect()
+    const preview = this.read().layerPreview
+    const index = preview?.isolate ? layer.drawables.indexOf(preview.id) : -1
+    const adjustments = layer.adjustments
+    return layer.picking.at(clientX - rect.left, clientY - rect.top, i => adjustments.vertices(i), index >= 0 ? index : undefined)
+  }
+
+  private shapePoint(index: number, base: Float32Array) {
+    const layer = this.layer!
+    const id = layer.drawables[index]
+    const kind = layer.profile.layers?.find(item => item.id === id)?.shape
+    if (!kind) return
+    return shapeHandle(base, layer.profile.style.layerShapes?.[id] ?? defaultLive2DLayerShape, kind)
+  }
+
+  dragShape(clientX: number, clientY: number): ((x: number, y: number) => Live2DLayerShape) | undefined {
+    const layer = this.layer
+    const preview = this.read().layerPreview
+    if (!this.enabled || !layer || !preview || this.read().editShape !== preview.id) return
+    const index = layer.drawables.indexOf(preview.id)
+    if (index < 0) return
+    const core = layer.model.internalModel.coreModel
+    if (!preview.isolate && core.getDrawableOpacity(index) <= 0.01) return
+    const handle = this.shapePoint(index, core.getDrawableVertexPositions(index))
+    if (!handle) return
+    const projection = meshProjection(layer.model)
+    const [x, y] = projection.screen(handle.x, handle.y)
+    const rect = this.host.getBoundingClientRect()
+    if (Math.hypot(clientX - rect.left - x, clientY - rect.top - y) > 13) return
+    const [vx, vy] = projection.model(clientX - rect.left, clientY - rect.top)
+    return (nextX, nextY) => {
+      const [mx, my] = projection.model(nextX - rect.left, nextY - rect.top)
+      return handle.update(mx - vx, my - vy)
+    }
+  }
 
   hit(clientX: number, clientY: number): boolean {
     if (!this.enabled || !this.layer || this.lost) return false
@@ -280,7 +340,7 @@ export class CubismStage {
   private tick(delta: number): void {
     const layer = this.layer
     if (!layer) return
-    const { state, reduced, expression, gesture, readMouth, idlePlaying } = this.read()
+    const { state, reduced, expression, gesture, readMouth, idlePlaying, motionPreview } = this.read()
     const { profile, model } = layer
     const dt = Math.min(90, delta)
     this.clock += dt / 1000
@@ -297,7 +357,7 @@ export class CubismStage {
     }
     const action = layer.gestures.prepare(gesture, dt, reduced)
     const weight = layer.gestures.weight
-    layer.idle?.prepare(dt, !reduced && (idlePlaying ?? true), profile.style.idle, reduced)
+    layer.idle?.prepare(dt, !reduced && (idlePlaying ?? true), profile.style, reduced, motionPreview?.time)
     layer.adjustments?.prepare(profile.style)
     const fps = reduced ? 24 : !action && !weight && (state === 'off' || state === 'silent') ? 30 : 60
     if (this.app.ticker.maxFPS !== fps) this.app.ticker.maxFPS = fps
@@ -325,7 +385,7 @@ export class CubismStage {
   private reportInfo(): void {
     const layer = this.layer
     if (layer) this.report({ id: layer.profile.id, parameters: layer.parameters, drawables: layer.drawables,
-      physics: !!layer.model.internalModel.physics, gestures: layer.gestures.available,
+      physics: !!layer.model.internalModel.physics, gestures: layer.gestures.available, duration: layer.idle?.duration,
       aspect: clamp(layer.art.width / this.frameHeight(layer), 0.35, 2.2) })
   }
 
@@ -374,6 +434,7 @@ export class CubismStage {
     this.app.canvas.removeEventListener('webglcontextlost', this.contextLost)
     this.app.canvas.removeEventListener('webglcontextrestored', this.contextRestored)
     this.app.stop()
+    this.outline?.close()
     if (this.layer) {
       this.app.stage.removeChild(this.layer.model)
       void release(this.layer.model, this.layer.profile)

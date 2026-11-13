@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { defaultLive2DIdleTuning, defaultLive2DLayerShape, defaultLive2DLayerSway, defaultLive2DStyle,
+import { defaultLive2DIdleTuning, defaultLive2DLayerShape, defaultLive2DLayerSway, defaultLive2DStyle, defaultLive2DTrackTuning,
   live2DIdleLimits, live2DIdleParts, live2DLayerLimits, type Live2DApply, type Live2DCatalog, type Live2DIdleRig,
-  type Live2DLayer, type Live2DMotion, type Live2DProfile, type Live2DStyle } from '../../../packages/desktop-pet/src/live2d.ts';
+  type Live2DLayerRig, type Live2DMotion, type Live2DProfile, type Live2DStyle } from '../../../packages/desktop-pet/src/live2d.ts';
 
 type Definition = { id: string; name: string; file: string; style?: Partial<Live2DStyle>;
   idle?: Live2DIdleRig; glassesParameter?: string; layerFile?: string };
@@ -72,8 +72,13 @@ function tuning(profile: Live2DProfile, input: unknown): Live2DStyle {
   }
   if (profile.glassesParameter) next.glasses = patch.glasses === true;
   if (profile.layers) {
-    next.layerShapes = layerTuning(patch.layerShapes, profile.layers.map(layer => layer.id), defaultLive2DLayerShape);
+    next.layerShapes = layerTuning(patch.layerShapes, profile.layers.filter(layer => layer.shape).map(layer => layer.id), defaultLive2DLayerShape);
     next.layerSway = layerTuning(patch.layerSway, profile.layers.flatMap(layer => layer.sway ?? []), defaultLive2DLayerSway);
+  }
+  if (profile.idle && profile.motionGroups) {
+    const allowed = new Set(Object.values(profile.idle.tracks).flat());
+    const tracks = profile.motionGroups.flatMap(group => group.tracks.map(track => track.id)).filter(id => allowed.has(id));
+    next.motionTracks = layerTuning(patch.motionTracks, tracks, defaultLive2DTrackTuning);
   }
   const mouth = object(patch.mouth);
   next.mouth = {};
@@ -145,15 +150,16 @@ async function inspect(definition: Definition, source: Live2DProfile['source']):
   const url = `deskai://app/live2d/${definition.id}/${encodeURIComponent(entry)}`;
   const idle = definition.idle;
   const idleMotion = idle && motions.find(motion => motion.group === idle.motion.group && motion.index === idle.motion.index);
-  let layers: Live2DLayer[] | undefined;
+  let layerRig: Live2DLayerRig | undefined;
   if (definition.layerFile) {
     const name = reference(definition.layerFile, /\.layers\.json$/i);
     const target = await realpath(path.join(root, name));
     if (!inside(root, target)) throw new Error('图层清单必须位于模型目录内。');
-    layers = (JSON.parse(await readFile(target, 'utf8')) as { layers: Live2DLayer[] }).layers;
+    layerRig = JSON.parse(await readFile(target, 'utf8')) as Live2DLayerRig;
   }
   const profile: Live2DProfile = { id: definition.id, name: definition.name, url, source, textures: refs.Textures as string[], lipSync, expressions, motions,
-    physics: !!refs.Physics, layers, idle: idle && idleMotion ? { ...idle, motion: idleMotion } : undefined,
+    physics: !!refs.Physics, layers: layerRig?.layers, motionGroups: layerRig?.motionGroups,
+    idle: idle && idleMotion ? { ...idle, motion: idleMotion } : undefined,
     glassesParameter: definition.glassesParameter, style: defaultLive2DStyle };
   profile.style = tuning(profile, definition.style);
   return { file, root, profile, references, entry, manifest: JSON.stringify(manifest), layerFile: definition.layerFile };

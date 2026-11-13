@@ -1,10 +1,13 @@
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
-import type { Live2DMotion, Live2DProfile } from '../../../../../packages/desktop-pet/src/live2d.ts'
+import type { Live2DLayerShape, Live2DMotion, Live2DProfile } from '../../../../../packages/desktop-pet/src/live2d.ts'
 import type { CubismStage, ModelInfo, StageState } from './cubism-stage'
 import { loadCubismCore } from './core'
 
 export type Live2DControl = {
   hit: (x: number, y: number) => boolean
+  pick: (x: number, y: number) => string[]
+  playhead: () => number
+  dragShape: (x: number, y: number) => ((x: number, y: number) => Live2DLayerShape) | undefined
   gaze: (x: number, y: number) => void
   restGaze: () => void
   tap: () => void
@@ -28,6 +31,9 @@ export default function Live2DView(props: Props) {
 
   useImperativeHandle(ref, () => ({
     hit: (x, y) => stage.current?.hit(x, y) ?? false,
+    pick: (x, y) => stage.current?.pick(x, y) ?? [],
+    playhead: () => stage.current?.playhead() ?? 0,
+    dragShape: (x, y) => stage.current?.dragShape(x, y),
     gaze: (x, y) => stage.current?.gaze(x, y),
     restGaze: () => stage.current?.restGaze(),
     tap: () => stage.current?.tap(),

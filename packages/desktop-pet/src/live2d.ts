@@ -15,14 +15,27 @@ export type Live2DIdleRig = {
   physics: Partial<Record<Live2DIdlePart, string[]>>;
 };
 
-export type Live2DLayer = { id: string; name: string; group: string; sway?: string[] };
+export type Live2DSoftShape = 'anchored' | 'seamed';
+export type Live2DMotionTrack = { id: string; name: string; degrees?: number };
+export type Live2DMotionGroup = { id: string; name: string; tracks: Live2DMotionTrack[] };
+export type Live2DLayer = {
+  id: string;
+  name: string;
+  group: string;
+  shape?: Live2DSoftShape;
+  motion?: string[];
+  sway?: string[];
+};
+export type Live2DLayerRig = { layers: Live2DLayer[]; motionGroups: Live2DMotionGroup[] };
 export type Live2DLayerShape = { width: number; height: number; bend: number };
 export type Live2DLayerSway = { amplitude: number; response: number };
+export type Live2DTrackTuning = { amplitude: number; delay: number };
 export const defaultLive2DLayerShape: Live2DLayerShape = { width: 1, height: 1, bend: 0 };
 export const defaultLive2DLayerSway: Live2DLayerSway = { amplitude: 1, response: 1 };
+export const defaultLive2DTrackTuning: Live2DTrackTuning = { amplitude: 1, delay: 0 };
 export const live2DLayerLimits = {
   width: [0.9, 1.1], height: [0.9, 1.1], bend: [-0.12, 0.12],
-  amplitude: live2DIdleLimits.amplitude, response: [0.75, 1.25],
+  amplitude: live2DIdleLimits.amplitude, response: [0.75, 1.25], delay: [-0.4, 0.4],
 } as const;
 
 export type Live2DStyle = {
@@ -38,6 +51,7 @@ export type Live2DStyle = {
   glasses?: boolean;
   layerShapes?: Record<string, Live2DLayerShape>;
   layerSway?: Record<string, Live2DLayerSway>;
+  motionTracks?: Record<string, Live2DTrackTuning>;
 };
 export type Live2DProfile = {
   id: string;
@@ -50,6 +64,7 @@ export type Live2DProfile = {
   lipSync: string[];
   physics: boolean;
   layers?: Live2DLayer[];
+  motionGroups?: Live2DMotionGroup[];
   idle?: Live2DIdleRig;
   glassesParameter?: string;
   style: Live2DStyle;
