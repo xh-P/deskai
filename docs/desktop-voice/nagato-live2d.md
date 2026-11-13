@@ -2,20 +2,22 @@
 
 ## 新版常服交互审阅
 
-在项目根目录运行 `npm run desktop:preview-nagato`，打开终端显示的本地网址。首次准备 Cubism Core 时先运行 `npm run desktop:prepare-live2d`。点「轻风待机」播放八秒循环，选「上半身」可同时观察发梢和裙摆。预览还可转头、眨眼、开关眼镜和检查早先的右臂抬手。角色页可通过「导入模型」打开小样。[模型清单](../../apps/desktop/models/live2d/nagato-uniform-review/nagato-uniform-review.model3.json)
+在项目根目录运行 `npm run desktop:preview-nagato`，打开终端显示的本地网址。首次准备 Cubism Core 时先运行 `npm run desktop:prepare-live2d`。选「上半身」并点「轻风待机」，可同时观察四秒循环里的发梢、袖口、裙摆、短暂侧视和眨眼。预览也支持转头、手动眨眼、开关眼镜和右臂抬手。角色页可通过「导入模型」打开小样。[模型清单](../../apps/desktop/models/live2d/nagato-uniform-review/nagato-uniform-review.model3.json)
 
-常服使用 76 个网格、33 个参数。三组刘海、左右侧发、后颈发束、左右飘带、开衫下摆和裙摆各有弯曲变形器，支点固定在根部或衣物接缝，末端随各自的摆锤响应。刘海与对应发影共用变形器。轻风动作驱动模型中的物理输入，停止后摆动逐渐收住。手动转头也会带动发梢。[Cubism 物理](https://docs.live2d.com/en/cubism-editor-manual/physics-operation/)
+常服使用 76 个网格、35 个参数。参考虹色真央的局部跟随和短促眨眼，三组刘海、左右侧发、后颈发束、左右飘带、开衫下摆、裙摆及左右袖各有弯曲变形器与独立的物理响应。刘海和发影共用变形器，每侧袖子和手腕也一起变形。轻风动作驱动物理输入，另有独立的双眼开合和视线轨道。停止后眼神回正，衣发逐渐收住。手动转头也会带动发梢。[虹色真央](https://www.live2d.com/zh-CHS/learn/sample/niziiro-mao/) · [Cubism 物理](https://docs.live2d.com/en/cubism-editor-manual/physics-operation/)
 
 小样从已审阅的 72 层常服 PSD 起模，加入四张 GPT 补绘的中段袖臂图层。右肩固定在衣领下，抬手参数联动上臂、前臂、袖口和手。前臂随视角缩短，手背和指尖单独配准。抬手从垂手出发，抬到腰前稍停后放下，动作以 `.motion3.json` 随模型导出。[PSD2Live 3.6.7](https://github.com/tsunehimatoi/psd2live/tree/v3.6.7) · [Cubism 绘制顺序](https://docs.live2d.com/en/cubism-editor-manual/draworder/) · [Cubism 姿势切换](https://docs.live2d.com/en/cubism-editor-manual/change-pose/) · [Inkinesis](https://github.com/codewayco/Inkinesis)
 
-PSD2Live 工程和 CMO3 回读均有 76 个网格、33 个参数及新增的 10 个变形器。已比对本轮和上一轮静止渲染，默认站姿轮廓重合。Chrome WebGL 测得发梢、飘带和衣摆顶点约 3 至 7 像素的位移，发顶、鼻子、衣领、结心和鞋的网格在轻风待机中保持固定。抬手在 46%、47%、50%、82%、83% 和完全抬起时检查过肩袖和手腕，仍有两处袖褶和手指换稿待继续精修。常服通过评审后进入魔法服制作。
+PSD2Live 工程和 CMO3 回读均有 12 个摇摆变形器，默认站姿轮廓与上一版重合。在同一 Chrome WebGL 渲染器里，发梢、飘带和衣摆的最大位移增加约 20% 至 27%，按模型画布坐标测得左右袖口移动约 2 像素，手部约 4 像素。发顶、鼻子、衣领、结心和鞋保持固定。抬手的中间换稿仍有袖褶和手指待精修。常服通过评审后进入魔法服制作。
 
 ## 手动编辑新版常服
 
 Windows 桌面双击「长门有希 常服编辑」即可启动中文版 PSD2Live 并打开「文档 → 长门有希 Live2D」下的常服工程。编辑器已有打开的工程时，快捷方式保留当前编辑会话，常服可从「最近」打开。在另一台 Windows 电脑配置时，可用 PowerShell 运行 [编辑器准备脚本](../../scripts/desktop/prepare-nagato-editor.ps1)。脚本安装 PSD2Live 便携版、复制工程并建立快捷方式，自动打开需本机的 Python。
 
-- **调网格或关键形**。在「绑定」工作区从层级树选择部件。在「编辑」模式调三角网格，在「变形」模式选择参数键并调形状。
-- **调摆幅和速度**。右键刘海、飘带或衣摆变形器选「编辑摇摆」，拖动尖端和支点。在「物理」面板选同名组调整倍率和收敛速度。动画工作区可打开「轻风待机」。
+- **调哪一块、怎么变形**。进入「绑定」，在层级树选「右袖与手腕」等变形器，右键点「编辑摇摆…」。拖空心方块调整固定边，拖菱形调整柔软度，拖尖端圆点调整形变幅度，点「预览摆动」，确认后点「应用」。要手改关键形，在参数面板展开「轻风与衣发摆动」，选对应参数的 `-1` 或 `1`，切到「变形」拖控制点。修改三角网格的布点用「编辑」模式。
+- **调单个部件的幅度和跟随**。打开「物理」工作区，选「右袖与手腕」「左侧发」等同名组。到「输出」调「倍率」，到「摆锤设置」调「反应速度」和「收敛速度」。在左侧预览打开物理，拖动摆锤画布检查跟随和回稳。
+- **调整循环速度**。在「动画」工作区点「选择动作… → 轻风待机 → 摄影表」。选中「轻风 · 驱动」的关键帧，可在底部改「时间」。例如把 4 秒加快到 3 秒，依次把 `1 / 2 / 3 / 4` 秒的键移到 `0.75 / 1.5 / 2.25 / 3` 秒。若想让眼睛也按同样比例加速，先将眼睛轨道各键的时间乘 `0.75`。移动完成后将工具栏「时长」设为 3 秒，再点「首尾衔接」。缩短「时长」会裁掉超出的键。播放时在预览画布打开「物理」，即可看到实际的衣发摆动。
+- **调眨眼和视线**。在同一个动作里，`ParamEyeLOpen / ParamEyeROpen` 控制双眼开合，`ParamEyeBallX / ParamEyeBallY` 控制视线方向。在「摄影表」改关键帧时间与数值，在「曲线」调整缓入缓出。
 - **保存并导出**。保存 PSD2Live 工程会写入「文档」中的编辑副本。完成后可用编辑器导出 Cubism 模型。仓库保存原始可编辑工程和供运行时加载的资源。[PSD2Live 工程](../../apps/desktop/models/live2d/nagato-uniform-review/nagato-uniform-review.psd2live) · [CMO3 工程](../../apps/desktop/models/live2d/nagato-uniform-review/nagato-uniform-review.cmo3)
 
 ## 在桌面使用

@@ -12,6 +12,8 @@ const frames = [...document.querySelectorAll('[data-frame]')]
 const axes = { yaw: 'ParamAngleX', pitch: 'ParamAngleY', lift: 'ParamArmLift' }
 const air = 'ParamIdleAir'
 const breath = 'ParamBreath'
+const eyelids = ['ParamEyeLOpen', 'ParamEyeROpen']
+const eyeParams = [...eyelids, 'ParamEyeBallX', 'ParamEyeBallY']
 const breezeGroup = '轻风待机'
 const smoothstep = x => x * x * (3 - 2 * x)
 
@@ -51,11 +53,12 @@ async function mount() {
   const core = inner.coreModel
   const indices = new Map(Array.from({ length: core.getParameterCount() }, (_, index) =>
     [core.getParameterId(index).getString().s, index]))
-  const required = [...Object.values(axes), 'ParamEyeLOpen', 'ParamEyeROpen', 'ParamGlasses', air, breath]
+  const required = [...Object.values(axes), ...eyeParams, 'ParamGlasses', air, breath]
   if (required.some(id => !indices.has(id))) throw new Error('模型缺少审阅参数。')
   const write = (id, value) => core.setParameterValueByIndex(indices.get(id), value)
   const read = id => core.getParameterValueByIndex(indices.get(id))
   const restBreath = core.getParameterDefaultValue(indices.get(breath))
+  const restEyes = eyeParams.map(id => [id, core.getParameterDefaultValue(indices.get(id))])
   const art = restBounds(inner)
   const crops = {
     full: art,
@@ -103,17 +106,21 @@ async function mount() {
   // These inputs also drive physics, so write them before the solver runs.
   inner.on('afterMotionUpdate', () => {
     for (const name of ['yaw', 'pitch']) write(axes[name], Number(get(name).value))
-    if (!idle) write(air, 0)
+    if (!idle) {
+      write(air, 0)
+      for (const [id, value] of restEyes) write(id, value)
+    }
   })
   inner.on('beforeModelUpdate', () => {
     // Keep the comparison camera and stance stationary while inspecting the cloth.
     write(breath, restBreath)
     write('ParamGlasses', Number(glasses))
     const elapsed = performance.now() - blinkStart
-    const open = elapsed < 100 ? 1 - smoothstep(elapsed / 100)
-      : elapsed < 135 ? 0 : elapsed < 285 ? smoothstep((elapsed - 135) / 150) : 1
-    write('ParamEyeLOpen', open)
-    write('ParamEyeROpen', open)
+    if (elapsed < 285) {
+      const open = elapsed < 100 ? 1 - smoothstep(elapsed / 100)
+        : elapsed < 135 ? 0 : smoothstep((elapsed - 135) / 150)
+      for (const id of eyelids) write(id, Math.min(read(id), open))
+    }
     if (playing) setLift(read(axes.lift))
     else write(axes.lift, Number(get('lift').value) / 100)
   })

@@ -2,61 +2,6 @@
 	"Version": 3,
 	"Parameters": [
 		{
-			"Id": "ParamSwingSkirt",
-			"GroupId": "",
-			"Name": "裙摆摆动"
-		},
-		{
-			"Id": "ParamSwingCardigan",
-			"GroupId": "",
-			"Name": "开衫下摆摆动"
-		},
-		{
-			"Id": "ParamSwingRibbonL",
-			"GroupId": "",
-			"Name": "领结左飘带摆动"
-		},
-		{
-			"Id": "ParamSwingRibbonR",
-			"GroupId": "",
-			"Name": "领结右飘带摆动"
-		},
-		{
-			"Id": "ParamSwingNape",
-			"GroupId": "",
-			"Name": "后颈发束摆动"
-		},
-		{
-			"Id": "ParamSwingSideL",
-			"GroupId": "",
-			"Name": "左侧发摆动"
-		},
-		{
-			"Id": "ParamSwingSideR",
-			"GroupId": "",
-			"Name": "右侧发摆动"
-		},
-		{
-			"Id": "ParamSwingFringeL",
-			"GroupId": "",
-			"Name": "左刘海摆动"
-		},
-		{
-			"Id": "ParamSwingFringeCenter",
-			"GroupId": "",
-			"Name": "中刘海摆动"
-		},
-		{
-			"Id": "ParamSwingFringeR",
-			"GroupId": "",
-			"Name": "右刘海摆动"
-		},
-		{
-			"Id": "ParamIdleAir",
-			"GroupId": "",
-			"Name": "轻风 · 驱动"
-		},
-		{
 			"Id": "ParamArmLift",
 			"GroupId": "",
 			"Name": "Right arm lift"
@@ -165,6 +110,71 @@
 			"Id": "ParamHairBack",
 			"GroupId": "ParamGroupPhysics",
 			"Name": "Back Hair Sway"
+		},
+		{
+			"Id": "ParamIdleAir",
+			"GroupId": "ParamGroupNagatoSway",
+			"Name": "轻风 · 驱动"
+		},
+		{
+			"Id": "ParamSwingFringeR",
+			"GroupId": "ParamGroupNagatoSway",
+			"Name": "右刘海摆动"
+		},
+		{
+			"Id": "ParamSwingFringeCenter",
+			"GroupId": "ParamGroupNagatoSway",
+			"Name": "中刘海摆动"
+		},
+		{
+			"Id": "ParamSwingFringeL",
+			"GroupId": "ParamGroupNagatoSway",
+			"Name": "左刘海摆动"
+		},
+		{
+			"Id": "ParamSwingSideR",
+			"GroupId": "ParamGroupNagatoSway",
+			"Name": "右侧发摆动"
+		},
+		{
+			"Id": "ParamSwingSideL",
+			"GroupId": "ParamGroupNagatoSway",
+			"Name": "左侧发摆动"
+		},
+		{
+			"Id": "ParamSwingNape",
+			"GroupId": "ParamGroupNagatoSway",
+			"Name": "后颈发束摆动"
+		},
+		{
+			"Id": "ParamSwingRibbonR",
+			"GroupId": "ParamGroupNagatoSway",
+			"Name": "领结右飘带摆动"
+		},
+		{
+			"Id": "ParamSwingRibbonL",
+			"GroupId": "ParamGroupNagatoSway",
+			"Name": "领结左飘带摆动"
+		},
+		{
+			"Id": "ParamSwingCardigan",
+			"GroupId": "ParamGroupNagatoSway",
+			"Name": "开衫下摆摆动"
+		},
+		{
+			"Id": "ParamSwingSkirt",
+			"GroupId": "ParamGroupNagatoSway",
+			"Name": "裙摆摆动"
+		},
+		{
+			"Id": "ParamSwingSleeveR",
+			"GroupId": "ParamGroupNagatoSway",
+			"Name": "右袖与手腕摆动"
+		},
+		{
+			"Id": "ParamSwingSleeveL",
+			"GroupId": "ParamGroupNagatoSway",
+			"Name": "左袖与手腕摆动"
 		}
 	],
 	"ParameterGroups": [
@@ -197,6 +207,11 @@
 			"Id": "ParamGroupPhysics",
 			"GroupId": "",
 			"Name": "Physics"
+		},
+		{
+			"Id": "ParamGroupNagatoSway",
+			"GroupId": "",
+			"Name": "轻风与衣发摆动"
 		}
 	],
 	"Parts": [

@@ -1,10 +1,10 @@
 {
     "Version": 3,
     "Meta": {
-        "PhysicsSettingCount": 11,
-        "TotalInputCount": 22,
-        "TotalOutputCount": 11,
-        "VertexCount": 23,
+        "PhysicsSettingCount": 13,
+        "TotalInputCount": 26,
+        "TotalOutputCount": 13,
+        "VertexCount": 27,
         "Fps": 60,
         "EffectiveForces": {
             "Gravity": {
@@ -60,6 +60,14 @@
             {
                 "Id": "PhysicsSwing_Skirt",
                 "Name": "裙摆"
+            },
+            {
+                "Id": "PhysicsSwing_SleeveR",
+                "Name": "右袖与手腕"
+            },
+            {
+                "Id": "PhysicsSwing_SleeveL",
+                "Name": "左袖与手腕"
             }
         ]
     },
@@ -841,6 +849,146 @@
                     "Minimum": -29.0,
                     "Default": 0.0,
                     "Maximum": 29.0
+                }
+            }
+        },
+        {
+            "Id": "PhysicsSwing_SleeveR",
+            "Input": [
+                {
+                    "Source": {
+                        "Target": "Parameter",
+                        "Id": "ParamIdleAir"
+                    },
+                    "Weight": 100.0,
+                    "Type": "Angle",
+                    "Reflect": false
+                },
+                {
+                    "Source": {
+                        "Target": "Parameter",
+                        "Id": "ParamBodyAngleX"
+                    },
+                    "Weight": 100.0,
+                    "Type": "X",
+                    "Reflect": false
+                }
+            ],
+            "Output": [
+                {
+                    "Destination": {
+                        "Target": "Parameter",
+                        "Id": "ParamSwingSleeveR"
+                    },
+                    "VertexIndex": 1,
+                    "Scale": 1.75,
+                    "Weight": 100.0,
+                    "Type": "Angle",
+                    "Reflect": false
+                }
+            ],
+            "Vertices": [
+                {
+                    "Position": {
+                        "X": 0,
+                        "Y": 0.0
+                    },
+                    "Mobility": 1.0,
+                    "Delay": 1.0,
+                    "Acceleration": 1.0,
+                    "Radius": 0.0
+                },
+                {
+                    "Position": {
+                        "X": 0,
+                        "Y": 13.0
+                    },
+                    "Mobility": 0.83,
+                    "Delay": 0.66,
+                    "Acceleration": 1.12,
+                    "Radius": 13.0
+                }
+            ],
+            "Normalization": {
+                "Position": {
+                    "Minimum": -4.0,
+                    "Default": 0.0,
+                    "Maximum": 4.0
+                },
+                "Angle": {
+                    "Minimum": -25.0,
+                    "Default": 0.0,
+                    "Maximum": 25.0
+                }
+            }
+        },
+        {
+            "Id": "PhysicsSwing_SleeveL",
+            "Input": [
+                {
+                    "Source": {
+                        "Target": "Parameter",
+                        "Id": "ParamIdleAir"
+                    },
+                    "Weight": 100.0,
+                    "Type": "Angle",
+                    "Reflect": false
+                },
+                {
+                    "Source": {
+                        "Target": "Parameter",
+                        "Id": "ParamBodyAngleX"
+                    },
+                    "Weight": 100.0,
+                    "Type": "X",
+                    "Reflect": false
+                }
+            ],
+            "Output": [
+                {
+                    "Destination": {
+                        "Target": "Parameter",
+                        "Id": "ParamSwingSleeveL"
+                    },
+                    "VertexIndex": 1,
+                    "Scale": 1.75,
+                    "Weight": 100.0,
+                    "Type": "Angle",
+                    "Reflect": false
+                }
+            ],
+            "Vertices": [
+                {
+                    "Position": {
+                        "X": 0,
+                        "Y": 0.0
+                    },
+                    "Mobility": 1.0,
+                    "Delay": 1.0,
+                    "Acceleration": 1.0,
+                    "Radius": 0.0
+                },
+                {
+                    "Position": {
+                        "X": 0,
+                        "Y": 16.0
+                    },
+                    "Mobility": 0.83,
+                    "Delay": 0.81,
+                    "Acceleration": 1.12,
+                    "Radius": 16.0
+                }
+            ],
+            "Normalization": {
+                "Position": {
+                    "Minimum": -4.0,
+                    "Default": 0.0,
+                    "Maximum": 4.0
+                },
+                "Angle": {
+                    "Minimum": -24.0,
+                    "Default": 0.0,
+                    "Maximum": 24.0
                 }
             }
         }
