@@ -117,6 +117,16 @@
 			"Name": "轻风 · 驱动"
 		},
 		{
+			"Id": "ParamArmFollowR",
+			"GroupId": "ParamGroupNagatoSway",
+			"Name": "右前臂跟随"
+		},
+		{
+			"Id": "ParamArmFollowL",
+			"GroupId": "ParamGroupNagatoSway",
+			"Name": "左前臂跟随"
+		},
+		{
 			"Id": "ParamSwingFringeR",
 			"GroupId": "ParamGroupNagatoSway",
 			"Name": "右刘海摆动"

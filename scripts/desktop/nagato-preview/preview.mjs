@@ -10,10 +10,13 @@ const viewport = get('viewport')
 const status = get('status')
 const frames = [...document.querySelectorAll('[data-frame]')]
 const axes = { yaw: 'ParamAngleX', pitch: 'ParamAngleY', lift: 'ParamArmLift' }
-const air = 'ParamIdleAir'
-const breath = 'ParamBreath'
 const eyelids = ['ParamEyeLOpen', 'ParamEyeROpen']
-const eyeParams = [...eyelids, 'ParamEyeBallX', 'ParamEyeBallY']
+const idleParams = [
+  axes.yaw, axes.pitch, 'ParamAngleZ', 'ParamBodyAngleX', 'ParamBodyAngleY', 'ParamBodyAngleZ',
+  'ParamBreath', 'ParamIdleAir', 'ParamArmFollowR', 'ParamArmFollowL',
+  ...eyelids, 'ParamEyeBallX', 'ParamEyeBallY', 'ParamBrowLY', 'ParamBrowRY',
+]
+const headControls = ['yaw', 'pitch']
 const breezeGroup = '轻风待机'
 const smoothstep = x => x * x * (3 - 2 * x)
 
@@ -45,20 +48,21 @@ async function mount() {
     // Use an unregistered idle group. The viewer starts its breeze explicitly.
     idleMotionGroup: 'ManualPreview',
     motionPreload: MotionPreloadStrategy.NONE, checkMocConsistency: true,
-    breathDepth: 0, eyeBlink: false,
+    eyeBlink: false,
     textureOptions: { lod: 'full', preferCreateImageBitmap: false },
   })
   app.stage.addChild(model)
   const inner = model.internalModel
+  // The authored idle track supplies breath along with the head and body motion.
+  inner.breath.getParameters().clear()
   const core = inner.coreModel
   const indices = new Map(Array.from({ length: core.getParameterCount() }, (_, index) =>
     [core.getParameterId(index).getString().s, index]))
-  const required = [...Object.values(axes), ...eyeParams, 'ParamGlasses', air, breath]
+  const required = [...idleParams, axes.lift, 'ParamGlasses']
   if (required.some(id => !indices.has(id))) throw new Error('模型缺少审阅参数。')
   const write = (id, value) => core.setParameterValueByIndex(indices.get(id), value)
   const read = id => core.getParameterValueByIndex(indices.get(id))
-  const restBreath = core.getParameterDefaultValue(indices.get(breath))
-  const restEyes = eyeParams.map(id => [id, core.getParameterDefaultValue(indices.get(id))])
+  const restIdle = idleParams.map(id => [id, core.getParameterDefaultValue(indices.get(id))])
   const art = restBounds(inner)
   const crops = {
     full: art,
@@ -73,6 +77,8 @@ async function mount() {
   let playing = false
   let playRequest = 0
   let idle = false
+  let lastIdlePose
+  let idleStoppedAt = 0
   const idleButton = get('idle')
 
   const layout = () => {
@@ -103,17 +109,28 @@ async function mount() {
     setLift(0)
   })
 
-  // These inputs also drive physics, so write them before the solver runs.
+  // Start the clip from neutral each frame so manual head offsets never accumulate.
+  inner.on('beforeMotionUpdate', () => {
+    for (const [id, value] of restIdle) write(id, value)
+  })
   inner.on('afterMotionUpdate', () => {
-    for (const name of ['yaw', 'pitch']) write(axes[name], Number(get(name).value))
-    if (!idle) {
-      write(air, 0)
-      for (const [id, value] of restEyes) write(id, value)
+    if (idle) {
+      lastIdlePose = idleParams.map(read)
+    } else if (lastIdlePose) {
+      const elapsed = performance.now() - idleStoppedAt
+      if (elapsed >= 260) lastIdlePose = undefined
+      else {
+        const weight = 1 - smoothstep(elapsed / 260)
+        restIdle.forEach(([id, value], index) => write(id, value + (lastIdlePose[index] - value) * weight))
+      }
+    }
+    // Head offsets also drive hair physics.
+    for (const name of headControls) {
+      const id = axes[name]
+      write(id, read(id) + Number(get(name).value))
     }
   })
   inner.on('beforeModelUpdate', () => {
-    // Keep the comparison camera and stance stationary while inspecting the cloth.
-    write(breath, restBreath)
     write('ParamGlasses', Number(glasses))
     const elapsed = performance.now() - blinkStart
     if (elapsed < 285) {
@@ -130,7 +147,7 @@ async function mount() {
     for (const item of frames) item.setAttribute('aria-pressed', String(item === button))
     layout()
   }
-  for (const name of ['yaw', 'pitch']) get(name).oninput = () => {
+  for (const name of headControls) get(name).oninput = () => {
     get(`${name}-value`).value = `${get(name).value}°`
   }
   get('lift').oninput = () => {
@@ -145,7 +162,10 @@ async function mount() {
   const setIdle = enabled => {
     idle = enabled
     idleButton.setAttribute('aria-pressed', String(idle))
-    if (!enabled) inner.parallelMotionManager[0]?.stopAllMotions()
+    if (!enabled) {
+      idleStoppedAt = performance.now()
+      inner.parallelMotionManager[0]?.stopAllMotions()
+    }
   }
   idleButton.onclick = async () => {
     if (idle) {
@@ -183,8 +203,9 @@ async function mount() {
   get('reset').onclick = () => {
     stop()
     setIdle(false)
+    lastIdlePose = undefined
     setLift(0)
-    for (const name of ['yaw', 'pitch']) {
+    for (const name of headControls) {
       get(name).value = 0
       get(name).oninput()
     }
