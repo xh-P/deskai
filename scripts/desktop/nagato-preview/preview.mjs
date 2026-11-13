@@ -10,6 +10,9 @@ const viewport = get('viewport')
 const status = get('status')
 const frames = [...document.querySelectorAll('[data-frame]')]
 const axes = { yaw: 'ParamAngleX', pitch: 'ParamAngleY', lift: 'ParamArmLift' }
+const air = 'ParamIdleAir'
+const breath = 'ParamBreath'
+const breezeGroup = '轻风待机'
 const smoothstep = x => x * x * (3 - 2 * x)
 
 function restBounds(inner) {
@@ -36,8 +39,11 @@ async function mount() {
   })
   viewport.append(app.canvas)
   const model = await Live2DModel.from('/model/nagato-uniform-review.model3.json', {
-    autoUpdate: false, autoFocus: false, autoHitTest: false, idleMotionGroup: '',
+    autoUpdate: false, autoFocus: false, autoHitTest: false,
+    // Use an unregistered idle group. The viewer starts its breeze explicitly.
+    idleMotionGroup: 'ManualPreview',
     motionPreload: MotionPreloadStrategy.NONE, checkMocConsistency: true,
+    breathDepth: 0, eyeBlink: false,
     textureOptions: { lod: 'full', preferCreateImageBitmap: false },
   })
   app.stage.addChild(model)
@@ -45,13 +51,15 @@ async function mount() {
   const core = inner.coreModel
   const indices = new Map(Array.from({ length: core.getParameterCount() }, (_, index) =>
     [core.getParameterId(index).getString().s, index]))
-  const required = [...Object.values(axes), 'ParamEyeLOpen', 'ParamEyeROpen', 'ParamGlasses']
+  const required = [...Object.values(axes), 'ParamEyeLOpen', 'ParamEyeROpen', 'ParamGlasses', air, breath]
   if (required.some(id => !indices.has(id))) throw new Error('模型缺少审阅参数。')
   const write = (id, value) => core.setParameterValueByIndex(indices.get(id), value)
   const read = id => core.getParameterValueByIndex(indices.get(id))
+  const restBreath = core.getParameterDefaultValue(indices.get(breath))
   const art = restBounds(inner)
   const crops = {
     full: art,
+    upper: { ...art, y: art.y - art.height * 0.009, height: art.height * 0.603 },
     head: { ...art, y: art.y - art.height * 0.012, height: art.height * 0.36 },
     arm: { ...art, y: art.y + art.height * 0.218, height: art.height * 0.414 },
   }
@@ -61,6 +69,8 @@ async function mount() {
   let glasses = false
   let playing = false
   let playRequest = 0
+  let idle = false
+  const idleButton = get('idle')
 
   const layout = () => {
     const { width, height } = app.screen
@@ -90,8 +100,14 @@ async function mount() {
     setLift(0)
   })
 
-  inner.on('beforeModelUpdate', () => {
+  // These inputs also drive physics, so write them before the solver runs.
+  inner.on('afterMotionUpdate', () => {
     for (const name of ['yaw', 'pitch']) write(axes[name], Number(get(name).value))
+    if (!idle) write(air, 0)
+  })
+  inner.on('beforeModelUpdate', () => {
+    // Keep the comparison camera and stance stationary while inspecting the cloth.
+    write(breath, restBreath)
     write('ParamGlasses', Number(glasses))
     const elapsed = performance.now() - blinkStart
     const open = elapsed < 100 ? 1 - smoothstep(elapsed / 100)
@@ -119,6 +135,29 @@ async function mount() {
     glasses = !glasses
     get('glasses').setAttribute('aria-pressed', String(glasses))
   }
+  const setIdle = enabled => {
+    idle = enabled
+    idleButton.setAttribute('aria-pressed', String(idle))
+    if (!enabled) inner.parallelMotionManager[0]?.stopAllMotions()
+  }
+  idleButton.onclick = async () => {
+    if (idle) {
+      setIdle(false)
+      return
+    }
+    idleButton.disabled = true
+    get('reset').disabled = true
+    try {
+      const [started] = await model.parallelMotion([{ group: breezeGroup, index: 0, priority: MotionPriority.FORCE, loop: true }])
+      if (!started) throw new Error('轻风待机动作未能播放。')
+      setIdle(true)
+    } catch (error) {
+      status.textContent = error.message
+    } finally {
+      idleButton.disabled = false
+      get('reset').disabled = false
+    }
+  }
   get('play').onclick = async () => {
     if (playing) { stop(); return }
     const request = ++playRequest
@@ -136,6 +175,7 @@ async function mount() {
   }
   get('reset').onclick = () => {
     stop()
+    setIdle(false)
     setLift(0)
     for (const name of ['yaw', 'pitch']) {
       get(name).value = 0

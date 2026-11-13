@@ -14,6 +14,7 @@
         <div class="viewport" id="viewport"></div>
         <div class="frames" role="group" aria-label="取景">
           <button type="button" data-frame="full" aria-pressed="true">全身</button>
+          <button type="button" data-frame="upper" aria-pressed="false">上半身</button>
           <button type="button" data-frame="head" aria-pressed="false">头肩</button>
           <button type="button" data-frame="arm" aria-pressed="false">袖臂</button>
         </div>
@@ -36,6 +37,7 @@
             <button id="blink" type="button">眨眼</button>
             <button id="glasses" type="button" aria-pressed="false">眼镜</button>
           </div>
+          <button id="idle" class="idle" type="button" aria-pressed="false">轻风待机</button>
           <div class="arm">
             <label class="slider">右臂抬手 <output id="lift-value">0%</output>
               <input id="lift" type="range" min="0" max="100" value="0">

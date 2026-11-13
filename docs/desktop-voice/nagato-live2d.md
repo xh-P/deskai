@@ -2,11 +2,21 @@
 
 ## 新版常服交互审阅
 
-在项目根目录运行 `npm run desktop:preview-nagato`，打开终端显示的本地网址。首次准备 Cubism Core 时先运行 `npm run desktop:prepare-live2d`。预览可以左右转头、抬头低头、眨眼、开关眼镜和播放右臂抬手。选择「袖臂」并拖动滑杆，可以停在动作中间查看遮盖。角色页也可通过「导入模型」打开小样。[模型清单](../../apps/desktop/models/live2d/nagato-uniform-review/nagato-uniform-review.model3.json) · [可编辑工程](../../apps/desktop/models/live2d/nagato-uniform-review/nagato-uniform-review.cmo3)
+在项目根目录运行 `npm run desktop:preview-nagato`，打开终端显示的本地网址。首次准备 Cubism Core 时先运行 `npm run desktop:prepare-live2d`。点「轻风待机」播放八秒循环，选「上半身」可同时观察发梢和裙摆。预览还可转头、眨眼、开关眼镜和检查早先的右臂抬手。角色页可通过「导入模型」打开小样。[模型清单](../../apps/desktop/models/live2d/nagato-uniform-review/nagato-uniform-review.model3.json)
+
+常服使用 76 个网格、33 个参数。三组刘海、左右侧发、后颈发束、左右飘带、开衫下摆和裙摆各有弯曲变形器，支点固定在根部或衣物接缝，末端随各自的摆锤响应。刘海与对应发影共用变形器。轻风动作驱动模型中的物理输入，停止后摆动逐渐收住。手动转头也会带动发梢。[Cubism 物理](https://docs.live2d.com/en/cubism-editor-manual/physics-operation/)
 
 小样从已审阅的 72 层常服 PSD 起模，加入四张 GPT 补绘的中段袖臂图层。右肩固定在衣领下，抬手参数联动上臂、前臂、袖口和手。前臂随视角缩短，手背和指尖单独配准。抬手从垂手出发，抬到腰前稍停后放下，动作以 `.motion3.json` 随模型导出。[PSD2Live 3.6.7](https://github.com/tsunehimatoi/psd2live/tree/v3.6.7) · [Cubism 绘制顺序](https://docs.live2d.com/en/cubism-editor-manual/draworder/) · [Cubism 姿势切换](https://docs.live2d.com/en/cubism-editor-manual/change-pose/) · [Inkinesis](https://github.com/codewayco/Inkinesis)
 
-已复开可编辑工程，核对 76 个网格、22 个参数及默认站姿。Chrome WebGL 验证了连续抬手、眨眼和眼镜开关，DeskAI 模型库通过导入和重新读取。抬手在 46%、47%、50%、82%、83% 和完全抬起时检查了肩袖和手腕。两处切换会随手腕转动切换袖褶和手指画法，实际观感在交互审阅时确认。常服通过评审后进入魔法服制作。
+PSD2Live 工程和 CMO3 回读均有 76 个网格、33 个参数及新增的 10 个变形器。已比对本轮和上一轮静止渲染，默认站姿轮廓重合。Chrome WebGL 测得发梢、飘带和衣摆顶点约 3 至 7 像素的位移，发顶、鼻子、衣领、结心和鞋的网格在轻风待机中保持固定。抬手在 46%、47%、50%、82%、83% 和完全抬起时检查过肩袖和手腕，仍有两处袖褶和手指换稿待继续精修。常服通过评审后进入魔法服制作。
+
+## 手动编辑新版常服
+
+Windows 桌面双击「长门有希 常服编辑」即可启动中文版 PSD2Live 并打开「文档 → 长门有希 Live2D」下的常服工程。编辑器已有打开的工程时，快捷方式保留当前编辑会话，常服可从「最近」打开。在另一台 Windows 电脑配置时，可用 PowerShell 运行 [编辑器准备脚本](../../scripts/desktop/prepare-nagato-editor.ps1)。脚本安装 PSD2Live 便携版、复制工程并建立快捷方式，自动打开需本机的 Python。
+
+- **调网格或关键形**。在「绑定」工作区从层级树选择部件。在「编辑」模式调三角网格，在「变形」模式选择参数键并调形状。
+- **调摆幅和速度**。右键刘海、飘带或衣摆变形器选「编辑摇摆」，拖动尖端和支点。在「物理」面板选同名组调整倍率和收敛速度。动画工作区可打开「轻风待机」。
+- **保存并导出**。保存 PSD2Live 工程会写入「文档」中的编辑副本。完成后可用编辑器导出 Cubism 模型。仓库保存原始可编辑工程和供运行时加载的资源。[PSD2Live 工程](../../apps/desktop/models/live2d/nagato-uniform-review/nagato-uniform-review.psd2live) · [CMO3 工程](../../apps/desktop/models/live2d/nagato-uniform-review/nagato-uniform-review.cmo3)
 
 ## 在桌面使用
 
