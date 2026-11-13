@@ -16,8 +16,9 @@
         "tracks": {
           "base": ["ParamIdleAir", "ParamEyeLOpen", "ParamEyeROpen"],
           "head": ["ParamAngleX", "ParamAngleY", "ParamAngleZ"],
-          "body": ["ParamBodyAngleX", "ParamBodyAngleY", "ParamBodyAngleZ", "ParamBreath"],
-          "arms": ["ParamArmShoulderR", "ParamArmShoulderL", "ParamArmFollowR", "ParamArmFollowL", "ParamArmWristR", "ParamArmWristL"],
+          "body": ["ParamWeightShift", "ParamBodyAngleX", "ParamBodyAngleY", "ParamBodyAngleZ", "ParamBreath"],
+          "arms": ["ParamArmShoulderR", "ParamArmShoulderL", "ParamArmFollowR", "ParamArmFollowL"],
+          "legs": ["ParamLegGatherR", "ParamLegGatherL"],
           "eyes": ["ParamEyeBallX", "ParamEyeBallY", "ParamBrowLY", "ParamBrowRY"]
         },
         "physics": {

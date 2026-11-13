@@ -2,12 +2,12 @@ import type { PetState } from './types.ts';
 
 export type Live2DCue = PetState | 'tap';
 export type Live2DMotion = { group: string; index: number };
-export const live2DIdleParts = ['head', 'body', 'arms', 'hair', 'clothes', 'eyes'] as const;
+export const live2DIdleParts = ['head', 'body', 'arms', 'legs', 'hair', 'clothes', 'eyes'] as const;
 export type Live2DIdlePart = typeof live2DIdleParts[number];
 export type Live2DIdleTuning = Record<Live2DIdlePart | 'speed', number>;
 export const live2DIdleLimits = { speed: [0.5, 2], amplitude: [0, 1.6] } as const;
 export const defaultLive2DIdleTuning: Live2DIdleTuning = {
-  speed: 1, head: 1, body: 1, arms: 1, hair: 1, clothes: 1, eyes: 1,
+  speed: 1, head: 1, body: 1, arms: 1, legs: 1, hair: 1, clothes: 1, eyes: 1,
 };
 export type Live2DIdleRig = {
   motion: Live2DMotion;

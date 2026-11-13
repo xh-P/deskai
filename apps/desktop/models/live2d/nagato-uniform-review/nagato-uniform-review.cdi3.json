@@ -200,6 +200,21 @@
 			"Id": "ParamArmWristL",
 			"GroupId": "ParamGroupNagatoArms",
 			"Name": "左手腕转动"
+		},
+		{
+			"Id": "ParamWeightShift",
+			"GroupId": "ParamGroupNagatoStance",
+			"Name": "重心偏移"
+		},
+		{
+			"Id": "ParamLegGatherR",
+			"GroupId": "ParamGroupNagatoStance",
+			"Name": "右腿收合"
+		},
+		{
+			"Id": "ParamLegGatherL",
+			"GroupId": "ParamGroupNagatoStance",
+			"Name": "左腿收合"
 		}
 	],
 	"ParameterGroups": [
@@ -242,6 +257,11 @@
 			"Id": "ParamGroupNagatoArms",
 			"GroupId": "",
 			"Name": "手臂关节"
+		},
+		{
+			"Id": "ParamGroupNagatoStance",
+			"GroupId": "",
+			"Name": "重心与双腿"
 		}
 	],
 	"Parts": [

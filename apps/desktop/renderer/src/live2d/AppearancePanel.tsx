@@ -20,7 +20,7 @@ const cueLabels: { key: Live2DCue; label: string }[] = [
 const mouthLabels = { open: '开合', form: '嘴角', wide: '展唇', round: '圆唇' } as const
 const motionLabel = ({ group, index }: Live2DMotion) => `${group} · ${index + 1}`
 const idleSliders = [
-  ['speed', '待机速度'], ['head', '头部转动'], ['body', '身体与呼吸'], ['arms', '手臂转动'],
+  ['speed', '待机速度'], ['head', '头部转动'], ['body', '重心、身体与呼吸'], ['arms', '手臂转动'], ['legs', '腿部收放'],
   ['hair', '头发摆动'], ['clothes', '衣摆与飘带'], ['eyes', '视线变化'],
 ] as const satisfies readonly (readonly [keyof Live2DIdleTuning, string])[]
 const previewTabs = [['motion', '运动'], ['shape', '形变'], ['pose', '姿态测试']] as const
@@ -116,6 +116,11 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
       .filter(group => group.tracks.length)
       .sort((a, b) => ids.indexOf(a.tracks[0].id) - ids.indexOf(b.tracks[0].id))
   }, [groups, selectedLayer])
+  const motionGroups = useMemo(() => {
+    const ids = new Set(Object.values(entry?.idle?.tracks ?? {}).flat())
+    return layerGroups.map(group => ({ ...group, tracks: group.tracks.filter(track => ids.has(track.id)) }))
+      .filter(group => group.tracks.length)
+  }, [entry, layerGroups])
   const reduced = !!snapshot && !petMotionEnabled(snapshot.motionMode, matchMedia('(prefers-reduced-motion: reduce)').matches)
   const idle = profile?.idle ? draft.idle ?? defaultLive2DIdleTuning : undefined
   const poseTest = mode === 'pose' && groups.length > 0
@@ -301,7 +306,7 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
         </div>
         {poseTest ? <PoseControls groups={layerGroups.length ? layerGroups : groups} values={poseValues} disabled={!loaded || busy}
           change={(id, value) => setPoseValues(prev => ({ ...prev, [id]: value }))} reset={() => setPoseValues(noPose)} />
-          : mode !== 'pose' && <LayerInspector layer={selectedLayer} profile={profile} groups={layerGroups} mode={mode}
+          : mode !== 'pose' && <LayerInspector layer={selectedLayer} profile={profile} groups={motionGroups} mode={mode}
             disabled={!loaded || busy} update={update} />}
       </>}
       {idle && <details className="appearance-idle">
@@ -311,6 +316,7 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
         <div className="appearance-tuning">
           {idleSliders.map(([key, label]) => {
             const speed = key === 'speed'
+            if (!speed && !profile?.idle?.tracks[key]?.length && !profile?.idle?.physics[key]?.length) return null
             const [min, max] = live2DIdleLimits[speed ? 'speed' : 'amplitude']
             const value = idle[key]
             return <label key={key} className={speed ? 'appearance-speed' : undefined}>

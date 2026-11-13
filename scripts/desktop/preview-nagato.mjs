@@ -1,11 +1,15 @@
 import { access, copyFile, mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
+import { parseArgs } from 'node:util'
 import { createServer } from 'vite'
 
 const project = path.resolve(import.meta.dirname, '../..')
+const { values: { port: portOption } } = parseArgs({ options: { port: { type: 'string', default: '5179' } } })
+const port = Number(portOption)
+if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('预览端口无效。')
 const core = path.join(project, '.cache/live2d/live2dcubismcore.min.js')
 const bundle = path.join(project, 'apps/desktop/models/live2d/nagato-uniform-review')
-const publicDir = path.join(project, '.cache/nagato-preview/public')
+const publicDir = path.join(project, '.cache/nagato-preview', String(port), 'public')
 
 try { await access(core) }
 catch { throw new Error('请先运行 npm run desktop:prepare-live2d。') }
@@ -28,7 +32,7 @@ const server = await createServer({
   root: path.join(import.meta.dirname, 'nagato-preview'),
   publicDir,
   configFile: false,
-  server: { host: '127.0.0.1', port: 5179 },
+  server: { host: '127.0.0.1', port, strictPort: true },
 })
 await server.listen()
 server.printUrls()

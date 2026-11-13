@@ -17,6 +17,7 @@
           <button type="button" data-frame="upper" aria-pressed="false">上半身</button>
           <button type="button" data-frame="head" aria-pressed="false">头肩</button>
           <button type="button" data-frame="arm" aria-pressed="false">袖臂</button>
+          <button type="button" data-frame="legs" aria-pressed="false">腿脚</button>
         </div>
         <p class="status" id="status" role="status">正在加载模型…</p>
       </section>
@@ -37,7 +38,10 @@
             <button id="blink" type="button">眨眼</button>
             <button id="glasses" type="button" aria-pressed="false">眼镜</button>
           </div>
-          <button id="idle" class="idle" type="button" aria-pressed="false">轻风待机</button>
+          <button id="idle" class="idle" type="button" aria-pressed="false">播放待机</button>
+          <label class="slider timeline">待机时间 <output id="time-value">0.00 s</output>
+            <input id="time" type="range" min="0" max="0" step="0.01" value="0">
+          </label>
           <button id="reset" type="button" class="reset">复位</button>
         </fieldset>
       </aside>

@@ -1,6 +1,9 @@
 import 'pixi.js/unsafe-eval'
 import { Application, extensions } from 'pixi.js'
-import { configureCubismSDK, Live2DModel, Live2DPlugin, MotionPreloadStrategy, MotionPriority } from 'untitled-pixi-live2d-engine/cubism'
+import { configureCubismSDK, Live2DModel, Live2DPlugin, MotionPreloadStrategy } from 'untitled-pixi-live2d-engine/cubism'
+import config from '../../../config/live2d-models.json'
+import { defaultLive2DStyle } from '../../../packages/desktop-pet/src/live2d.ts'
+import { IdleMotion } from '../../../apps/desktop/renderer/src/live2d/idle-motion.ts'
 
 extensions.add(Live2DPlugin)
 configureCubismSDK({ memorySizeMB: 64 })
@@ -11,14 +14,8 @@ const status = get('status')
 const frames = [...document.querySelectorAll('[data-frame]')]
 const axes = { yaw: 'ParamAngleX', pitch: 'ParamAngleY' }
 const eyelids = ['ParamEyeLOpen', 'ParamEyeROpen']
-const idleParams = [
-  axes.yaw, axes.pitch, 'ParamAngleZ', 'ParamBodyAngleX', 'ParamBodyAngleY', 'ParamBodyAngleZ',
-  'ParamBreath', 'ParamIdleAir',
-  'ParamArmShoulderR', 'ParamArmShoulderL', 'ParamArmFollowR', 'ParamArmFollowL', 'ParamArmWristR', 'ParamArmWristL',
-  ...eyelids, 'ParamEyeBallX', 'ParamEyeBallY', 'ParamBrowLY', 'ParamBrowRY',
-]
 const headControls = ['yaw', 'pitch']
-const breezeGroup = '轻风待机'
+const rig = config.bundled.find(model => model.id === 'nagato-uniform').idle
 const smoothstep = x => x * x * (3 - 2 * x)
 
 function restBounds(inner) {
@@ -46,7 +43,7 @@ async function mount() {
   viewport.append(app.canvas)
   const model = await Live2DModel.from('/model/nagato-uniform-review.model3.json', {
     autoUpdate: false, autoFocus: false, autoHitTest: false,
-    // Use an unregistered idle group. The viewer starts its breeze explicitly.
+    // The review uses the same authored idle sampler as the desktop preview.
     idleMotionGroup: 'ManualPreview',
     motionPreload: MotionPreloadStrategy.NONE, checkMocConsistency: true,
     eyeBlink: false,
@@ -54,31 +51,31 @@ async function mount() {
   })
   app.stage.addChild(model)
   const inner = model.internalModel
-  // The authored idle track supplies breath along with the head and body motion.
-  inner.breath.getParameters().clear()
   const core = inner.coreModel
   const indices = new Map(Array.from({ length: core.getParameterCount() }, (_, index) =>
     [core.getParameterId(index).getString().s, index]))
-  const required = [...idleParams, 'ParamGlasses']
+  const required = [...Object.values(rig.tracks).flat(), 'ParamGlasses']
   if (required.some(id => !indices.has(id))) throw new Error('模型缺少审阅参数。')
   const write = (id, value) => core.setParameterValueByIndex(indices.get(id), value)
   const read = id => core.getParameterValueByIndex(indices.get(id))
-  const restIdle = idleParams.map(id => [id, core.getParameterDefaultValue(indices.get(id))])
+  const idle = await IdleMotion.load(inner, [...indices.keys()], rig)
   const art = restBounds(inner)
   const crops = {
     full: art,
     upper: { ...art, y: art.y - art.height * 0.009, height: art.height * 0.603 },
     head: { ...art, y: art.y - art.height * 0.012, height: art.height * 0.36 },
     arm: { ...art, y: art.y + art.height * 0.218, height: art.height * 0.414 },
+    legs: { ...art, y: art.y + art.height * 0.51, height: art.height * 0.49 },
   }
   let frame = 'full'
   let frameSize = ''
   let blinkStart = -Infinity
   let glasses = false
-  let idle = false
-  let lastIdlePose
-  let idleStoppedAt = 0
+  let playing = true
+  let scrub
   const idleButton = get('idle')
+  const time = get('time')
+  time.max = String(idle.duration)
 
   const layout = () => {
     const { width, height } = app.screen
@@ -88,27 +85,13 @@ async function mount() {
     model.position.set((width - crop.width * scale) / 2 - crop.x * scale,
       (height - crop.height * scale) / 2 - crop.y * scale)
   }
-  // Start the clip from neutral each frame so manual head offsets never accumulate.
-  inner.on('beforeMotionUpdate', () => {
-    for (const [id, value] of restIdle) write(id, value)
-  })
-  inner.on('afterMotionUpdate', () => {
-    if (idle) {
-      lastIdlePose = idleParams.map(read)
-    } else if (lastIdlePose) {
-      const elapsed = performance.now() - idleStoppedAt
-      if (elapsed >= 260) lastIdlePose = undefined
-      else {
-        const weight = 1 - smoothstep(elapsed / 260)
-        restIdle.forEach(([id, value], index) => write(id, value + (lastIdlePose[index] - value) * weight))
-      }
-    }
-    // Head offsets also drive hair physics.
+  inner.updateNaturalMovements = () => {
+    idle.apply()
     for (const name of headControls) {
       const id = axes[name]
       write(id, read(id) + Number(get(name).value))
     }
-  })
+  }
   inner.on('beforeModelUpdate', () => {
     write('ParamGlasses', Number(glasses))
     const elapsed = performance.now() - blinkStart
@@ -132,35 +115,24 @@ async function mount() {
     glasses = !glasses
     get('glasses').setAttribute('aria-pressed', String(glasses))
   }
-  const setIdle = enabled => {
-    idle = enabled
-    idleButton.setAttribute('aria-pressed', String(idle))
-    if (!enabled) {
-      idleStoppedAt = performance.now()
-      inner.parallelMotionManager[0]?.stopAllMotions()
-    }
+  const syncPlayButton = () => {
+    idleButton.setAttribute('aria-pressed', String(playing))
+    idleButton.textContent = playing ? '暂停待机' : '播放待机'
   }
-  idleButton.onclick = async () => {
-    if (idle) {
-      setIdle(false)
-      return
-    }
-    idleButton.disabled = true
-    get('reset').disabled = true
-    try {
-      const [started] = await model.parallelMotion([{ group: breezeGroup, index: 0, priority: MotionPriority.FORCE, loop: true }])
-      if (!started) throw new Error('轻风待机动作未能播放。')
-      setIdle(true)
-    } catch (error) {
-      status.textContent = error.message
-    } finally {
-      idleButton.disabled = false
-      get('reset').disabled = false
-    }
+  idleButton.onclick = () => {
+    scrub = playing ? idle.playhead : undefined
+    playing = !playing
+    syncPlayButton()
+  }
+  time.oninput = () => {
+    scrub = Number(time.value)
+    playing = false
+    syncPlayButton()
   }
   get('reset').onclick = () => {
-    setIdle(false)
-    lastIdlePose = undefined
+    playing = false
+    scrub = 0
+    syncPlayButton()
     for (const name of headControls) {
       get(name).value = 0
       get(name).oninput()
@@ -175,8 +147,13 @@ async function mount() {
       frameSize = size
       layout()
     }
-    model.update(Math.min(40, ticker.deltaMS))
+    const dt = Math.min(40, ticker.deltaMS)
+    idle.prepare(dt, playing, defaultLive2DStyle, false, scrub)
+    if (playing || scrub === 0) time.value = String(idle.playhead)
+    get('time-value').textContent = `${idle.playhead.toFixed(2)} / ${idle.duration.toFixed(2)} s`
+    model.update(dt)
   })
+  syncPlayButton()
   get('controls').disabled = false
   status.textContent = ''
 }
