@@ -45,7 +45,7 @@ Work 会话使用 `deskai-work` dsh 预设。默认等待问题进入可在桌�
 
 ## Live2D 桌宠
 
-桌宠默认显示现有长门造型。首次使用 Live2D 时运行 `npm run desktop:prepare-live2d`，再启动桌面。命令将已校验的 Cubism Core 5.2 与官方样例放入 `.cache/live2d`。在「角色」页的「桌宠模型」选择长门常服、魔法服、官方样例或导入本地 `.model3.json`。预览并调好取景、状态和口型后，点「应用到角色」切换桌宠。选择「静态造型」并应用可切回静态桌宠。[长门模型](./nagato-live2d.md) · [版本配置](../../config/live2d-models.json) · [Cubism 下载与许可](https://www.live2d.com/en/sdk/download/web/)
+桌宠默认显示现有长门造型。首次使用 Live2D 时运行 `npm run desktop:prepare-live2d`，再启动桌面。命令将已校验的 Cubism Core 5.2 与官方样例放入 `.cache/live2d`。在「角色 → 模型与动作」可选择常服、魔法服和官方样例，也可导入本地 `.model3.json`。常服的速度和幅度可在预览旁直接微调。点「应用到角色」更新桌宠，选择「静态造型」并应用可切回静态桌宠。[长门模型](./nagato-live2d.md) · [版本配置](../../config/live2d-models.json) · [Cubism 下载与许可](https://www.live2d.com/en/sdk/download/web/)
 
 `%APPDATA%\DeskAI2\live2d-library.json` 保存导入模型路径、调校和角色绑定。导入的模型包保留原路径，支持 PNG、JPEG 和 WebP 贴图。桌宠尺寸和位置继续在 `pet-settings.json` 中保存。[长门素材与调校](./live2d-tuning.md)
 

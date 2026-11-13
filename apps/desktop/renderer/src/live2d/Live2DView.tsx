@@ -55,6 +55,7 @@ export default function Live2DView(props: Props) {
   }, [context])
 
   useEffect(() => stage.current?.model(profile), [profile])
+  useEffect(() => stage.current?.frame(), [props.framing])
   useEffect(() => stage.current?.show(enabled), [enabled])
   return <div ref={host} className="live2d-view" role="img" aria-label={profile.name} data-model={profile.id} />
 }

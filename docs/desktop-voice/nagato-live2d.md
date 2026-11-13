@@ -1,18 +1,20 @@
 # 长门有希 Live2D
 
-## 新版常服交互审阅
+## 在角色页微调常服
 
-在项目根目录运行 `npm run desktop:preview-nagato`，打开终端显示的本地网址。首次准备 Cubism Core 时先运行 `npm run desktop:prepare-live2d`。点「轻风待机」播放四秒循环。选「全身」看重心和裙摆，选「上半身」看呼吸、肩臂跟随和眨眼。预览支持在待机中叠加手动转头、眨眼、眼镜和抬手。角色页可通过「导入模型」打开小样。[模型清单](../../apps/desktop/models/live2d/nagato-uniform-review/nagato-uniform-review.model3.json)
+打开 DeskAI 的「角色 → 模型与动作」，在「桌宠模型」选「长门有希 · 常服」。左侧会播放待机，可切换全身或半身、暂停待机、试眨眼及开关眼镜。右侧的「待机微调」可以直接改速度，以及头、身体、手臂、头发、衣摆和视线的幅度。原始节奏是 4 秒一轮，`1.25×` 约为 3.2 秒一轮。幅度 `100%` 是原始值，`0%` 将对应的待机变形归零。
 
-常服使用 76 个网格、37 个参数。参考虹色真央的头身与袖臂曲线，待机用 16 条可编辑轨道驱动侧视、转头与歪头、眨眼、眉毛、肩胸呼吸和轻微重心转移。左右前臂各用一个变形器，肩根固定在衣身，肘下弯曲带着袖口和手一起跟随。刘海、侧发、后颈发、飘带、开衫下摆、裙摆和袖子仍由各自的摆锤响应。关掉待机时，头身和手臂先缓回站姿，衣发随后收住。手动转头也会带动发梢。[虹色真央](https://www.live2d.com/zh-CHS/learn/sample/niziiro-mao/) · [Cubism 物理](https://docs.live2d.com/en/cubism-editor-manual/physics-operation/)
+拖动滑杆即时更新预览，点「应用到角色」保存模型、待机参数及眼镜状态，并更新桌宠。「恢复默认」将所有待机滑杆恢复到原始值，可以预览后再应用。角色资料、声音和设备设置在同页的「角色与声音」里。首次准备 Cubism Core 时运行 `npm run desktop:prepare-live2d`。从旧版本运行中的桌面客户端切换时，退出托盘中的客户端再启动源码版。
 
-小样从已审阅的 72 层常服 PSD 起模，加入四张 GPT 补绘的中段袖臂图层。右肩固定在衣领下，抬手参数联动上臂、前臂、袖口和手。前臂随视角缩短，手背和指尖单独配准。抬手从垂手出发，抬到腰前稍停后放下，动作以 `.motion3.json` 随模型导出。[PSD2Live 3.6.7](https://github.com/tsunehimatoi/psd2live/tree/v3.6.7) · [Cubism 绘制顺序](https://docs.live2d.com/en/cubism-editor-manual/draworder/) · [Cubism 姿势切换](https://docs.live2d.com/en/cubism-editor-manual/change-pose/) · [Inkinesis](https://github.com/codewayco/Inkinesis)
+## 常服模型
 
-PSD2Live 工程和 CMO3 回读均有 12 个摇摆变形器及 2 个前臂跟随变形器，默认站姿轮廓与上一版重合。Chrome WebGL 中，待机的发顶网格最大位移约 25 个模型画布像素，衣领和手部约 8 至 10 像素，鞋底落点固定。独立测试了呼吸及左右前臂轨道，也检查了待机叠加转头、眼镜和抬手。高位抬手时内腋处还有一小块空隙，中段袖褶与手指仍待精修。常服通过评审后进入魔法服制作。
+常服使用 68 个网格、36 个参数、12 个摇摆变形器和 2 个前臂跟随变形器。参考虹色真央的头身与袖臂曲线，16 条待机轨道驱动侧视、歪头、眨眼、眉毛、肩胸呼吸和重心转移。左右前臂各用一个变形器，肘下弯曲带着袖口和手一起跟随。发束、飘带、衣摆和袖子由各自的摆锤响应。浏览器审阅入口仍可通过 `npm run desktop:preview-nagato` 打开。[模型清单](../../apps/desktop/models/live2d/nagato-uniform-review/nagato-uniform-review.model3.json) · [虹色真央](https://www.live2d.com/zh-CHS/learn/sample/niziiro-mao/)
+
+当前工程已删除抬手动作、`ParamArmLift` 和八张抬手备用图层。原截图中的青色轮廓对应其中的 `Hand R raised`。该差分在垂手时透明，选中后仍会画出网格边线。PSD2Live 与 CMO3 回读验证通过，Cubism 在六组垂手姿态中测得保留网格的位置和透明度与上版一致。
 
 ## 手动编辑新版常服
 
-Windows 桌面双击「长门有希 常服编辑」即可启动中文版 PSD2Live 并打开「文档 → 长门有希 Live2D」下的常服工程。编辑器已有打开的工程时，快捷方式保留当前编辑会话，常服可从「最近」打开。在另一台 Windows 电脑配置时，可用 PowerShell 运行 [编辑器准备脚本](../../scripts/desktop/prepare-nagato-editor.ps1)。脚本安装 PSD2Live 便携版、复制工程并建立快捷方式，自动打开需本机的 Python。
+Windows 桌面双击「长门有希 常服编辑」即可启动中文版 PSD2Live 并打开「文档 → 长门有希 Live2D」下的常服工程。已有编辑会话时，可从「文件 → 打开工程」选择新版。另存的本机更新版名为「长门有希 常服（已清理抬手）.psd2live」。另一台 Windows 电脑可用 PowerShell 运行编辑器准备脚本，安装便携版、复制工程并建立快捷方式，自动打开需本机的 Python。[编辑器准备脚本](../../scripts/desktop/prepare-nagato-editor.ps1)
 
 - **调哪一块、怎么变形**。进入「绑定」，在层级树选「右袖与手腕」等变形器，右键点「编辑摇摆…」。拖空心方块调整固定边，拖菱形调整柔软度，拖尖端圆点调整形变幅度，点「预览摆动」，确认后点「应用」。要手改关键形，在参数面板展开「轻风与衣发摆动」，选对应参数的 `-1` 或 `1`，切到「变形」拖控制点。修改三角网格的布点用「编辑」模式。
 - **调单个部件的幅度和跟随**。打开「物理」工作区，选「右袖与手腕」「左侧发」等同名组。到「输出」调「倍率」，到「摆锤设置」调「反应速度」和「收敛速度」。在左侧预览打开物理，拖动摆锤画布检查跟随和回稳。
@@ -25,7 +27,7 @@ Windows 桌面双击「长门有希 常服编辑」即可启动中文版 PSD2Liv
 
 启动源码版桌面，打开「角色」，在「桌宠模型」选择「长门有希 · 常服」或「长门有希 · 魔法服」，预览后点「应用到角色」。首次使用时，如界面提示 Cubism Core 未准备，运行 `npm run desktop:prepare-live2d` 后重新启动。两套都以全身取景打开。近看嘴型可改为「主播半身」。[外观配置](../../config/live2d-models.json)
 
-- **常服**保留棕色开衫、蓝色水手服和怀中的书。[静态原画](../../apps/desktop/renderer/public/pet/uniform-normal/idle.png) · [模型清单](../../apps/desktop/models/live2d/nagato-uniform/nagato-uniform.model3.json) · [可编辑工程](../../apps/desktop/models/live2d/nagato-uniform/nagato-uniform.cmo3)
+- **常服**使用棕色开衫、蓝色水手服和双手自然下垂的站姿，带可切换的眼镜和可微调的待机。[模型清单](../../apps/desktop/models/live2d/nagato-uniform-review/nagato-uniform-review.model3.json) · [可编辑工程](../../apps/desktop/models/live2d/nagato-uniform-review/nagato-uniform-review.cmo3)
 - **魔法服**保留尖帽、斗篷和星形魔杖。帽檐随头部运动，斗篷下摆随头身运动摆动。[静态原画](../../apps/desktop/renderer/public/pet/witch-normal/idle.png) · [模型清单](../../apps/desktop/models/live2d/nagato-witch/nagato-witch.model3.json) · [可编辑工程](../../apps/desktop/models/live2d/nagato-witch/nagato-witch.cmo3)
 
 两套都支持头身转动、视线、眨眼、呼吸、发丝物理及按 PCM 驱动的开合与展圆口形。倾听和思考使用各自的表情预设，轻点桌宠可播放点头。在角色页可单独预览待机、眨眼、点头、摇头和三个表情。

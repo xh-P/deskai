@@ -51,13 +51,7 @@ fieldset:disabled { opacity: .55; }
 .slider input { grid-column: 1 / -1; width: 100%; margin: 0; min-height: 22px; }
 .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .idle { width: 100%; margin-top: 8px; }
-.arm { padding: 22px 0 15px; margin-top: 20px; border-top: 1px solid #e6dfe9; }
-.arm .slider { margin-bottom: 0; }
-.ends { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 15px; }
-.primary { width: 100%; background: #5c476b; color: #fff; border-color: #5c476b; }
-.primary:hover { background: #4d3a5b; color: #fff; }
-.hint { font-size: 12px; line-height: 1.6; color: #665973; margin: 12px 0 0; }
-.reset { font-size: 13px; }
+.reset { font-size: 13px; margin-top: 15px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (max-width: 740px) {
   .review { grid-template-columns: 1fr; padding: 12px; gap: 12px; }

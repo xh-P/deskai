@@ -2,11 +2,6 @@
 	"Version": 3,
 	"Parameters": [
 		{
-			"Id": "ParamArmLift",
-			"GroupId": "",
-			"Name": "Right arm lift"
-		},
-		{
 			"Id": "ParamGlasses",
 			"GroupId": "",
 			"Name": "Glasses"
@@ -436,38 +431,6 @@
 		{
 			"Id": "ArtMeshNeckwearR",
 			"Name": "Right collar"
-		},
-		{
-			"Id": "ArtMeshLayer11",
-			"Name": "Cuff R raised"
-		},
-		{
-			"Id": "ArtMeshLayer12",
-			"Name": "Forearm sleeve R raised"
-		},
-		{
-			"Id": "ArtMeshLayer13",
-			"Name": "Upper sleeve R raised"
-		},
-		{
-			"Id": "ArtMeshHandwear",
-			"Name": "Hand R raised"
-		},
-		{
-			"Id": "ArtMeshLayer14",
-			"Name": "Cuff R mid"
-		},
-		{
-			"Id": "ArtMeshLayer15",
-			"Name": "Forearm sleeve R mid"
-		},
-		{
-			"Id": "ArtMeshLayer16",
-			"Name": "Upper sleeve R mid"
-		},
-		{
-			"Id": "ArtMeshHandwear2",
-			"Name": "Hand R mid"
 		},
 		{
 			"Id": "ArtMeshLayerL4",

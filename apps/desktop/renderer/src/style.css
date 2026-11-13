@@ -55,7 +55,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .desktop-bar .theme-toggle { justify-self: end; }
 .shell { max-width: 1080px; padding: 22px 28px; margin: auto; display: flex; flex-direction: column; gap: 13px; font-size: 14px; }
 .chat-shell { height: calc(100dvh - var(--desktop-bar)); overflow: auto; }
-.role-shell { padding-bottom: 34px; }
 header { display: flex; justify-content: space-between; align-items: start; }
 h1 { font-size: 24px; margin: 0 0 5px; }
 .view-heading { align-items: baseline; }

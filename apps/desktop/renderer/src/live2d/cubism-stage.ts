@@ -6,6 +6,7 @@ import type { Live2DMotion, Live2DProfile } from '../../../../../packages/deskto
 import type { PetGesture, PetState } from '../../../../../packages/desktop-pet/src/types.ts'
 import type { GestureName } from '../../../../../packages/voice-core/src/gesture.ts'
 import { GestureMotion } from './gesture-motion'
+import { IdleMotion } from './idle-motion'
 
 extensions.add(Live2DPlugin)
 configureCubismSDK({ memorySizeMB: 64 })
@@ -15,13 +16,15 @@ export type StageState = {
   state: PetState
   reduced: boolean
   expression?: string
+  idlePlaying?: boolean
+  framing?: Live2DProfile['style']['frame']
   gesture?: PetGesture
   readMouth: () => { open: number; shape: number }
 }
 type Model = Live2DModel<CubismInternalModel>
 type Rect = { x: number; y: number; width: number; height: number }
 type Layer = { profile: Live2DProfile; model: Model; art: Rect; headCenter?: number; parameters: string[];
-  mouth: (open: number, shape: number) => void; gestures: GestureMotion }
+  mouth: (open: number, shape: number) => void; gestures: GestureMotion; idle?: IdleMotion }
 const clamp = (x: number, low: number, high: number) => Math.max(low, Math.min(high, x))
 
 function artBounds(model: Model): Rect {
@@ -133,12 +136,14 @@ export class CubismStage {
     const previous = this.wanted
     this.wanted = profile
     if (this.layer?.profile.id === profile.id) {
-      if (this.layer.profile.style !== profile.style) {
+      const prior = this.layer.profile.style
+      const style = profile.style
+      if (prior !== style) {
         this.layer.profile = profile
-        this.layer.mouth = mouthDriver(this.layer)
-        this.lastState = undefined
-        this.layout()
-        this.reportInfo()
+        if (prior.mouth !== style.mouth) this.layer.mouth = mouthDriver(this.layer)
+        if (prior.cues !== style.cues) this.lastState = undefined
+        if (prior.frame !== style.frame || prior.zoom !== style.zoom || prior.x !== style.x || prior.y !== style.y) this.layout()
+        if (prior.frame !== style.frame) this.reportInfo()
       }
       return
     }
@@ -151,13 +156,15 @@ export class CubismStage {
     })
   }
 
+  frame(): void { this.layout() }
+
   private async load(profile: Live2DProfile): Promise<void> {
     if (this.disposed || this.wanted?.id !== profile.id) return
     let candidate!: Model
     try {
       await new Promise<void>((resolve, reject) => {
         candidate = Live2DModel.fromSync(profile.url, { autoUpdate: false, autoHitTest: false, autoFocus: false,
-          motionPreload: MotionPreloadStrategy.NONE, idleMotionGroup: '', checkMocConsistency: true,
+          motionPreload: MotionPreloadStrategy.NONE, idleMotionGroup: profile.idle ? 'ManualIdle' : '', checkMocConsistency: true,
           textureOptions: { lod: 'full', preferCreateImageBitmap: false },
           onLoad: resolve, onError: reject }) as Model
       })
@@ -166,19 +173,40 @@ export class CubismStage {
       throw error
     }
     if (this.disposed || this.wanted?.id !== profile.id) { await release(candidate, profile); return }
-    const old = this.layer
     const core = candidate.internalModel.coreModel
     const parameters = Array.from({ length: core.getParameterCount() }, (_, i) => core.getParameterId(i).getString().s)
+    let idle: IdleMotion | undefined
+    try {
+      if (profile.idle) idle = await IdleMotion.load(candidate.internalModel, parameters, profile.idle)
+    } catch (error) {
+      await release(candidate, profile)
+      throw error
+    }
+    if (this.disposed || this.wanted?.id !== profile.id) { await release(candidate, profile); return }
+    const old = this.layer
     const art = artBounds(candidate)
     const headArea = Object.values(candidate.internalModel.hitAreas).find(area => /^(head|face)$/iu.test(area.name))
     const head = headArea && candidate.internalModel.getDrawableBounds(headArea.index)
     const headCenter = head ? head.x + head.width / 2 : undefined
     const gestures = new GestureMotion(core, parameters)
-    const layer = { profile: this.wanted, model: candidate, art, headCenter, parameters, gestures }
+    const layer = { profile: this.wanted, model: candidate, art, headCenter, parameters, gestures, idle }
     if (old) this.app.stage.removeChild(old.model)
     this.layer = { ...layer, mouth: mouthDriver(layer) }
-    candidate.internalModel.on('afterMotionUpdate', () => gestures.apply())
-    candidate.internalModel.on('beforeModelUpdate', () => this.layer?.model === candidate && this.layer.mouth(this.open, this.shape))
+    const inner = candidate.internalModel
+    const glasses = profile.glassesParameter ? parameters.indexOf(profile.glassesParameter) : -1
+    // Save Cubism's ordinary motion state before overlaying the authored loop.
+    inner.on('afterMotionUpdate', () => gestures.apply())
+    const updateNaturalMovements = inner.updateNaturalMovements.bind(inner)
+    if (idle) inner.updateNaturalMovements = (dt, now) => {
+      updateNaturalMovements(dt, now)
+      idle.apply()
+    }
+    inner.on('beforeModelUpdate', () => {
+      if (this.layer?.model !== candidate) return
+      idle?.scalePhysics()
+      if (glasses >= 0 && this.layer.profile.style.glasses) core.setParameterValueByIndex(glasses, 1)
+      this.layer.mouth(this.open, this.shape)
+    })
     this.app.stage.addChild(candidate)
     this.lastState = undefined
     this.expression = undefined
@@ -227,7 +255,7 @@ export class CubismStage {
   private tick(delta: number): void {
     const layer = this.layer
     if (!layer) return
-    const { state, reduced, expression, gesture, readMouth } = this.read()
+    const { state, reduced, expression, gesture, readMouth, idlePlaying } = this.read()
     const { profile, model } = layer
     const dt = Math.min(90, delta)
     this.clock += dt / 1000
@@ -244,6 +272,7 @@ export class CubismStage {
     }
     const action = layer.gestures.prepare(gesture, dt, reduced)
     const weight = layer.gestures.weight
+    layer.idle?.prepare(dt, !reduced && (idlePlaying ?? true), profile.style.idle, reduced)
     const fps = reduced ? 24 : !action && !weight && (state === 'off' || state === 'silent') ? 30 : 60
     if (this.app.ticker.maxFPS !== fps) this.app.ticker.maxFPS = fps
     this.host.dataset.gesture = action ?? ''
@@ -251,7 +280,7 @@ export class CubismStage {
     const amount = reduced ? 0 : profile.style.gaze * (1 - Math.min(0.78, weight * 1.45))
     const look = state === 'thinking' || state === 'waiting' ? { x: 0.24, y: -0.17 }
       : state === 'listening' ? { x: 0.035, y: 0.08 } : { x: 0, y: 0 }
-    const gaze = this.pointer ? { x: this.pointer.x * 0.35, y: this.pointer.y * 0.28 } : {
+    const gaze = this.pointer ? { x: this.pointer.x * 0.35, y: this.pointer.y * 0.28 } : layer.idle ? look : {
       x: look.x + Math.sin(this.clock * 0.58) * 0.09 + Math.sin(this.clock * 0.23) * 0.045,
       y: look.y + Math.sin(this.clock * 0.39) * 0.06,
     }
@@ -265,7 +294,7 @@ export class CubismStage {
     finally { layer.gestures.restore() }
   }
 
-  private frameHeight(layer: Layer): number { return layer.art.height * (layer.profile.style.frame === 'portrait' ? 0.57 : 1) }
+  private frameHeight(layer: Layer, frame = layer.profile.style.frame): number { return layer.art.height * (frame === 'portrait' ? 0.57 : 1) }
 
   private reportInfo(): void {
     const layer = this.layer
@@ -282,9 +311,10 @@ export class CubismStage {
     const layer = this.layer
     if (!layer) return
     const { model, art, profile: { style } } = layer
-    const frame = this.frameHeight(layer)
+    const framing = this.read().framing ?? style.frame
+    const frame = this.frameHeight(layer, framing)
     const scale = Math.min(w * 0.95 / art.width, h * 0.97 / frame) * style.zoom
-    const center = style.frame === 'portrait' && Number.isFinite(layer.headCenter) ? layer.headCenter! : art.x + art.width / 2
+    const center = framing === 'portrait' && Number.isFinite(layer.headCenter) ? layer.headCenter! : art.x + art.width / 2
     model.scale.set(scale)
     model.position.set(w * (0.5 + style.x) - center * scale,
       h * (0.99 + style.y) - (art.y + frame) * scale)

@@ -9,7 +9,7 @@ const get = id => document.getElementById(id)
 const viewport = get('viewport')
 const status = get('status')
 const frames = [...document.querySelectorAll('[data-frame]')]
-const axes = { yaw: 'ParamAngleX', pitch: 'ParamAngleY', lift: 'ParamArmLift' }
+const axes = { yaw: 'ParamAngleX', pitch: 'ParamAngleY' }
 const eyelids = ['ParamEyeLOpen', 'ParamEyeROpen']
 const idleParams = [
   axes.yaw, axes.pitch, 'ParamAngleZ', 'ParamBodyAngleX', 'ParamBodyAngleY', 'ParamBodyAngleZ',
@@ -58,7 +58,7 @@ async function mount() {
   const core = inner.coreModel
   const indices = new Map(Array.from({ length: core.getParameterCount() }, (_, index) =>
     [core.getParameterId(index).getString().s, index]))
-  const required = [...idleParams, axes.lift, 'ParamGlasses']
+  const required = [...idleParams, 'ParamGlasses']
   if (required.some(id => !indices.has(id))) throw new Error('模型缺少审阅参数。')
   const write = (id, value) => core.setParameterValueByIndex(indices.get(id), value)
   const read = id => core.getParameterValueByIndex(indices.get(id))
@@ -74,8 +74,6 @@ async function mount() {
   let frameSize = ''
   let blinkStart = -Infinity
   let glasses = false
-  let playing = false
-  let playRequest = 0
   let idle = false
   let lastIdlePose
   let idleStoppedAt = 0
@@ -89,26 +87,6 @@ async function mount() {
     model.position.set((width - crop.width * scale) / 2 - crop.x * scale,
       (height - crop.height * scale) / 2 - crop.y * scale)
   }
-  const setLift = amount => {
-    const percent = Math.round(amount * 100)
-    get('lift').value = percent
-    get('lift-value').value = `${percent}%`
-  }
-  const finish = () => {
-    playing = false
-    get('play').textContent = '播放抬手'
-  }
-  const stop = () => {
-    playRequest++
-    inner.motionManager.stopAllMotions()
-    finish()
-  }
-  inner.motionManager.on('motionFinish', () => {
-    if (!playing) return
-    finish()
-    setLift(0)
-  })
-
   // Start the clip from neutral each frame so manual head offsets never accumulate.
   inner.on('beforeMotionUpdate', () => {
     for (const [id, value] of restIdle) write(id, value)
@@ -138,8 +116,6 @@ async function mount() {
         : elapsed < 135 ? 0 : smoothstep((elapsed - 135) / 150)
       for (const id of eyelids) write(id, Math.min(read(id), open))
     }
-    if (playing) setLift(read(axes.lift))
-    else write(axes.lift, Number(get('lift').value) / 100)
   })
 
   for (const button of frames) button.onclick = () => {
@@ -149,10 +125,6 @@ async function mount() {
   }
   for (const name of headControls) get(name).oninput = () => {
     get(`${name}-value`).value = `${get(name).value}°`
-  }
-  get('lift').oninput = () => {
-    stop()
-    get('lift-value').value = `${get('lift').value}%`
   }
   get('blink').onclick = () => { blinkStart = performance.now() }
   get('glasses').onclick = () => {
@@ -185,26 +157,9 @@ async function mount() {
       get('reset').disabled = false
     }
   }
-  get('play').onclick = async () => {
-    if (playing) { stop(); return }
-    const request = ++playRequest
-    setLift(0)
-    playing = true
-    get('play').textContent = '暂停抬手'
-    try {
-      const started = await model.motion('右臂抬手', 0, MotionPriority.FORCE, { loop: false })
-      if (request !== playRequest && !playing) inner.motionManager.stopAllMotions()
-      if (request === playRequest && !started) finish()
-    } catch (error) {
-      if (request === playRequest) finish()
-      status.textContent = error.message
-    }
-  }
   get('reset').onclick = () => {
-    stop()
     setIdle(false)
     lastIdlePose = undefined
-    setLift(0)
     for (const name of headControls) {
       get(name).value = 0
       get(name).oninput()

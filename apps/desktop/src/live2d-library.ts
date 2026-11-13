@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { defaultLive2DStyle, type Live2DApply, type Live2DCatalog, type Live2DMotion,
-  type Live2DProfile, type Live2DStyle } from '../../../packages/desktop-pet/src/live2d.ts';
+import { defaultLive2DIdleTuning, defaultLive2DStyle, live2DIdleLimits, live2DIdleParts, type Live2DApply,
+  type Live2DCatalog, type Live2DIdleRig, type Live2DMotion, type Live2DProfile, type Live2DStyle } from '../../../packages/desktop-pet/src/live2d.ts';
 
-type Definition = { id: string; name: string; file: string; style?: Partial<Live2DStyle> };
+type Definition = { id: string; name: string; file: string; style?: Partial<Live2DStyle>;
+  idle?: Live2DIdleRig; glassesParameter?: string };
 type Config = { core: { sha256: string }; bundled: Definition[]; samples: { models: Definition[] } };
 type Saved = { models: Definition[]; bindings: Live2DCatalog['bindings']; styles: Record<string, Live2DStyle> };
 type Bundle = { file: string; root: string; profile: Live2DProfile; references: Map<string, string>; entry: string; manifest: string };
@@ -35,6 +36,19 @@ function tuning(profile: Live2DProfile, input: unknown): Live2DStyle {
     next[name] = value;
   }
   if (patch.frame === 'full') next.frame = 'full';
+  if (profile.idle) {
+    const idle = object(patch.idle);
+    next.idle = { ...defaultLive2DIdleTuning };
+    for (const key of ['speed', ...live2DIdleParts] as const) {
+      const value = idle[key];
+      if (value === undefined) continue;
+      const [min, max] = live2DIdleLimits[key === 'speed' ? 'speed' : 'amplitude'];
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max)
+        throw new Error(`无效的待机设置 ${key}`);
+      next.idle[key] = value;
+    }
+  }
+  if (profile.glassesParameter) next.glasses = patch.glasses === true;
   const mouth = object(patch.mouth);
   next.mouth = {};
   for (const key of ['open', 'form', 'wide', 'round'] as const) {
@@ -47,7 +61,7 @@ function tuning(profile: Live2DProfile, input: unknown): Live2DStyle {
     const cue = object(cues[state]);
     const motion = object(cue.motion);
     const expression = typeof cue.expression === 'string' && profile.expressions.includes(cue.expression) ? cue.expression : undefined;
-    const selectedMotion = profile.motions.find(item => item.group === motion.group && item.index === motion.index);
+    const selectedMotion = profile.motions.find(item => item.group === motion.group && item.index === motion.index && item !== profile.idle?.motion);
     if (expression || selectedMotion) next.cues[state] = { expression, motion: selectedMotion };
   }
   return next;
@@ -103,8 +117,11 @@ async function inspect(definition: Definition, source: Live2DProfile['source']):
     return Name === 'LipSync' && Array.isArray(Ids) ? Ids.filter((id): id is string => typeof id === 'string') : [];
   }) : [];
   const url = `deskai://app/live2d/${definition.id}/${encodeURIComponent(entry)}`;
+  const idle = definition.idle;
+  const idleMotion = idle && motions.find(motion => motion.group === idle.motion.group && motion.index === idle.motion.index);
   const profile: Live2DProfile = { id: definition.id, name: definition.name, url, source, textures: refs.Textures as string[], lipSync, expressions, motions,
-    physics: !!refs.Physics, style: defaultLive2DStyle };
+    physics: !!refs.Physics, idle: idle && idleMotion ? { ...idle, motion: idleMotion } : undefined,
+    glassesParameter: definition.glassesParameter, style: defaultLive2DStyle };
   profile.style = tuning(profile, definition.style);
   return { file, root, profile, references, entry, manifest: JSON.stringify(manifest) };
 }
@@ -129,7 +146,8 @@ export class Live2DLibrary {
     try {
       const saved = object(JSON.parse(await readFile(library.storage, 'utf8')));
       if (!Array.isArray(saved.models)) throw new Error('INVALID_LIVE2D_LIBRARY');
-      const models = saved.models.filter(model => typeof model?.id === 'string' && typeof model.name === 'string' && typeof model.file === 'string');
+      const models = saved.models.filter(model => typeof model?.id === 'string' && typeof model.name === 'string' && typeof model.file === 'string')
+        .map(({ id, name, file }) => ({ id, name, file }));
       library.saved = { models, bindings: object(saved.bindings) as Saved['bindings'],
         styles: object(saved.styles) as Saved['styles'] };
     }
@@ -143,7 +161,10 @@ export class Live2DLibrary {
       for (const model of models) {
         try {
           if (!/^[\w-]+$/u.test(model.id) || library.bundles.has(model.id)) throw new Error('模型标识无效。');
-          const bundle = await inspect(model, source);
+          const shared = source === 'local' ? [...library.bundles.values()].find(bundle =>
+            bundle.profile.idle && !path.relative(bundle.file, model.file))?.profile : undefined;
+          const definition = shared ? { ...model, idle: shared.idle, glassesParameter: shared.glassesParameter, style: shared.style } : model;
+          const bundle = await inspect(definition, source);
           const savedStyle = library.saved.styles?.[model.id];
           if (savedStyle) bundle.profile.style = tuning(bundle.profile, savedStyle);
           library.bundles.set(model.id, bundle);

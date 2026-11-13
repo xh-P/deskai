@@ -33,6 +33,7 @@ function describeMediaError(error: unknown): string {
 
 export default function App() {
   const [page, setPage] = useState<'dialogue' | 'work' | 'character'>('dialogue')
+  const [characterView, setCharacterView] = useState<'model' | 'voice'>('model')
   const [theme, setTheme] = useState(() => localStorage.getItem('deskai-theme') === 'light' ? 'light' : 'dark')
   const [hostSnapshot, setHostSnapshot] = useState<HostSnapshot | null>(null)
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null)
@@ -677,8 +678,15 @@ export default function App() {
     <main>
       <div hidden={page !== 'work'}><Workbench snapshot={hostSnapshot} /></div>
       <div hidden={page !== 'character'} className="shell role-shell">
-        <header className="view-heading"><h1>角色与声音</h1><p>{role?.displayName ?? ''} · {selectedVoiceName}</p></header>
-        {page === 'character' && <AppearancePanel key={roleId} personaId={roleId} snapshot={petSnapshot} changePet={changePet} />}
+        <header className="character-heading"><h1>{role?.displayName || '角色'}</h1>
+          <nav className="character-navigation" aria-label="角色设置">
+            <button type="button" aria-pressed={characterView === 'model'} onClick={() => setCharacterView('model')}>模型与动作</button>
+            <button type="button" aria-pressed={characterView === 'voice'} onClick={() => setCharacterView('voice')}>角色与声音</button>
+          </nav>
+        </header>
+        {page === 'character' && <AppearancePanel key={roleId} personaId={roleId} snapshot={petSnapshot}
+          active={characterView === 'model'} changePet={changePet} />}
+        <div className="character-voice" hidden={characterView !== 'voice'}>
         <section className="preferences" aria-label="对话设置">
           <label>角色声音<select value={selectedVoice?.id ?? ''} disabled={!voices.length || starting} onChange={event => void changeSetting({ voiceId: event.target.value, referenceId: '' })}>
             {!selectedVoice && <option value="" disabled>等待声音资源</option>}
@@ -734,6 +742,7 @@ export default function App() {
           <p>浏览器实际麦克风设置</p><pre>{mediaSettings ? JSON.stringify(mediaSettings, null, 2) : '未获取'}</pre>
           <button className="secondary" onClick={() => void window.deskai.getRuntime().then(setRuntime).catch(showError)}>刷新语音时序</button>
           <pre>{runtime?.voiceDiagnostics ? JSON.stringify(runtime.voiceDiagnostics, null, 2) : '暂无语音时序'}</pre></details>
+        </div>
       </div>
       <div hidden={page !== 'dialogue'} className="shell chat-shell">
         <header className="view-heading"><h1>{role?.displayName ?? '对话'}</h1><p>{selectedVoiceName}</p></header>
