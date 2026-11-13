@@ -343,13 +343,13 @@ export default function AppearancePanel({ personaId, snapshot, changePet, active
           }}>
             <option value="portrait">主播半身</option><option value="full">全身</option>
           </select></label>
-          <label>预览表情<select value={expression} disabled={!loaded} onChange={event => setExpression(event.target.value)}>
+          <label>预览表情<select value={expression} disabled={!loaded || poseTest} onChange={event => setExpression(event.target.value)}>
             <option value="">按状态</option>{profile.expressions.map(name => <option key={name}>{name}</option>)}
           </select></label>
-          <label>预览动作<select value={motion} disabled={!loaded} onChange={event => setMotion(Number(event.target.value))}>
+          <label>预览动作<select value={motion} disabled={!loaded || poseTest} onChange={event => setMotion(Number(event.target.value))}>
             <option value={-1}>选择动作</option>{motions.map((item, index) => <option key={index} value={index}>{motionLabel(item)}</option>)}
           </select></label>
-          <button type="button" className="secondary appearance-action" disabled={!loaded || !currentMotion}
+          <button type="button" className="secondary appearance-action" disabled={!loaded || poseTest || !currentMotion}
             onClick={() => currentMotion && stage.current?.play(currentMotion)}>播放动作</button>
         </div>
         <div className="appearance-sliders">

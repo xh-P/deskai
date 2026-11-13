@@ -249,7 +249,7 @@ export class CubismStage {
       if (this.layer?.model !== candidate) return
       idle?.scalePhysics()
       adjustments?.scaleSway(this.read().motionPreview?.physics !== false)
-      if (glasses >= 0) core.setParameterValueByIndex(glasses, Number(!!this.layer.profile.style.glasses))
+      if (glasses >= 0 && this.layer.profile.style.glasses) core.setParameterValueByIndex(glasses, 1)
       this.layer.mouth(this.open, this.shape)
     })
     this.app.stage.addChild(candidate)
